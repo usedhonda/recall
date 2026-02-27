@@ -22,9 +22,14 @@ final class ConnectivityMonitor {
             let wifi = path.usesInterfaceType(.wifi)
             let cellular = path.usesInterfaceType(.cellular)
             Task { @MainActor in
+                let changed = self.isConnected != connected || self.isWiFi != wifi || self.isCellular != cellular
                 self.isConnected = connected
                 self.isWiFi = wifi
                 self.isCellular = cellular
+                if changed {
+                    let net = wifi ? "WiFi" : cellular ? "Cellular" : connected ? "Other" : "None"
+                    ActivityLogger.shared.log(.network, "Network: \(net)")
+                }
             }
         }
         monitor.start(queue: queue)

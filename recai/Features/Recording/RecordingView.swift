@@ -9,18 +9,17 @@ struct RecordingView: View {
         modelContext.container
     }
 
+    @State private var showLog = true
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 32) {
-                Spacer()
-
+            VStack(spacing: 16) {
                 stateIndicator
+                    .padding(.top, 8)
 
                 metersSection
 
                 chunkInfo
-
-                Spacer()
 
                 controlButton
 
@@ -31,7 +30,38 @@ struct RecordingView: View {
                         .padding(.horizontal)
                 }
 
-                Spacer()
+                // Activity Log
+                VStack(spacing: 4) {
+                    HStack {
+                        Text("Activity Log")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            showLog.toggle()
+                        } label: {
+                            Image(systemName: showLog ? "chevron.down" : "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button {
+                            ActivityLogger.shared.clear()
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+
+                    if showLog {
+                        ActivityLogView(entries: ActivityLogger.shared.entries)
+                            .frame(maxHeight: .infinity)
+                            .background(Color(.systemGroupedBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .padding(.horizontal, 8)
+                    }
+                }
             }
             .navigationTitle("Recording")
             .task {

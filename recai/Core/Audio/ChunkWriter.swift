@@ -15,7 +15,7 @@ final class ChunkWriter {
     private var startTime: CMTime?
     private var isFinished = false
 
-    init(outputURL: URL, sampleRate: Int = 16_000, bitRate: Int = 32_000) {
+    init(outputURL: URL, sampleRate: Int = 16_000, bitRate: Int = 48_000) {
         self.outputURL = outputURL
         self.sampleRate = sampleRate
         self.bitRate = bitRate

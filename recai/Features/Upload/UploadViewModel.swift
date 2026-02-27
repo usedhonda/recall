@@ -8,7 +8,7 @@ import OSLog
 final class UploadViewModel {
     private let logger = Logger(subsystem: "com.recai", category: "UploadVM")
 
-    let uploadManager = UploadManager()
+    let uploadManager = UploadManager.shared
 
     var isUploading: Bool { uploadManager.isUploading }
     var pendingCount: Int { uploadManager.pendingCount }

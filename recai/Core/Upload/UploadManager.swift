@@ -6,6 +6,8 @@ import SwiftData
 @Observable
 @MainActor
 final class UploadManager {
+    static let shared = UploadManager()
+
     private(set) var isUploading = false
     private(set) var uploadProgress = ""
     private(set) var pendingCount = 0
@@ -19,12 +21,14 @@ final class UploadManager {
     private static let maxBackoffSeconds: TimeInterval = 300
 
     private let uploadService = BackgroundUploadService.shared
+    private let activity = ActivityLogger.shared
 
     func startProcessing(modelContext: ModelContext) {
         guard !isUploading else { return }
         shouldContinue = true
         isUploading = true
         Self.logger.info("Upload processing started")
+        activity.log(.upload, "Upload queue started")
 
         processingTask = Task { [weak self] in
             await self?.processLoop(modelContext: modelContext)
@@ -38,6 +42,7 @@ final class UploadManager {
         isUploading = false
         uploadProgress = ""
         Self.logger.info("Upload processing stopped")
+        activity.log(.upload, "Upload queue stopped")
     }
 
     func retryFailed(modelContext: ModelContext) {
@@ -128,6 +133,7 @@ final class UploadManager {
         try? modelContext.save()
         uploadProgress = "Uploading \(chunk.fileName)..."
         Self.logger.info("Uploading chunk: \(chunk.fileName)")
+        activity.log(.upload, "Uploading \(chunk.fileName)")
 
         do {
             let recordingId = try await uploadService.upload(
@@ -146,6 +152,7 @@ final class UploadManager {
             refreshCounts(modelContext: modelContext)
             uploadProgress = "Uploaded \(chunk.fileName)"
             Self.logger.info("Chunk uploaded: \(chunk.fileName) -> \(recordingId)")
+            activity.log(.upload, "Uploaded \(chunk.fileName) -> \(recordingId)")
         } catch {
             chunk.uploadStatus = .failed
             chunk.uploadAttempts += 1
@@ -155,6 +162,7 @@ final class UploadManager {
             refreshCounts(modelContext: modelContext)
             uploadProgress = "Failed: \(chunk.fileName)"
             Self.logger.error("Upload failed for \(chunk.fileName): \(error.localizedDescription)")
+            activity.log(.error, "Upload failed: \(chunk.fileName) (#\(chunk.uploadAttempts)) \(error.localizedDescription)")
         }
     }
 

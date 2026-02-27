@@ -59,8 +59,12 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: false
           NSExceptionDomains:
             ts.net:
               NSExceptionAllowsInsecureHTTPLoads: true
               NSExceptionRequiresForwardSecrecy: false
               NSIncludesSubdomains: true
+            192.0.2.10:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSExceptionRequiresForwardSecrecy: false

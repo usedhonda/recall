@@ -18,6 +18,14 @@ struct RecaiApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .task {
+                    // Auto-start upload queue on app launch
+                    let context = ModelContext(sharedModelContainer)
+                    UploadManager.shared.startProcessing(modelContext: context)
+
+                    // Start connectivity monitoring
+                    ConnectivityMonitor.shared.start()
+                }
         }
         .modelContainer(sharedModelContainer)
     }

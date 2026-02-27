@@ -42,6 +42,7 @@ final class AudioRecordingEngine {
     private let ringBuffer = RingBuffer()
     private var vadService: VADService?
     private var audioConverter: AudioConverter?
+    private var preprocessor = AudioPreprocessor()
 
     // MARK: - Chunk State
 
@@ -49,11 +50,18 @@ final class AudioRecordingEngine {
     private var currentChunkURL: URL?
     private var currentChunkStartedAt: Date?
     private var chunkSampleTime: CMTime = .zero
+    private var segmentBuffer: [Float] = []
 
     // MARK: - VAD State
 
     private var silenceStart: Date?
     private var processingTask: Task<Void, Never>?
+
+    // MARK: - Adaptive Noise Floor
+
+    private var noiseFloorRMS: Float = 0.005
+    private let noiseFloorAlpha: Float = 0.05 // smoothing factor
+    private let noiseFloorMultiplier: Float = 3.0 // threshold = floor * multiplier
 
     // MARK: - SwiftData
 
@@ -62,6 +70,7 @@ final class AudioRecordingEngine {
     // MARK: - Logging
 
     private let logger = Logger(subsystem: "com.example.recai", category: "RecordingEngine")
+    private let activity = ActivityLogger.shared
 
     // MARK: - Constants
 
@@ -128,6 +137,7 @@ final class AudioRecordingEngine {
 
         state = .listening
         logger.info("Recording engine started, listening for voice")
+        activity.log(.state, "Engine started — Listening (\(Int(hwSampleRate))Hz, buf=\(tapBufferSize))")
 
         // Start the processing loop
         startProcessingLoop()
@@ -151,8 +161,10 @@ final class AudioRecordingEngine {
         currentRMS = 0
         vadProbability = 0
         silenceStart = nil
+        segmentBuffer = []
 
         logger.info("Recording engine stopped")
+        activity.log(.state, "Engine stopped")
     }
 
     // MARK: - Audio Buffer Handling (called from audio thread)
@@ -211,12 +223,20 @@ final class AudioRecordingEngine {
             samples16k = rawSamples
         }
 
-        // Stage 1: RMS power gate
+        // Stage 1: RMS power gate (adaptive threshold)
         let rms = RMSCalculator.rms(of: samples16k)
         currentRMS = rms
 
-        if rms < settings.rmsThreshold {
-            // Below RMS threshold — treat as silence
+        // Update noise floor estimate during listening (silence)
+        let effectiveThreshold: Float
+        if state == .listening {
+            noiseFloorRMS = noiseFloorRMS * (1 - noiseFloorAlpha) + rms * noiseFloorAlpha
+            effectiveThreshold = max(noiseFloorRMS * noiseFloorMultiplier, settings.rmsThreshold)
+        } else {
+            effectiveThreshold = max(noiseFloorRMS * noiseFloorMultiplier, settings.rmsThreshold)
+        }
+
+        if rms < effectiveThreshold {
             await handleSilence()
             return
         }
@@ -234,6 +254,7 @@ final class AudioRecordingEngine {
             }
         } catch {
             logger.error("VAD processing error: \(error.localizedDescription)")
+            activity.log(.error, "VAD error: \(error.localizedDescription)")
         }
     }
 
@@ -246,8 +267,10 @@ final class AudioRecordingEngine {
         case .listening:
             // Transition: listening -> recording
             logger.info("Voice detected, starting recording")
+            activity.log(.vad, "Voice detected — RMS=\(String(format: "%.3f", currentRMS)) VAD=\(String(format: "%.2f", vadProbability))")
             await startNewChunk()
             state = .recording
+            activity.log(.state, "Recording started")
 
         case .recording:
             // Continue recording; write current audio
@@ -257,6 +280,7 @@ final class AudioRecordingEngine {
             if let startedAt = currentChunkStartedAt,
                Date().timeIntervalSince(startedAt) >= settings.chunkDurationSeconds {
                 logger.info("Chunk duration exceeded, splitting")
+                activity.log(.chunk, "Chunk duration limit — splitting")
                 await splitChunk()
             }
 
@@ -278,10 +302,12 @@ final class AudioRecordingEngine {
         // Check silence timeout
         if let silenceStart, Date().timeIntervalSince(silenceStart) >= settings.silenceTimeout {
             logger.info("Silence timeout reached, stopping recording")
+            activity.log(.vad, "Silence \(String(format: "%.1f", settings.silenceTimeout))s — finalizing chunk")
             await finalizeCurrentChunk()
             state = .listening
             self.silenceStart = nil
             vadProbability = 0
+            activity.log(.state, "Back to Listening")
         }
     }
 
@@ -303,27 +329,29 @@ final class AudioRecordingEngine {
         currentChunkURL = url
         currentChunkStartedAt = now
         chunkSampleTime = .zero
+        segmentBuffer = []
+        preprocessor = AudioPreprocessor(sampleRate: Double(targetSampleRate))
 
-        // Write pre-margin from ring buffer
+        // Write pre-margin from ring buffer (preprocessed)
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
         let preMarginSamples = ringBuffer.read(lastSeconds: settings.preMarginSeconds, sampleRate: Int(hwRate))
         if !preMarginSamples.isEmpty {
-            let samples16k: [Float]
+            var samples16k: [Float]
             if Int(hwRate) != targetSampleRate, let converter = audioConverter {
                 samples16k = (try? converter.resample(preMarginSamples, from: hwRate)) ?? preMarginSamples
             } else {
                 samples16k = preMarginSamples
             }
-            writer.appendSamples(samples16k, at: chunkSampleTime)
-            let frameDuration = CMTime(value: CMTimeValue(samples16k.count), timescale: CMTimeScale(targetSampleRate))
-            chunkSampleTime = CMTimeAdd(chunkSampleTime, frameDuration)
+            preprocessor.process(&samples16k)
+            segmentBuffer.append(contentsOf: samples16k)
         }
 
         logger.info("New chunk started: \(url.lastPathComponent)")
+        activity.log(.chunk, "New chunk: \(url.lastPathComponent)")
     }
 
     private func writeCurrentAudioToChunk() async {
-        guard let writer = currentWriter else { return }
+        guard currentWriter != nil else { return }
 
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
         let analysisWindow: TimeInterval = 0.1
@@ -331,16 +359,15 @@ final class AudioRecordingEngine {
         let rawSamples = ringBuffer.read(lastSamples: hwSampleCount)
         guard !rawSamples.isEmpty else { return }
 
-        let samples16k: [Float]
+        var samples16k: [Float]
         if Int(hwRate) != targetSampleRate, let converter = audioConverter {
             samples16k = (try? converter.resample(rawSamples, from: hwRate)) ?? rawSamples
         } else {
             samples16k = rawSamples
         }
 
-        writer.appendSamples(samples16k, at: chunkSampleTime)
-        let frameDuration = CMTime(value: CMTimeValue(samples16k.count), timescale: CMTimeScale(targetSampleRate))
-        chunkSampleTime = CMTimeAdd(chunkSampleTime, frameDuration)
+        preprocessor.process(&samples16k)
+        segmentBuffer.append(contentsOf: samples16k)
     }
 
     private func finalizeCurrentChunk() async {
@@ -348,24 +375,55 @@ final class AudioRecordingEngine {
             return
         }
 
-        let result = await writer.finish()
-        currentWriter = nil
-        currentChunkURL = nil
-        currentChunkStartedAt = nil
-        chunkSampleTime = .zero
-
-        // Skip empty or extremely short chunks
-        guard result.duration > 0.5, result.fileSize > 0 else {
-            logger.info("Discarding trivially short chunk: \(result.duration, format: .fixed(precision: 1))s")
+        // Per-segment normalization on buffered audio
+        let segmentDuration = Double(segmentBuffer.count) / Double(targetSampleRate)
+        guard segmentDuration > 0.5, !segmentBuffer.isEmpty else {
+            logger.info("Discarding trivially short chunk: \(segmentDuration, format: .fixed(precision: 1))s")
+            activity.log(.chunk, "Discarded short chunk (\(String(format: "%.1f", segmentDuration))s)")
+            currentWriter = nil
+            currentChunkURL = nil
+            currentChunkStartedAt = nil
+            segmentBuffer = []
+            chunkSampleTime = .zero
+            _ = await writer.finish()
             try? FileManager.default.removeItem(at: url)
             return
         }
 
-        // Create SwiftData record
+        AudioPreprocessor.normalizeSegment(&segmentBuffer)
+        activity.log(.chunk, "Normalized segment: \(segmentBuffer.count) samples (\(String(format: "%.1f", segmentDuration))s)")
+
+        // Write normalized audio to chunk writer in batches
+        let batchSize = targetSampleRate // 1 second per batch
+        var offset = 0
+        var sampleTime: CMTime = .zero
+        while offset < segmentBuffer.count {
+            let end = min(offset + batchSize, segmentBuffer.count)
+            let batch = Array(segmentBuffer[offset..<end])
+            writer.appendSamples(batch, at: sampleTime)
+            let frameDuration = CMTime(value: CMTimeValue(batch.count), timescale: CMTimeScale(targetSampleRate))
+            sampleTime = CMTimeAdd(sampleTime, frameDuration)
+            offset = end
+        }
+
+        let result = await writer.finish()
+        currentWriter = nil
+        currentChunkURL = nil
+        currentChunkStartedAt = nil
+        segmentBuffer = []
+        chunkSampleTime = .zero
+
+        guard result.fileSize > 0 else {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+
         await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize)
         chunksRecorded += 1
 
+        let sizeKB = result.fileSize / 1024
         logger.info("Chunk finalized: \(url.lastPathComponent), duration: \(result.duration, format: .fixed(precision: 1))s")
+        activity.log(.chunk, "Finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB")
     }
 
     private func splitChunk() async {
@@ -404,6 +462,7 @@ final class AudioRecordingEngine {
     private func handleInterruptionBegan() {
         guard state == .listening || state == .recording else { return }
         logger.info("Handling interruption began, pausing")
+        activity.log(.state, "Interruption — pausing (was \(state.rawValue))")
 
         if state == .recording {
             Task {
@@ -426,8 +485,10 @@ final class AudioRecordingEngine {
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
+            activity.log(.state, "Resumed after interruption — Listening")
         } catch {
             logger.error("Failed to resume audio engine: \(error.localizedDescription)")
+            activity.log(.error, "Resume failed: \(error.localizedDescription)")
             state = .idle
         }
     }
