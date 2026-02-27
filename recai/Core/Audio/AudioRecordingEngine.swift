@@ -52,16 +52,29 @@ final class AudioRecordingEngine {
     private var chunkSampleTime: CMTime = .zero
     private var segmentBuffer: [Float] = []
 
+    // MARK: - Pending Buffer (short chunk deferral)
+
+    private var pendingSegmentBuffer: [Float] = []
+    private var pendingChunkStartedAt: Date?
+    private let pendingTimeout: TimeInterval = 120.0
+
     // MARK: - VAD State
 
     private var silenceStart: Date?
     private var processingTask: Task<Void, Never>?
 
+    // MARK: - Per-Chunk Quality Metrics
+
+    private var chunkRMSSum: Float = 0
+    private var chunkRMSCount: Int = 0
+    private var chunkVADSum: Float = 0
+    private var chunkVADCount: Int = 0
+
     // MARK: - Adaptive Noise Floor
 
-    private var noiseFloorRMS: Float = 0.005
+    private var noiseFloorRMS: Float = 0.003
     private let noiseFloorAlpha: Float = 0.05 // smoothing factor
-    private let noiseFloorMultiplier: Float = 3.0 // threshold = floor * multiplier
+    private let noiseFloorMultiplier: Float = 2.0 // threshold = floor * multiplier (lowered for 3-5m pickup)
 
     // MARK: - SwiftData
 
@@ -162,6 +175,8 @@ final class AudioRecordingEngine {
         vadProbability = 0
         silenceStart = nil
         segmentBuffer = []
+        pendingSegmentBuffer = []
+        pendingChunkStartedAt = nil
 
         logger.info("Recording engine stopped")
         activity.log(.state, "Engine stopped")
@@ -202,6 +217,16 @@ final class AudioRecordingEngine {
     private func processCurrentAudio() async {
         guard state == .listening || state == .recording else { return }
 
+        // Flush pending buffer if it has been held too long (send short chunk rather than lose it)
+        if state == .listening, !pendingSegmentBuffer.isEmpty, let pendingStart = pendingChunkStartedAt {
+            if Date().timeIntervalSince(pendingStart) >= pendingTimeout {
+                let pendingDuration = Double(pendingSegmentBuffer.count) / Double(targetSampleRate)
+                logger.info("Pending timeout — force-finalizing held chunk (\(pendingDuration, format: .fixed(precision: 1))s)")
+                activity.log(.chunk, "Pending timeout — force-finalize \(String(format: "%.1f", pendingDuration))s")
+                await forceFinalizePendingBuffer()
+            }
+        }
+
         // Read recent samples from ring buffer for analysis
         let analysisWindow: TimeInterval = 0.1 // 100ms
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
@@ -236,6 +261,12 @@ final class AudioRecordingEngine {
             effectiveThreshold = max(noiseFloorRMS * noiseFloorMultiplier, settings.rmsThreshold)
         }
 
+        // Accumulate RMS during recording for quality metadata
+        if state == .recording {
+            chunkRMSSum += rms
+            chunkRMSCount += 1
+        }
+
         if rms < effectiveThreshold {
             await handleSilence()
             return
@@ -246,6 +277,12 @@ final class AudioRecordingEngine {
         do {
             let result = try await vadService.processChunk(samples16k)
             vadProbability = result.probability
+
+            // Accumulate VAD probability during recording
+            if state == .recording {
+                chunkVADSum += result.probability
+                chunkVADCount += 1
+            }
 
             if result.probability >= settings.vadThreshold || result.event == .speechStart {
                 await handleVoiceDetected()
@@ -314,8 +351,9 @@ final class AudioRecordingEngine {
     // MARK: - Chunk Lifecycle
 
     private func startNewChunk() async {
-        let now = Date()
-        let url = await chunkFileManager.generateChunkURL(startedAt: now)
+        // Use pending chunk's timestamp if available (preserves original timing for voicelog merge)
+        let effectiveStart = pendingChunkStartedAt ?? Date()
+        let url = await chunkFileManager.generateChunkURL(startedAt: effectiveStart)
 
         let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate)
         do {
@@ -327,10 +365,26 @@ final class AudioRecordingEngine {
 
         currentWriter = writer
         currentChunkURL = url
-        currentChunkStartedAt = now
+        currentChunkStartedAt = effectiveStart
         chunkSampleTime = .zero
         segmentBuffer = []
         preprocessor = AudioPreprocessor(sampleRate: Double(targetSampleRate))
+
+        // Reset per-chunk quality metrics
+        chunkRMSSum = 0
+        chunkRMSCount = 0
+        chunkVADSum = 0
+        chunkVADCount = 0
+
+        // Prepend pending buffer from previous short chunk
+        if !pendingSegmentBuffer.isEmpty {
+            let pendingDuration = Double(pendingSegmentBuffer.count) / Double(targetSampleRate)
+            logger.info("Prepending pending buffer (\(pendingDuration, format: .fixed(precision: 1))s) to new chunk")
+            activity.log(.chunk, "Prepend pending \(String(format: "%.1f", pendingDuration))s")
+            segmentBuffer.append(contentsOf: pendingSegmentBuffer)
+            pendingSegmentBuffer = []
+            pendingChunkStartedAt = nil
+        }
 
         // Write pre-margin from ring buffer (preprocessed)
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
@@ -375,21 +429,33 @@ final class AudioRecordingEngine {
             return
         }
 
-        // Per-segment normalization on buffered audio
         let segmentDuration = Double(segmentBuffer.count) / Double(targetSampleRate)
+
+        // Discard trivially short audio (< 0.5s)
         guard segmentDuration > 0.5, !segmentBuffer.isEmpty else {
             logger.info("Discarding trivially short chunk: \(segmentDuration, format: .fixed(precision: 1))s")
             activity.log(.chunk, "Discarded short chunk (\(String(format: "%.1f", segmentDuration))s)")
-            currentWriter = nil
-            currentChunkURL = nil
-            currentChunkStartedAt = nil
-            segmentBuffer = []
-            chunkSampleTime = .zero
+            cleanupCurrentChunkState()
             _ = await writer.finish()
             try? FileManager.default.removeItem(at: url)
             return
         }
 
+        // Hold short chunks (< minChunkDuration) in pending buffer for merging with next chunk
+        if segmentDuration < settings.minChunkDurationSeconds {
+            logger.info("Holding short chunk (\(segmentDuration, format: .fixed(precision: 1))s < \(self.settings.minChunkDurationSeconds, format: .fixed(precision: 0))s min) in pending buffer")
+            activity.log(.chunk, "Holding short chunk \(String(format: "%.1f", segmentDuration))s — pending merge")
+            pendingSegmentBuffer.append(contentsOf: segmentBuffer)
+            if pendingChunkStartedAt == nil {
+                pendingChunkStartedAt = startedAt
+            }
+            cleanupCurrentChunkState()
+            _ = await writer.finish()
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+
+        // Per-segment normalization on buffered audio
         AudioPreprocessor.normalizeSegment(&segmentBuffer)
         activity.log(.chunk, "Normalized segment: \(segmentBuffer.count) samples (\(String(format: "%.1f", segmentDuration))s)")
 
@@ -407,23 +473,89 @@ final class AudioRecordingEngine {
         }
 
         let result = await writer.finish()
-        currentWriter = nil
-        currentChunkURL = nil
-        currentChunkStartedAt = nil
-        segmentBuffer = []
-        chunkSampleTime = .zero
+        cleanupCurrentChunkState()
 
         guard result.fileSize > 0 else {
             try? FileManager.default.removeItem(at: url)
             return
         }
 
-        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize)
+        let avgRMSVal = chunkRMSCount > 0 ? chunkRMSSum / Float(chunkRMSCount) : 0
+        let vadAvgVal = chunkVADCount > 0 ? chunkVADSum / Float(chunkVADCount) : 0
+
+        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS)
         chunksRecorded += 1
 
         let sizeKB = result.fileSize / 1024
         logger.info("Chunk finalized: \(url.lastPathComponent), duration: \(result.duration, format: .fixed(precision: 1))s")
-        activity.log(.chunk, "Finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB")
+        activity.log(.chunk, "Finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB rms=\(String(format: "%.4f", avgRMSVal)) vad=\(String(format: "%.2f", vadAvgVal))")
+    }
+
+    /// Force-finalize the pending buffer as a standalone chunk (short but better than losing data).
+    private func forceFinalizePendingBuffer() async {
+        guard !pendingSegmentBuffer.isEmpty, let pendingStart = pendingChunkStartedAt else { return }
+
+        // Discard trivially short pending audio (< 0.5s)
+        let pendingDuration = Double(pendingSegmentBuffer.count) / Double(targetSampleRate)
+        guard pendingDuration >= 3.0 else {
+            logger.info("Discarding short pending chunk: \(pendingDuration, format: .fixed(precision: 1))s (< 3.0s min)")
+            activity.log(.chunk, "Discarded pending < 3s (\(String(format: "%.1f", pendingDuration))s)")
+            pendingSegmentBuffer = []
+            pendingChunkStartedAt = nil
+            return
+        }
+
+        let url = await chunkFileManager.generateChunkURL(startedAt: pendingStart)
+        let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate)
+        do {
+            try writer.start()
+        } catch {
+            logger.error("Failed to start writer for pending flush: \(error.localizedDescription)")
+            pendingSegmentBuffer = []
+            pendingChunkStartedAt = nil
+            return
+        }
+
+        AudioPreprocessor.normalizeSegment(&pendingSegmentBuffer)
+
+        let batchSize = targetSampleRate
+        var offset = 0
+        var sampleTime: CMTime = .zero
+        while offset < pendingSegmentBuffer.count {
+            let end = min(offset + batchSize, pendingSegmentBuffer.count)
+            let batch = Array(pendingSegmentBuffer[offset..<end])
+            writer.appendSamples(batch, at: sampleTime)
+            let frameDuration = CMTime(value: CMTimeValue(batch.count), timescale: CMTimeScale(targetSampleRate))
+            sampleTime = CMTimeAdd(sampleTime, frameDuration)
+            offset = end
+        }
+
+        let result = await writer.finish()
+        pendingSegmentBuffer = []
+        pendingChunkStartedAt = nil
+
+        guard result.fileSize > 0 else {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+
+        let avgRMSVal = chunkRMSCount > 0 ? chunkRMSSum / Float(chunkRMSCount) : 0
+        let vadAvgVal = chunkVADCount > 0 ? chunkVADSum / Float(chunkVADCount) : 0
+
+        await saveChunkRecord(url: url, startedAt: pendingStart, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS)
+        chunksRecorded += 1
+
+        let sizeKB = result.fileSize / 1024
+        logger.info("Pending chunk force-finalized: \(url.lastPathComponent), duration: \(result.duration, format: .fixed(precision: 1))s")
+        activity.log(.chunk, "Pending finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB rms=\(String(format: "%.4f", avgRMSVal)) vad=\(String(format: "%.2f", vadAvgVal))")
+    }
+
+    private func cleanupCurrentChunkState() {
+        currentWriter = nil
+        currentChunkURL = nil
+        currentChunkStartedAt = nil
+        segmentBuffer = []
+        chunkSampleTime = .zero
     }
 
     private func splitChunk() async {
@@ -433,7 +565,7 @@ final class AudioRecordingEngine {
 
     // MARK: - SwiftData Persistence
 
-    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64) async {
+    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64, avgRMS: Float = 0, vadAvgProb: Float = 0, noiseFloorRMS: Float = 0) async {
         guard let modelContainer else {
             logger.error("ModelContainer not set, cannot save chunk record")
             return
@@ -445,7 +577,10 @@ final class AudioRecordingEngine {
             fileName: url.lastPathComponent,
             startedAt: startedAt,
             duration: duration,
-            fileSize: fileSize
+            fileSize: fileSize,
+            avgRMS: avgRMS,
+            vadAvgProb: vadAvgProb,
+            noiseFloorRMS: noiseFloorRMS
         )
         context.insert(chunk)
 

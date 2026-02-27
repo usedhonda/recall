@@ -85,6 +85,19 @@ final class UploadManager {
                 continue
             }
 
+            // Skip trivially short chunks (< 1.0s) — poor Whisper quality
+            if chunk.duration < 1.0 {
+                Self.logger.info("Skipping short chunk: \(chunk.fileName) (\(chunk.duration, format: .fixed(precision: 1))s < 1.0s)")
+                activity.log(.upload, "Skipped short chunk \(chunk.fileName) (\(String(format: "%.1f", chunk.duration))s)")
+                chunk.uploadStatus = .uploaded // Mark as done to skip permanently
+                chunk.uploadedAt = Date()
+                try? modelContext.save()
+                // Delete the short file
+                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+                refreshCounts(modelContext: modelContext)
+                continue
+            }
+
             // Check backoff for previously failed attempts
             if chunk.uploadAttempts > 0, let lastAttempt = chunk.lastUploadAttempt {
                 let backoff = min(pow(2.0, Double(chunk.uploadAttempts)), Self.maxBackoffSeconds)
@@ -123,11 +136,16 @@ final class UploadManager {
         // Build metadata
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        let metadata: [String: String] = [
+        var metadata: [String: String] = [
             "device_id": settings.deviceId,
             "started_at": formatter.string(from: chunk.startedAt),
             "timezone": TimeZone.current.identifier
         ]
+
+        // Audio quality metadata for voicelog filtering
+        if chunk.avgRMS > 0 { metadata["avg_rms"] = String(format: "%.6f", chunk.avgRMS) }
+        if chunk.vadAvgProb > 0 { metadata["vad_avg_prob"] = String(format: "%.4f", chunk.vadAvgProb) }
+        if chunk.noiseFloorRMS > 0 { metadata["noise_floor_rms"] = String(format: "%.6f", chunk.noiseFloorRMS) }
 
         chunk.uploadStatus = .uploading
         try? modelContext.save()

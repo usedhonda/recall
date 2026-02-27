@@ -15,6 +15,11 @@ final class AudioChunk {
     var uploadedAt: Date?
     var createdAt: Date
 
+    // Audio quality metadata for voicelog filtering
+    var avgRMS: Float
+    var vadAvgProb: Float
+    var noiseFloorRMS: Float
+
     var uploadStatus: UploadStatus {
         get { UploadStatus(rawValue: uploadStatusRaw) ?? .pending }
         set { uploadStatusRaw = newValue.rawValue }
@@ -25,7 +30,10 @@ final class AudioChunk {
         fileName: String,
         startedAt: Date,
         duration: TimeInterval = 0,
-        fileSize: Int64 = 0
+        fileSize: Int64 = 0,
+        avgRMS: Float = 0,
+        vadAvgProb: Float = 0,
+        noiseFloorRMS: Float = 0
     ) {
         self.id = UUID()
         self.filePath = filePath
@@ -36,6 +44,9 @@ final class AudioChunk {
         self.uploadStatusRaw = UploadStatus.pending.rawValue
         self.uploadAttempts = 0
         self.createdAt = Date()
+        self.avgRMS = avgRMS
+        self.vadAvgProb = vadAvgProb
+        self.noiseFloorRMS = noiseFloorRMS
     }
 
     enum UploadStatus: String, Codable {
