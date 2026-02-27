@@ -146,11 +146,6 @@ final class ChunkWriter {
         guard status == noErr, let desc = formatDescription else { return nil }
 
         var sampleBuffer: CMSampleBuffer?
-        var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: CMTimeScale(sampleRate)),
-            presentationTimeStamp: time,
-            decodeTimeStamp: .invalid
-        )
 
         let dataByteSize = frameCount * MemoryLayout<Float>.size
         let blockBuffer: CMBlockBuffer? = samples.withUnsafeBytes { rawBuf in

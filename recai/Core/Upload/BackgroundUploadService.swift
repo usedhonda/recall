@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-final class BackgroundUploadService: NSObject, Sendable {
+final class BackgroundUploadService: NSObject, @unchecked Sendable {
     static let shared = BackgroundUploadService()
 
     private static let logger = Logger(subsystem: "com.recai", category: "BackgroundUploadService")
