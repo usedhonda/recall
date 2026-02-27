@@ -16,7 +16,7 @@ final class AppSettings {
     }
 
     var silenceTimeout: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 3.0 }
+        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 5.0 }
         set { UserDefaults.standard.set(newValue, forKey: "silenceTimeout") }
     }
 
