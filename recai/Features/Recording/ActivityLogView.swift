@@ -37,6 +37,9 @@ struct ActivityLogView: View {
         case .upload: .blue
         case .network: .orange
         case .error: .red
+        case .health: .pink
+        case .location: .teal
+        case .telemetry: .purple
         }
     }
 }

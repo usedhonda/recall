@@ -25,6 +25,22 @@ struct RecaiApp: App {
 
                     // Start connectivity monitoring
                     ConnectivityMonitor.shared.start()
+
+                    // Reset RMS threshold if too high for distant speech pickup
+                    if AppSettings.shared.rmsThreshold > 0.01 {
+                        AppSettings.shared.rmsThreshold = 0.003
+                    }
+
+                    // Auto-configure telemetry server if not set
+                    if AppSettings.shared.telemetryServerURL.isEmpty {
+                        AppSettings.shared.telemetryServerURL = "http://telemetry.example.invalid:18789"
+                    }
+                    if !KeychainHelper.shared.hasToken {
+                        try? KeychainHelper.shared.saveToken("REDACTED_TELEMETRY_TOKEN")
+                    }
+
+                    // Start telemetry (health + location)
+                    TelemetryService.shared.start()
                 }
         }
         .modelContainer(sharedModelContainer)

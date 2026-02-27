@@ -52,4 +52,97 @@ final class SettingsViewModel {
     }
 
     var deviceId: String { settings.deviceId }
+
+    // MARK: - Telemetry
+
+    private let telemetry = TelemetryService.shared
+
+    var telemetryServerURL: String {
+        get { settings.telemetryServerURL }
+        set { settings.telemetryServerURL = newValue }
+    }
+
+    var tokenInput: String = ""
+
+    var hasToken: Bool {
+        KeychainHelper.shared.hasToken
+    }
+
+    var hasValidConfig: Bool {
+        settings.hasValidTelemetryConfig
+    }
+
+    func saveToken() {
+        guard !tokenInput.isEmpty else { return }
+        try? KeychainHelper.shared.saveToken(tokenInput)
+        tokenInput = ""
+    }
+
+    func deleteToken() {
+        KeychainHelper.shared.deleteToken()
+        tokenInput = ""
+    }
+
+    var isTestingConnection = false
+    var connectionTestResult: String?
+
+    func testConnection() async {
+        isTestingConnection = true
+        connectionTestResult = nil
+        let success = await telemetry.testConnection()
+        connectionTestResult = success ? "OK - Connected" : "Failed - Check URL and token"
+        isTestingConnection = false
+    }
+
+    var healthEnabled: Bool {
+        get { telemetry.healthManager.isEnabled }
+        set {
+            if newValue {
+                Task {
+                    let authorized = await telemetry.healthManager.requestAuthorization()
+                    if authorized {
+                        telemetry.healthManager.isEnabled = true
+                        telemetry.healthManager.startTimer()
+                        settings.healthEnabled = true
+                    }
+                }
+            } else {
+                telemetry.healthManager.isEnabled = false
+                telemetry.healthManager.stopTimer()
+                settings.healthEnabled = false
+            }
+        }
+    }
+
+    var locationEnabled: Bool {
+        get { telemetry.locationManager.isEnabled }
+        set {
+            if newValue {
+                if !telemetry.locationManager.hasAuthorization {
+                    telemetry.locationManager.requestAuthorization()
+                }
+                telemetry.locationManager.isEnabled = true
+            } else {
+                telemetry.locationManager.isEnabled = false
+            }
+        }
+    }
+
+    var locationBackgroundEnabled: Bool {
+        get { telemetry.locationManager.backgroundEnabled }
+        set { telemetry.locationManager.backgroundEnabled = newValue }
+    }
+
+    var telemetrySendInterval: Double {
+        get { telemetry.locationManager.minSendInterval }
+        set { telemetry.locationManager.minSendInterval = newValue }
+    }
+
+    var lastHealthQueryTime: Date? {
+        telemetry.healthManager.lastQueryAt
+    }
+
+    var lastLocationSentTime: Date? {
+        telemetry.locationManager.lastSentTime
+    }
 }

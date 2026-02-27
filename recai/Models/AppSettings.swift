@@ -6,7 +6,7 @@ final class AppSettings {
     static let shared = AppSettings()
 
     var rmsThreshold: Float {
-        get { Float(UserDefaults.standard.double(forKey: "rmsThreshold")).nonZero ?? 0.005 }
+        get { Float(UserDefaults.standard.double(forKey: "rmsThreshold")).nonZero ?? 0.003 }
         set { UserDefaults.standard.set(Double(newValue), forKey: "rmsThreshold") }
     }
 
@@ -31,8 +31,13 @@ final class AppSettings {
     }
 
     var chunkDurationSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 300.0 }
+        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 30.0 }
         set { UserDefaults.standard.set(newValue, forKey: "chunkDurationSeconds") }
+    }
+
+    var minChunkDurationSeconds: TimeInterval {
+        get { UserDefaults.standard.double(forKey: "minChunkDurationSeconds").nonZero ?? 5.0 }
+        set { UserDefaults.standard.set(newValue, forKey: "minChunkDurationSeconds") }
     }
 
     var uploadServerURL: String {
@@ -71,6 +76,41 @@ final class AppSettings {
             return val > 0 ? val : 1024
         }
         set { UserDefaults.standard.set(newValue, forKey: "storageCapMB") }
+    }
+
+    // MARK: - Telemetry Settings
+
+    var telemetryServerURL: String {
+        get { UserDefaults.standard.string(forKey: "telemetryServerURL") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "telemetryServerURL") }
+    }
+
+    var healthEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "telemetryHealthEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "telemetryHealthEnabled") }
+    }
+
+    var locationEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "telemetryLocationEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "telemetryLocationEnabled") }
+    }
+
+    var locationBackgroundEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "telemetryLocationBackgroundEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "telemetryLocationBackgroundEnabled") }
+    }
+
+    var telemetrySendInterval: TimeInterval {
+        get {
+            let val = UserDefaults.standard.double(forKey: "telemetrySendInterval")
+            return val > 0 ? val : 60
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "telemetrySendInterval") }
+    }
+
+    /// True when both server URL and bearer token are configured
+    var hasValidTelemetryConfig: Bool {
+        !telemetryServerURL.isEmpty && KeychainHelper.shared.hasToken
     }
 
     private init() {}

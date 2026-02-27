@@ -33,6 +33,14 @@ targets:
     platform: iOS
     sources:
       - recai
+    entitlements:
+      path: recai/Resources/recai.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+    attributes:
+      SystemCapabilities:
+        com.apple.HealthKit:
+          enabled: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.recai
@@ -43,6 +51,8 @@ targets:
     dependencies:
       - package: FluidAudio
         product: FluidAudio
+      - sdk: HealthKit.framework
+      - sdk: CoreLocation.framework
     info:
       path: recai/Resources/Info.plist
       properties:
@@ -54,8 +64,13 @@ targets:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: "recai continuously records audio for lifelogging. Only voice segments are saved."
         NSLocalNetworkUsageDescription: "Connect to VoiceLog server on local network for audio upload."
+        NSLocationWhenInUseUsageDescription: "recai uses your location for lifelogging telemetry."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "recai tracks your location in the background for continuous lifelogging."
+        NSHealthShareUsageDescription: "recai reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry."
+        NSHealthUpdateUsageDescription: "recai does not write any health data."
         UIBackgroundModes:
           - audio
+          - location
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

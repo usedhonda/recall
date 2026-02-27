@@ -48,13 +48,22 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSHealthShareUsageDescription</key>
+	<string>recai reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>recai does not write any health data.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to VoiceLog server on local network for audio upload.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>recai tracks your location in the background for continuous lifelogging.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>recai uses your location for lifelogging telemetry.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>recai continuously records audio for lifelogging. Only voice segments are saved.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>location</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

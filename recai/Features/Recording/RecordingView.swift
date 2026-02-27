@@ -4,6 +4,7 @@ import SwiftData
 struct RecordingView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var viewModel = RecordingViewModel()
+    private var telemetry = TelemetryService.shared
 
     private var modelContainer: ModelContainer? {
         modelContext.container
@@ -14,8 +15,11 @@ struct RecordingView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                stateIndicator
+                dataStreamsBar
+                    .padding(.horizontal, 16)
                     .padding(.top, 8)
+
+                stateIndicator
 
                 metersSection
 
@@ -188,5 +192,102 @@ struct RecordingView: View {
         let mins = Int(seconds) / 60
         let secs = Int(seconds) % 60
         return String(format: "%d:%02d", mins, secs)
+    }
+
+    // MARK: - Data Streams Bar
+
+    @ViewBuilder
+    private var dataStreamsBar: some View {
+        HStack(spacing: 16) {
+            StreamToggle(
+                icon: "mic.fill",
+                label: "Audio",
+                isActive: viewModel.isActive,
+                color: .blue
+            ) {
+                if viewModel.isActive {
+                    viewModel.stop()
+                } else {
+                    Task {
+                        if let container = modelContainer {
+                            await viewModel.start(modelContainer: container)
+                        }
+                    }
+                }
+            }
+
+            StreamToggle(
+                icon: "location.fill",
+                label: "Location",
+                isActive: telemetry.locationManager.isUpdating,
+                color: .cyan
+            ) {
+                if telemetry.locationManager.isEnabled {
+                    telemetry.locationManager.isEnabled = false
+                } else {
+                    if !telemetry.locationManager.hasAuthorization {
+                        telemetry.locationManager.requestAuthorization()
+                    }
+                    telemetry.locationManager.isEnabled = true
+                }
+            }
+
+            StreamToggle(
+                icon: "heart.fill",
+                label: "Health",
+                isActive: telemetry.healthManager.isEnabled,
+                color: .pink
+            ) {
+                if telemetry.healthManager.isEnabled {
+                    telemetry.healthManager.isEnabled = false
+                } else {
+                    Task {
+                        let authorized = await telemetry.healthManager.requestAuthorization()
+                        if authorized {
+                            telemetry.healthManager.isEnabled = true
+                            telemetry.healthManager.startTimer()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Stream Toggle Component
+
+private struct StreamToggle: View {
+    let icon: String
+    let label: String
+    let isActive: Bool
+    let color: Color
+    var needsSetup: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.title2)
+                Text(label)
+                    .font(.caption2)
+                Text(isActive ? "ON" : "OFF")
+                    .font(.caption2.bold())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isActive ? color.opacity(0.15) : Color.secondary.opacity(0.1))
+            )
+            .foregroundStyle(isActive ? color : .secondary)
+            .overlay {
+                if needsSetup {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.yellow, lineWidth: 1.5)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }

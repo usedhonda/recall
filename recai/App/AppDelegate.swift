@@ -19,6 +19,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         completionHandler: @escaping () -> Void
     ) {
         logger.info("Background URL session event: \(identifier)")
-        BackgroundUploadService.shared.setBackgroundCompletionHandler(completionHandler)
+        if identifier == "com.recai.telemetry-upload" {
+            TelemetryUploader.shared.handleBackgroundSession(completionHandler: completionHandler)
+        } else {
+            BackgroundUploadService.shared.setBackgroundCompletionHandler(completionHandler)
+        }
     }
 }

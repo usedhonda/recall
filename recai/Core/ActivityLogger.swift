@@ -20,6 +20,9 @@ final class ActivityLogger {
             case upload = "UPLOAD"
             case network = "NET"
             case error = "ERROR"
+            case health = "HEALTH"
+            case location = "LOC"
+            case telemetry = "TELE"
 
             var emoji: String {
                 switch self {
@@ -29,6 +32,9 @@ final class ActivityLogger {
                 case .upload: "^"
                 case .network: "~"
                 case .error: "!"
+                case .health: "H"
+                case .location: "@"
+                case .telemetry: "T"
                 }
             }
         }

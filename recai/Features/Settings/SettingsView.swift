@@ -10,6 +10,9 @@ struct SettingsView: View {
                 recordingSection
                 uploadSection
                 storageSection
+                telemetryServerSection
+                healthSection
+                locationSection
                 deviceSection
             }
             .navigationTitle("Settings")
@@ -72,6 +75,96 @@ struct SettingsView: View {
                     get: { Double(viewModel.storageCap) },
                     set: { viewModel.storageCap = Int($0) }
                 ), in: 256...4096, step: 256)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var telemetryServerSection: some View {
+        Section("Telemetry Server") {
+            TextField("Server URL (e.g. http://host:port)", text: $viewModel.telemetryServerURL)
+                .textContentType(.URL)
+                .autocapitalization(.none)
+                .keyboardType(.URL)
+
+            HStack {
+                SecureField("Bearer Token", text: $viewModel.tokenInput)
+                    .textContentType(.password)
+                if viewModel.hasToken {
+                    Button("Delete") {
+                        viewModel.deleteToken()
+                    }
+                    .foregroundStyle(.red)
+                } else {
+                    Button("Save") {
+                        viewModel.saveToken()
+                    }
+                    .disabled(viewModel.tokenInput.isEmpty)
+                }
+            }
+
+            HStack {
+                Text("Status")
+                Spacer()
+                if viewModel.isTestingConnection {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(viewModel.hasValidConfig ? "Configured" : "Not configured")
+                        .foregroundStyle(viewModel.hasValidConfig ? .green : .secondary)
+                }
+            }
+
+            Button("Test Connection") {
+                Task { await viewModel.testConnection() }
+            }
+            .disabled(!viewModel.hasValidConfig || viewModel.isTestingConnection)
+
+            if let result = viewModel.connectionTestResult {
+                Text(result)
+                    .font(.caption)
+                    .foregroundStyle(result.contains("OK") ? .green : .red)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var healthSection: some View {
+        Section("Health Data") {
+            Toggle("Health Enabled", isOn: $viewModel.healthEnabled)
+
+            if let lastQuery = viewModel.lastHealthQueryTime {
+                HStack {
+                    Text("Last query")
+                    Spacer()
+                    Text(lastQuery, style: .relative)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var locationSection: some View {
+        Section("Location") {
+            Toggle("Location Enabled", isOn: $viewModel.locationEnabled)
+
+            Toggle("Background Location", isOn: $viewModel.locationBackgroundEnabled)
+                .disabled(!viewModel.locationEnabled)
+
+            VStack(alignment: .leading) {
+                Text("Send Interval: \(Int(viewModel.telemetrySendInterval))s")
+                Slider(value: $viewModel.telemetrySendInterval, in: 30...300, step: 10)
+            }
+            .disabled(!viewModel.locationEnabled)
+
+            if let lastSent = viewModel.lastLocationSentTime {
+                HStack {
+                    Text("Last sent")
+                    Spacer()
+                    Text(lastSent, style: .relative)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
