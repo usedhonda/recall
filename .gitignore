@@ -1,0 +1,47 @@
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xccheckout
+*.moved-aside
+DerivedData/
+build/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# Local config
+.local/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# CocoaPods (not used but just in case)
+Pods/
+
+# Codex
+.codex/
+
+# Claude
+.claude/
+
+# Docs
+docs/log/
+docs/ask/
+
+.codex/config.toml
+
+AGENTS.md
