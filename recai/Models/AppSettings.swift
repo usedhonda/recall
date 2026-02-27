@@ -6,12 +6,12 @@ final class AppSettings {
     static let shared = AppSettings()
 
     var rmsThreshold: Float {
-        get { Float(UserDefaults.standard.double(forKey: "rmsThreshold")).nonZero ?? 0.003 }
+        get { Float(UserDefaults.standard.double(forKey: "rmsThreshold")).nonZero ?? 0.002 }
         set { UserDefaults.standard.set(Double(newValue), forKey: "rmsThreshold") }
     }
 
     var vadThreshold: Float {
-        get { Float(UserDefaults.standard.double(forKey: "vadThreshold")).nonZero ?? 0.5 }
+        get { Float(UserDefaults.standard.double(forKey: "vadThreshold")).nonZero ?? 0.35 }
         set { UserDefaults.standard.set(Double(newValue), forKey: "vadThreshold") }
     }
 

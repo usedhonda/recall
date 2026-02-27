@@ -72,9 +72,9 @@ final class AudioRecordingEngine {
 
     // MARK: - Adaptive Noise Floor
 
-    private var noiseFloorRMS: Float = 0.003
+    private var noiseFloorRMS: Float = 0.002
     private let noiseFloorAlpha: Float = 0.05 // smoothing factor
-    private let noiseFloorMultiplier: Float = 2.0 // threshold = floor * multiplier (lowered for 3-5m pickup)
+    private let noiseFloorMultiplier: Float = 1.5 // threshold = floor * multiplier (Step 1: pocket/distance capture)
 
     // MARK: - SwiftData
 

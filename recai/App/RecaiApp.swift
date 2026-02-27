@@ -26,9 +26,9 @@ struct RecaiApp: App {
                     // Start connectivity monitoring
                     ConnectivityMonitor.shared.start()
 
-                    // Reset RMS threshold if too high for distant speech pickup
-                    if AppSettings.shared.rmsThreshold > 0.01 {
-                        AppSettings.shared.rmsThreshold = 0.003
+                    // Reset RMS threshold if too high for pocket/distant speech pickup
+                    if AppSettings.shared.rmsThreshold > 0.005 {
+                        AppSettings.shared.rmsThreshold = 0.002
                     }
 
                     // Auto-configure telemetry server if not set
