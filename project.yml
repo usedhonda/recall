@@ -1,4 +1,4 @@
-name: recai
+name: recall
 include:
   - path: .local/project.yml
     required: false
@@ -20,30 +20,34 @@ settings:
     SWIFT_VERSION: "5.9"
 
 schemes:
-  recai:
+  recall:
     build:
       targets:
-        recai: all
+        recall: all
     run:
       config: Debug
 
 targets:
-  recai:
+  recall:
     type: application
     platform: iOS
     sources:
-      - recai
+      - recall
+      - Shared
     entitlements:
-      path: recai/Resources/recai.entitlements
+      path: recall/Resources/recall.entitlements
       properties:
         com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.background-delivery: true
+        com.apple.security.application-groups:
+          - group.com.example.recall
     attributes:
       SystemCapabilities:
         com.apple.HealthKit:
           enabled: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.recai
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.recall
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
         SDKROOT: iphoneos
@@ -53,21 +57,23 @@ targets:
         product: FluidAudio
       - sdk: HealthKit.framework
       - sdk: CoreLocation.framework
+      - target: RecordingControl
+        embed: true
     info:
-      path: recai/Resources/Info.plist
+      path: recall/Resources/Info.plist
       properties:
-        CFBundleDisplayName: recai
+        CFBundleDisplayName: recall
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSMicrophoneUsageDescription: "recai continuously records audio for lifelogging. Only voice segments are saved."
+        NSMicrophoneUsageDescription: "recall continuously records audio for lifelogging. Only voice segments are saved."
         NSLocalNetworkUsageDescription: "Connect to VoiceLog server on local network for audio upload."
-        NSLocationWhenInUseUsageDescription: "recai uses your location for lifelogging telemetry."
-        NSLocationAlwaysAndWhenInUseUsageDescription: "recai tracks your location in the background for continuous lifelogging."
-        NSHealthShareUsageDescription: "recai reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry."
-        NSHealthUpdateUsageDescription: "recai does not write any health data."
+        NSLocationWhenInUseUsageDescription: "recall uses your location for lifelogging telemetry."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "recall tracks your location in the background for continuous lifelogging."
+        NSHealthShareUsageDescription: "recall reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry."
+        NSHealthUpdateUsageDescription: "recall does not write any health data."
         UIBackgroundModes:
           - audio
           - location
@@ -83,3 +89,31 @@ targets:
             192.0.2.10:
               NSExceptionAllowsInsecureHTTPLoads: true
               NSExceptionRequiresForwardSecrecy: false
+
+  RecordingControl:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - RecordingControl
+      - Shared
+    entitlements:
+      path: RecordingControl/RecordingControl.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.example.recall
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.recall.RecordingControl
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        SDKROOT: iphoneos
+        SWIFT_VERSION: "5.9"
+    info:
+      path: RecordingControl/Info.plist
+      properties:
+        CFBundleDisplayName: RecordingControl
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
