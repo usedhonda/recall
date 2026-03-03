@@ -220,13 +220,28 @@ final class AudioRecordingEngine {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
                 guard let self else { return }
-                guard self.state == .listening || self.state == .recording else { continue }
 
-                let silentDuration = Date().timeIntervalSince(self.ringBuffer.lastWriteTime)
-                if silentDuration > 10 {
-                    self.logger.warning("Watchdog: no audio data for \(Int(silentDuration))s, restarting engine")
-                    self.activity.log(.error, "Watchdog triggered — no data for \(Int(silentDuration))s, restarting")
+                switch self.state {
+                case .listening, .recording:
+                    // Normal operation: check ring buffer is receiving data
+                    let silentDuration = Date().timeIntervalSince(self.ringBuffer.lastWriteTime)
+                    if silentDuration > 10 {
+                        self.logger.warning("Watchdog: no audio data for \(Int(silentDuration))s, restarting engine")
+                        self.activity.log(.error, "Watchdog triggered — no data for \(Int(silentDuration))s, restarting")
+                        self.restartEngine()
+                    }
+
+                case .idle:
+                    // Engine died (e.g. resume failed) — try full restart
+                    self.logger.warning("Watchdog: engine idle, attempting full restart")
+                    self.activity.log(.error, "Watchdog: engine idle — attempting restart")
                     self.restartEngine()
+
+                case .paused:
+                    // Stuck in paused (interruption never ended?) — force resume
+                    self.logger.warning("Watchdog: engine stuck in paused, force-resuming")
+                    self.activity.log(.error, "Watchdog: stuck paused — force-resuming")
+                    self.resumeAfterInterruption()
                 }
             }
         }
@@ -681,19 +696,38 @@ final class AudioRecordingEngine {
         }
     }
 
-    private func resumeAfterInterruption() {
-        logger.info("Resuming after interruption")
+    private func resumeAfterInterruption(attempt: Int = 1) {
+        let maxAttempts = 3
+        logger.info("Resuming after interruption (attempt \(attempt)/\(maxAttempts))")
+
         do {
             try sessionManager.configure()
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
             startWatchdog()
-            activity.log(.state, "Resumed after interruption — Listening")
+            activity.log(.state, "Resumed after interruption — Listening (attempt \(attempt))")
         } catch {
-            logger.error("Failed to resume audio engine: \(error.localizedDescription)")
-            activity.log(.error, "Resume failed: \(error.localizedDescription)")
-            state = .idle
+            logger.error("Resume attempt \(attempt) failed: \(error.localizedDescription)")
+            activity.log(.error, "Resume failed (attempt \(attempt)/\(maxAttempts)): \(error.localizedDescription)")
+
+            if attempt < maxAttempts {
+                // Exponential backoff: 2s, 4s, 8s
+                let delaySec = 2.0 * pow(2.0, Double(attempt - 1))
+                let delayNs = UInt64(delaySec * 1_000_000_000)
+                activity.log(.state, "Retry resume in \(Int(delaySec))s...")
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: delayNs)
+                    guard let self else { return }
+                    // Still need recovery? (not manually restarted)
+                    guard self.state == .paused || self.state == .idle else { return }
+                    self.resumeAfterInterruption(attempt: attempt + 1)
+                }
+            } else {
+                // All retries exhausted — go idle, watchdog will pick up
+                activity.log(.error, "All \(maxAttempts) resume attempts failed — watchdog will retry")
+                state = .idle
+            }
         }
     }
 
