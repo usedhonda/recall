@@ -9,6 +9,7 @@ final class RingBuffer: @unchecked Sendable {
     private var writeIndex: Int = 0
     private var filled: Int = 0
     private let lock = NSLock()
+    private var _lastWriteTime: Date = Date()
 
     /// Initialize with capacity in samples.
     /// Default: 3 seconds at 16kHz = 48000 samples.
@@ -17,11 +18,19 @@ final class RingBuffer: @unchecked Sendable {
         self.buffer = [Float](repeating: 0, count: capacity)
     }
 
+    /// Timestamp of the most recent write (for watchdog monitoring).
+    var lastWriteTime: Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return _lastWriteTime
+    }
+
     /// Append samples to the ring buffer, overwriting oldest data when full.
     func write(_ samples: [Float]) {
         lock.lock()
         defer { lock.unlock() }
 
+        _lastWriteTime = Date()
         let count = samples.count
         if count >= capacity {
             // Incoming data is larger than buffer; keep only the tail

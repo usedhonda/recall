@@ -62,6 +62,7 @@ final class AudioRecordingEngine {
 
     private var silenceStart: Date?
     private var processingTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
 
     // MARK: - Per-Chunk Quality Metrics
 
@@ -121,6 +122,13 @@ final class AudioRecordingEngine {
             }
         }
 
+        // Setup route change callback
+        sessionManager.onRouteChanged = { [weak self] reason in
+            Task { @MainActor in
+                self?.handleRouteChange(reason: reason)
+            }
+        }
+
         // Initialize VAD
         if vadService == nil {
             vadService = try await VADService()
@@ -141,6 +149,10 @@ final class AudioRecordingEngine {
 
         logger.info("Hardware sample rate: \(hwSampleRate) Hz, channels: \(hwFormat.channelCount)")
 
+        // Remove any existing tap to prevent double-install crash (SIGABRT)
+        // Safe no-op if no tap is installed
+        inputNode.removeTap(onBus: 0)
+
         inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
             self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
         }
@@ -154,9 +166,14 @@ final class AudioRecordingEngine {
 
         // Start the processing loop
         startProcessingLoop()
+
+        // Start watchdog timer (safety net for silent failures)
+        startWatchdog()
     }
 
     func stop() {
+        watchdogTask?.cancel()
+        watchdogTask = nil
         processingTask?.cancel()
         processingTask = nil
 
@@ -196,6 +213,24 @@ final class AudioRecordingEngine {
     }
 
     // MARK: - Processing Loop
+
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
+                guard let self else { return }
+                guard self.state == .listening || self.state == .recording else { continue }
+
+                let silentDuration = Date().timeIntervalSince(self.ringBuffer.lastWriteTime)
+                if silentDuration > 10 {
+                    self.logger.warning("Watchdog: no audio data for \(Int(silentDuration))s, restarting engine")
+                    self.activity.log(.error, "Watchdog triggered — no data for \(Int(silentDuration))s, restarting")
+                    self.restartEngine()
+                }
+            }
+        }
+    }
 
     private func startProcessingLoop() {
         processingTask = Task { [weak self] in
@@ -592,6 +627,26 @@ final class AudioRecordingEngine {
         }
     }
 
+    // MARK: - Route Change Handling
+
+    private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
+        switch reason {
+        case .oldDeviceUnavailable, .newDeviceAvailable:
+            guard state == .listening || state == .recording else { return }
+            logger.info("Route change detected (reason=\(reason.rawValue)), restarting engine")
+            activity.log(.state, "Route change — restarting engine")
+
+            if state == .recording {
+                Task { await finalizeCurrentChunk() }
+            }
+
+            restartEngine()
+
+        default:
+            break
+        }
+    }
+
     // MARK: - Interruption Handling
 
     private func handleInterruptionBegan() {
@@ -610,20 +665,74 @@ final class AudioRecordingEngine {
     }
 
     private func handleInterruptionEnded(shouldResume: Bool) {
-        guard state == .paused, shouldResume else {
-            logger.info("Interruption ended but not resuming (shouldResume: \(shouldResume))")
-            return
-        }
+        guard state == .paused else { return }
 
+        if shouldResume {
+            resumeAfterInterruption()
+        } else {
+            // Always-on app: force resume even when shouldResume=false (after 2s delay)
+            logger.info("shouldResume=false, scheduling forced resume in 2s")
+            activity.log(.state, "Interruption ended (shouldResume=false) — will force-resume in 2s")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, self.state == .paused else { return }
+                self.resumeAfterInterruption()
+            }
+        }
+    }
+
+    private func resumeAfterInterruption() {
         logger.info("Resuming after interruption")
         do {
+            try sessionManager.configure()
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
+            startWatchdog()
             activity.log(.state, "Resumed after interruption — Listening")
         } catch {
             logger.error("Failed to resume audio engine: \(error.localizedDescription)")
             activity.log(.error, "Resume failed: \(error.localizedDescription)")
+            state = .idle
+        }
+    }
+
+    // MARK: - Engine Restart (shared by route change + watchdog)
+
+    private func restartEngine() {
+        // Cancel existing processing
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        processingTask?.cancel()
+        processingTask = nil
+
+        // Stop engine and remove tap
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+
+        // Re-setup and start
+        do {
+            try sessionManager.configure()
+
+            let inputNode = audioEngine.inputNode
+            let hwFormat = inputNode.outputFormat(forBus: 0)
+            let hwSampleRate = hwFormat.sampleRate
+
+            inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
+                self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
+            }
+
+            audioEngine.prepare()
+            try audioEngine.start()
+            state = .listening
+            startProcessingLoop()
+            startWatchdog()
+
+            logger.info("Engine restarted successfully (\(Int(hwSampleRate))Hz)")
+            activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
+        } catch {
+            logger.error("Failed to restart engine: \(error.localizedDescription)")
+            activity.log(.error, "Engine restart failed: \(error.localizedDescription)")
             state = .idle
         }
     }

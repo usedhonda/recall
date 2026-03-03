@@ -14,6 +14,12 @@ final class AudioSessionManager {
             name: AVAudioSession.interruptionNotification,
             object: session
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: session
+        )
     }
 
     func configure() throws {
@@ -41,6 +47,19 @@ final class AudioSessionManager {
 
     var isOtherAudioPlaying: Bool {
         session.isOtherAudioPlaying
+    }
+
+    // MARK: - Route Change Handling
+
+    var onRouteChanged: ((_ reason: AVAudioSession.RouteChangeReason) -> Void)?
+
+    @objc private func handleRouteChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
+
+        logger.info("Audio route changed: reason=\(reasonValue)")
+        onRouteChanged?(reason)
     }
 
     // MARK: - Interruption Handling
