@@ -26,10 +26,16 @@ final class AudioSessionManager {
         try session.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.defaultToSpeaker, .allowBluetoothHFP]
+            options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothHFP]
         )
+
+        // iOS 17+: Don't treat Bluetooth disconnect as interruption
+        if #available(iOS 17.0, *) {
+            try session.setPrefersInterruptionOnRouteDisconnect(false)
+        }
+
         try session.setActive(true, options: [])
-        logger.info("Audio session configured and activated")
+        logger.info("Audio session configured and activated (mixWithOthers, no route-disconnect interruption)")
     }
 
     func deactivate() {
