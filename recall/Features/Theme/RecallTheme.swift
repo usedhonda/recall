@@ -29,6 +29,7 @@ enum RecallTheme {
         static let hudCaption = Font.system(size: 11, weight: .regular, design: .monospaced)
         static let hudMicro = Font.system(size: 9, weight: .medium, design: .monospaced)
         static let hudLarge = Font.system(size: 28, weight: .bold, design: .monospaced)
+        static let hudHero = Font.system(size: 36, weight: .black, design: .monospaced)
         static let hudMeter = Font.system(size: 15, weight: .medium, design: .monospaced)
     }
 }
@@ -64,6 +65,56 @@ struct HUDCardModifier: ViewModifier {
 extension View {
     func hudCard(borderColor: Color = RecallTheme.Colors.border) -> some View {
         modifier(HUDCardModifier(borderColor: borderColor))
+    }
+}
+
+// MARK: - HUD Card Glow Modifier
+
+struct HUDCardGlowModifier: ViewModifier {
+    var glowColor: Color
+    var isActive: Bool
+    @State private var glowing = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(12)
+            .background(RecallTheme.Colors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(
+                        isActive ? glowColor.opacity(glowing ? 0.8 : 0.3) : RecallTheme.Colors.border,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isActive ? glowColor.opacity(glowing ? 0.3 : 0.1) : .clear,
+                radius: 8
+            )
+            .onChange(of: isActive) { _, active in
+                if active {
+                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                        glowing = true
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        glowing = false
+                    }
+                }
+            }
+            .onAppear {
+                if isActive {
+                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                        glowing = true
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    func hudCardGlow(color: Color, isActive: Bool) -> some View {
+        modifier(HUDCardGlowModifier(glowColor: color, isActive: isActive))
     }
 }
 
@@ -114,6 +165,10 @@ struct HUDMeterBar: View {
                             )
                         )
                         .frame(width: max(0, geo.size.width * CGFloat(min(value, 1.0))))
+                        .shadow(
+                            color: value > threshold ? barColor.opacity(0.6) : .clear,
+                            radius: 4
+                        )
 
                     Rectangle()
                         .fill(RecallTheme.Colors.neonAmber)
@@ -135,6 +190,8 @@ struct CyberpunkStreamToggle: View {
     let neonColor: Color
     let action: () -> Void
 
+    @State private var borderPulse = false
+
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
@@ -154,11 +211,32 @@ struct CyberpunkStreamToggle: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(isActive ? neonColor : RecallTheme.Colors.border, lineWidth: 1)
+                    .stroke(
+                        isActive ? neonColor.opacity(borderPulse ? 0.9 : 0.4) : RecallTheme.Colors.border,
+                        lineWidth: 1
+                    )
             )
             .foregroundStyle(isActive ? neonColor : RecallTheme.Colors.textMuted)
         }
         .buttonStyle(.plain)
+        .onChange(of: isActive) { _, active in
+            if active {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    borderPulse = true
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    borderPulse = false
+                }
+            }
+        }
+        .onAppear {
+            if isActive {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    borderPulse = true
+                }
+            }
+        }
     }
 }
 

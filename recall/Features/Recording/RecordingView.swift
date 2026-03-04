@@ -11,92 +11,105 @@ struct RecordingView: View {
     }
 
     @State private var showLog = true
+    @State private var sessionStart: Date?
 
     var body: some View {
-        VStack(spacing: 0) {
-            HUDHeaderBar(title: "recall")
+        ZStack {
+            RecallTheme.Colors.bg.ignoresSafeArea()
+            ScanlineOverlay().ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 12) {
-                    dataStreamsBar
-                        .padding(.horizontal, 12)
+            VStack(spacing: 0) {
+                headerBar
 
-                    stateIndicator
-                        .padding(.vertical, 8)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        dataStreamsBar
+                            .padding(.horizontal, 12)
 
-                    metersSection
-                        .hudCard()
-                        .padding(.horizontal, 12)
+                        heroStateSection
+                            .padding(.vertical, 16)
 
-                    chunkInfo
-                        .padding(.horizontal, 12)
+                        metersSection
+                            .hudCardGlow(color: stateColor, isActive: viewModel.isActive)
+                            .padding(.horizontal, 12)
 
-                    controlButton
-                        .padding(.vertical, 4)
+                        chunkInfo
+                            .padding(.horizontal, 12)
 
-                    if let error = viewModel.errorMessage {
-                        Text(error)
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.neonRed)
-                            .padding(.horizontal)
-                    }
-
-                    // Activity Log
-                    VStack(spacing: 4) {
-                        HStack {
-                            HUDSectionHeader(title: "Activity Log")
-                            Spacer()
-                            Button {
-                                showLog.toggle()
-                            } label: {
-                                Image(systemName: showLog ? "chevron.down" : "chevron.right")
-                                    .font(RecallTheme.Fonts.hudMicro)
-                                    .foregroundStyle(RecallTheme.Colors.textSecondary)
-                            }
-                            Button {
-                                ActivityLogger.shared.clear()
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(RecallTheme.Fonts.hudMicro)
-                                    .foregroundStyle(RecallTheme.Colors.textSecondary)
-                            }
+                        if let error = viewModel.errorMessage {
+                            Text(error)
+                                .font(RecallTheme.Fonts.hudCaption)
+                                .foregroundStyle(RecallTheme.Colors.neonRed)
+                                .padding(.horizontal)
                         }
-                        .padding(.horizontal, 12)
 
-                        if showLog {
-                            ActivityLogView(entries: ActivityLogger.shared.entries)
-                                .frame(maxHeight: 200)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                .padding(.horizontal, 8)
-                        }
+                        activityLogSection
                     }
+                    .padding(.bottom, 16)
                 }
-                .padding(.bottom, 16)
             }
         }
-        .background(RecallTheme.Colors.bg)
+        .onChange(of: viewModel.isActive) { _, active in
+            if active {
+                sessionStart = Date()
+            } else {
+                sessionStart = nil
+            }
+        }
     }
+
+    // MARK: - Header
 
     @ViewBuilder
-    private var stateIndicator: some View {
-        VStack(spacing: 6) {
-            Text(stateText)
-                .font(RecallTheme.Fonts.hudLarge)
-                .foregroundStyle(stateColor)
-                .shadow(color: viewModel.isRecording ? stateColor.opacity(0.6) : .clear, radius: 8)
-
-            if viewModel.isRecording {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(RecallTheme.Colors.neonGreen)
-                        .frame(width: 6, height: 6)
-                    Text("ACTIVE")
-                        .font(RecallTheme.Fonts.hudMicro)
-                        .foregroundStyle(RecallTheme.Colors.neonGreen)
+    private var headerBar: some View {
+        HStack {
+            Text("RECALL")
+                .font(RecallTheme.Fonts.hudTitle)
+                .foregroundStyle(RecallTheme.Colors.neonCyan)
+                .tracking(4)
+            Spacer()
+            if let start = sessionStart, viewModel.isActive {
+                TimelineView(.periodic(from: start, by: 1)) { context in
+                    let elapsed = context.date.timeIntervalSince(start)
+                    Text(formatUptime(elapsed))
+                        .font(RecallTheme.Fonts.hudMeter)
+                        .foregroundStyle(RecallTheme.Colors.neonCyan)
+                        .neonGlow(color: RecallTheme.Colors.neonCyan, radius: 8)
                 }
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
+
+    // MARK: - Hero State
+
+    @ViewBuilder
+    private var heroStateSection: some View {
+        VStack(spacing: 10) {
+            GlitchText(
+                text: stateText,
+                font: RecallTheme.Fonts.hudHero,
+                color: stateColor,
+                tracking: 6,
+                continuousGlitch: viewModel.isRecording
+            )
+            .neonGlow(color: stateColor, radius: 16)
+
+            if viewModel.isActive {
+                HStack(spacing: 6) {
+                    PulsingDot(color: stateColor)
+                    Text(subLabel)
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(stateColor)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: viewModel.state)
+    }
+
+    // MARK: - Meters
 
     @ViewBuilder
     private var metersSection: some View {
@@ -115,6 +128,8 @@ struct RecordingView: View {
             )
         }
     }
+
+    // MARK: - Chunk Info
 
     @ViewBuilder
     private var chunkInfo: some View {
@@ -144,60 +159,44 @@ struct RecordingView: View {
         }
     }
 
+    // MARK: - Activity Log (Terminal Style)
+
     @ViewBuilder
-    private var controlButton: some View {
-        Button {
-            if viewModel.isActive {
-                viewModel.stop()
-            } else {
-                Task {
-                    if let container = modelContainer {
-                        await viewModel.start(modelContainer: container)
-                    }
+    private var activityLogSection: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text(">_ ACTIVITY LOG")
+                    .font(RecallTheme.Fonts.hudTitle)
+                    .foregroundStyle(RecallTheme.Colors.neonGreen)
+                Spacer()
+                Button {
+                    showLog.toggle()
+                } label: {
+                    Image(systemName: showLog ? "chevron.down" : "chevron.right")
+                        .font(RecallTheme.Fonts.hudMicro)
+                        .foregroundStyle(RecallTheme.Colors.textSecondary)
+                }
+                Button {
+                    ActivityLogger.shared.clear()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(RecallTheme.Fonts.hudMicro)
+                        .foregroundStyle(RecallTheme.Colors.textSecondary)
                 }
             }
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(controlColor.opacity(0.08))
-                    .frame(width: 80, height: 80)
-                Circle()
-                    .stroke(controlColor, lineWidth: 2)
-                    .frame(width: 80, height: 80)
-                Image(systemName: viewModel.isActive ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(controlColor)
+            .padding(.horizontal, 12)
+
+            if showLog {
+                ActivityLogView(entries: ActivityLogger.shared.entries)
+                    .frame(maxHeight: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(RecallTheme.Colors.neonGreen.opacity(0.3), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 8)
             }
-            .shadow(color: controlColor.opacity(0.3), radius: 12)
         }
-    }
-
-    private var controlColor: Color {
-        viewModel.isActive ? RecallTheme.Colors.neonRed : RecallTheme.Colors.neonCyan
-    }
-
-    private var stateColor: Color {
-        switch viewModel.state {
-        case .idle: RecallTheme.Colors.textMuted
-        case .listening: RecallTheme.Colors.neonCyan
-        case .recording: RecallTheme.Colors.neonGreen
-        case .paused: RecallTheme.Colors.neonAmber
-        }
-    }
-
-    private var stateText: String {
-        switch viewModel.state {
-        case .idle: "IDLE"
-        case .listening: "LISTENING"
-        case .recording: "RECORDING"
-        case .paused: "PAUSED"
-        }
-    }
-
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return String(format: "%02d:%02d", mins, secs)
     }
 
     // MARK: - Data Streams Bar
@@ -257,5 +256,47 @@ struct RecordingView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Helpers
+
+    private var stateColor: Color {
+        switch viewModel.state {
+        case .idle: RecallTheme.Colors.textMuted
+        case .listening: RecallTheme.Colors.neonCyan
+        case .recording: RecallTheme.Colors.neonGreen
+        case .paused: RecallTheme.Colors.neonAmber
+        }
+    }
+
+    private var stateText: String {
+        switch viewModel.state {
+        case .idle: "IDLE"
+        case .listening: "LISTENING"
+        case .recording: "RECORDING"
+        case .paused: "PAUSED"
+        }
+    }
+
+    private var subLabel: String {
+        switch viewModel.state {
+        case .recording: "VOICE DETECTED"
+        case .listening: "MONITORING"
+        case .paused: "PAUSED"
+        case .idle: ""
+        }
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return String(format: "%02d:%02d", mins, secs)
+    }
+
+    private func formatUptime(_ interval: TimeInterval) -> String {
+        let h = Int(interval) / 3600
+        let m = (Int(interval) % 3600) / 60
+        let s = Int(interval) % 60
+        return String(format: "%02d:%02d:%02d", h, m, s)
     }
 }
