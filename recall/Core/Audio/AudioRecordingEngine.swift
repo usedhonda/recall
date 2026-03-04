@@ -708,8 +708,28 @@ final class AudioRecordingEngine {
         let maxAttempts = 3
         logger.info("Resuming after interruption (attempt \(attempt)/\(maxAttempts))")
 
+        // On retry attempts, reset engine to clear corrupted state
+        if attempt > 1 {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            audioEngine.stop()
+            audioEngine.reset()
+            sessionManager.deactivate()
+        }
+
         do {
             try sessionManager.configure()
+
+            // Re-install tap if engine was reset
+            if attempt > 1 {
+                let inputNode = audioEngine.inputNode
+                let hwFormat = inputNode.outputFormat(forBus: 0)
+                let hwSampleRate = hwFormat.sampleRate
+                inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
+                    self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
+                }
+                audioEngine.prepare()
+            }
+
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
@@ -750,6 +770,12 @@ final class AudioRecordingEngine {
         // Stop engine and remove tap
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
+
+        // Full reset clears corrupted internal state ('what' error after interruption)
+        audioEngine.reset()
+
+        // Deactivate then reactivate session to clear stale audio state
+        sessionManager.deactivate()
 
         // Re-setup and start
         do {
