@@ -14,22 +14,26 @@ struct RecordingView: View {
     @State private var sessionStart: Date?
 
     var body: some View {
-        ZStack {
-            RecallTheme.Colors.bg.ignoresSafeArea()
-            ScanlineOverlay().ignoresSafeArea()
-
-            VStack(spacing: 0) {
+        VStack(spacing: 0) {
                 headerBar
 
+                NeonDivider(color: RecallTheme.Colors.neonCyan)
+                    .padding(.horizontal, 16)
+
                 ScrollView {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 16) {
                         dataStreamsBar
                             .padding(.horizontal, 12)
 
+                        NeonDivider()
+                            .padding(.horizontal, 24)
+
                         heroStateSection
-                            .padding(.vertical, 16)
+                            .padding(.vertical, 8)
 
                         metersSection
+                            .padding(12)
+                            .hudBrackets(color: stateColor.opacity(0.5))
                             .hudCardGlow(color: stateColor, isActive: viewModel.isActive)
                             .padding(.horizontal, 12)
 
@@ -37,17 +41,36 @@ struct RecordingView: View {
                             .padding(.horizontal, 12)
 
                         if let error = viewModel.errorMessage {
-                            Text(error)
-                                .font(RecallTheme.Fonts.hudCaption)
-                                .foregroundStyle(RecallTheme.Colors.neonRed)
-                                .padding(.horizontal)
+                            HStack(spacing: 4) {
+                                Text("[ERR]")
+                                    .font(RecallTheme.Fonts.hudMicro)
+                                    .foregroundStyle(RecallTheme.Colors.neonRed)
+                                Text(error)
+                                    .font(RecallTheme.Fonts.hudCaption)
+                                    .foregroundStyle(RecallTheme.Colors.neonRed)
+                            }
+                            .padding(.horizontal, 16)
                         }
 
+                        NeonDivider()
+                            .padding(.horizontal, 24)
+
                         activityLogSection
-                    }
+                        }
                     .padding(.bottom, 16)
                 }
             }
+        .background {
+            ZStack {
+                Color.black
+                Image("cyberpunk_bg")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .opacity(0.4)
+                VignetteOverlay()
+                ScanlineOverlay()
+            }
+            .ignoresSafeArea()
         }
         .onChange(of: viewModel.isActive) { _, active in
             if active {
@@ -62,46 +85,72 @@ struct RecordingView: View {
 
     @ViewBuilder
     private var headerBar: some View {
-        HStack {
-            Text("RECALL")
+        HStack(alignment: .firstTextBaseline) {
+            Text("R E C A L L")
                 .font(RecallTheme.Fonts.hudTitle)
                 .foregroundStyle(RecallTheme.Colors.neonCyan)
-                .tracking(4)
+
+            Text("v0.1")
+                .font(RecallTheme.Fonts.hudData)
+                .foregroundStyle(RecallTheme.Colors.textMuted)
+
             Spacer()
+
             if let start = sessionStart, viewModel.isActive {
                 TimelineView(.periodic(from: start, by: 1)) { context in
                     let elapsed = context.date.timeIntervalSince(start)
-                    Text(formatUptime(elapsed))
-                        .font(RecallTheme.Fonts.hudMeter)
-                        .foregroundStyle(RecallTheme.Colors.neonCyan)
-                        .neonGlow(color: RecallTheme.Colors.neonCyan, radius: 8)
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(RecallTheme.Colors.neonGreen)
+                            .frame(width: 4, height: 4)
+                        Text(formatUptime(elapsed))
+                            .font(RecallTheme.Fonts.hudMeter)
+                            .foregroundStyle(RecallTheme.Colors.neonCyan)
+                    }
                 }
+            } else {
+                Text("STANDBY")
+                    .font(RecallTheme.Fonts.hudData)
+                    .foregroundStyle(RecallTheme.Colors.textMuted)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Hero State
 
     @ViewBuilder
     private var heroStateSection: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
+            // System prefix
+            Text("SYS://STATUS")
+                .font(RecallTheme.Fonts.hudData)
+                .foregroundStyle(RecallTheme.Colors.textMuted)
+                .tracking(2)
+
             GlitchText(
                 text: stateText,
                 font: RecallTheme.Fonts.hudHero,
                 color: stateColor,
-                tracking: 6,
+                tracking: 4,
                 continuousGlitch: viewModel.isRecording
             )
-            .neonGlow(color: stateColor, radius: 16)
+            .neonGlow(color: stateColor, radius: 12)
+
+            // Accent line
+            Rectangle()
+                .fill(stateColor)
+                .frame(width: 60, height: 2)
+                .shadow(color: stateColor.opacity(0.8), radius: 4)
 
             if viewModel.isActive {
                 HStack(spacing: 6) {
-                    PulsingDot(color: stateColor)
+                    PulsingDot(color: stateColor, size: 6)
                     Text(subLabel)
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(stateColor)
+                        .tracking(1)
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
@@ -115,13 +164,13 @@ struct RecordingView: View {
     private var metersSection: some View {
         VStack(spacing: 12) {
             HUDMeterBar(
-                label: "RMS",
+                label: "SYS.RMS",
                 value: viewModel.currentRMS,
                 threshold: AppSettings.shared.rmsThreshold,
                 barColor: RecallTheme.Colors.neonCyan
             )
             HUDMeterBar(
-                label: "VAD",
+                label: "SYS.VAD",
                 value: viewModel.vadProbability,
                 threshold: AppSettings.shared.vadThreshold,
                 barColor: RecallTheme.Colors.neonGreen
@@ -144,11 +193,11 @@ struct RecordingView: View {
             }
 
             if viewModel.isRecording {
-                Text("  |  ")
+                Text(" // ")
                     .font(RecallTheme.Fonts.hudCaption)
                     .foregroundStyle(RecallTheme.Colors.textMuted)
                 HStack(spacing: 4) {
-                    Text("DURATION:")
+                    Text("DUR:")
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(RecallTheme.Colors.textSecondary)
                     Text(formatDuration(viewModel.currentChunkDuration))
@@ -168,6 +217,7 @@ struct RecordingView: View {
                 Text(">_ ACTIVITY LOG")
                     .font(RecallTheme.Fonts.hudTitle)
                     .foregroundStyle(RecallTheme.Colors.neonGreen)
+                    .tracking(1)
                 Spacer()
                 Button {
                     showLog.toggle()
@@ -189,11 +239,12 @@ struct RecordingView: View {
             if showLog {
                 ActivityLogView(entries: ActivityLogger.shared.entries)
                     .frame(maxHeight: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(RecallTheme.Colors.neonGreen.opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 2)
+                            .stroke(RecallTheme.Colors.neonGreen.opacity(0.2), lineWidth: 1)
                     )
+                    .hudBrackets(color: RecallTheme.Colors.neonGreen.opacity(0.4))
                     .padding(.horizontal, 8)
             }
         }

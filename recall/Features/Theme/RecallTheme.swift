@@ -29,7 +29,8 @@ enum RecallTheme {
         static let hudCaption = Font.system(size: 11, weight: .regular, design: .monospaced)
         static let hudMicro = Font.system(size: 9, weight: .medium, design: .monospaced)
         static let hudLarge = Font.system(size: 28, weight: .bold, design: .monospaced)
-        static let hudHero = Font.system(size: 36, weight: .black, design: .monospaced)
+        static let hudHero = Font.system(size: 28, weight: .black, design: .monospaced)
+        static let hudData = Font.system(size: 10, weight: .regular, design: .monospaced)
         static let hudMeter = Font.system(size: 15, weight: .medium, design: .monospaced)
     }
 }

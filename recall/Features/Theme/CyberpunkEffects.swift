@@ -159,3 +159,78 @@ struct PulsingDot: View {
             }
     }
 }
+
+// MARK: - VignetteOverlay
+
+struct VignetteOverlay: View {
+    var body: some View {
+        RadialGradient(
+            colors: [.clear, Color.black.opacity(0.6)],
+            center: .center,
+            startRadius: 200,
+            endRadius: 500
+        )
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - HUD Corner Bracket
+
+struct HUDCornerBrackets: ViewModifier {
+    var color: Color = RecallTheme.Colors.border
+    var length: CGFloat = 12
+    var lineWidth: CGFloat = 1
+
+    func body(content: Content) -> some View {
+        content.overlay(
+            GeometryReader { geo in
+                let w = geo.size.width
+                let h = geo.size.height
+                Canvas { ctx, _ in
+                    var path = Path()
+                    // Top-left
+                    path.move(to: CGPoint(x: 0, y: length))
+                    path.addLine(to: .zero)
+                    path.addLine(to: CGPoint(x: length, y: 0))
+                    // Top-right
+                    path.move(to: CGPoint(x: w - length, y: 0))
+                    path.addLine(to: CGPoint(x: w, y: 0))
+                    path.addLine(to: CGPoint(x: w, y: length))
+                    // Bottom-right
+                    path.move(to: CGPoint(x: w, y: h - length))
+                    path.addLine(to: CGPoint(x: w, y: h))
+                    path.addLine(to: CGPoint(x: w - length, y: h))
+                    // Bottom-left
+                    path.move(to: CGPoint(x: length, y: h))
+                    path.addLine(to: CGPoint(x: 0, y: h))
+                    path.addLine(to: CGPoint(x: 0, y: h - length))
+                    ctx.stroke(path, with: .color(color), lineWidth: lineWidth)
+                }
+            }
+            .allowsHitTesting(false)
+        )
+    }
+}
+
+extension View {
+    func hudBrackets(color: Color = RecallTheme.Colors.border) -> some View {
+        modifier(HUDCornerBrackets(color: color))
+    }
+}
+
+// MARK: - Neon Divider
+
+struct NeonDivider: View {
+    var color: Color = RecallTheme.Colors.border
+    var body: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [.clear, color.opacity(0.6), color, color.opacity(0.6), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(height: 1)
+    }
+}
