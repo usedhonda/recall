@@ -19,6 +19,11 @@ final class BackgroundKeepAlive {
 
     // MARK: - Public API
 
+    /// Whether the silent audio player is currently playing (for watchdog monitoring).
+    var isPlaying: Bool {
+        player?.isPlaying ?? false
+    }
+
     func start() {
         guard player == nil || player?.isPlaying != true else {
             logger.info("Keep-alive already running")

@@ -89,9 +89,20 @@ final class ChunkWriter {
 
         writerInput?.markAsFinished()
 
+        // Timeout-guarded finish: prevents hang if finishWriting callback never fires
+        let onceResumer = OnceResumer()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            onceResumer.setContinuation(continuation)
+
             writer.finishWriting {
-                continuation.resume()
+                onceResumer.resume()
+            }
+
+            // 5-second timeout: cancel writing and force-resume if callback is stuck
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) {
+                guard onceResumer.resume() else { return }
+                writer.cancelWriting()
+                self.logger.error("ChunkWriter.finish() timed out after 5s — cancelled writing")
             }
         }
 
@@ -190,6 +201,32 @@ final class ChunkWriter {
     }
 
     // MARK: - Errors
+
+    // MARK: - OnceResumer (thread-safe single-resume guard)
+
+    /// Ensures a CheckedContinuation is resumed exactly once, even with concurrent callers.
+    private final class OnceResumer: @unchecked Sendable {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private let lock = NSLock()
+
+        func setContinuation(_ c: CheckedContinuation<Void, Never>) {
+            lock.lock()
+            continuation = c
+            lock.unlock()
+        }
+
+        /// Returns `true` if this call actually resumed, `false` if already resumed.
+        @discardableResult
+        func resume() -> Bool {
+            lock.lock()
+            let cont = continuation
+            continuation = nil
+            lock.unlock()
+            guard let cont else { return false }
+            cont.resume()
+            return true
+        }
+    }
 
     enum ChunkWriterError: Error, LocalizedError {
         case cannotAddInput

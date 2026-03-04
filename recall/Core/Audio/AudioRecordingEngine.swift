@@ -226,12 +226,27 @@ final class AudioRecordingEngine {
         guard watchdogTask == nil else { return } // don't double-start
         watchdogTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
+                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
                 guard let self else { return }
 
                 switch self.state {
                 case .listening, .recording:
-                    // Normal operation: check ring buffer is receiving data
+                    // Check audio engine is still running
+                    if !self.audioEngine.isRunning {
+                        self.logger.warning("Watchdog: audioEngine not running, restarting")
+                        self.activity.log(.error, "Watchdog: audioEngine stopped — restarting")
+                        self.restartEngine()
+                        continue
+                    }
+
+                    // Check BackgroundKeepAlive is still playing
+                    if !BackgroundKeepAlive.shared.isPlaying {
+                        self.logger.warning("Watchdog: BackgroundKeepAlive not playing, resuming")
+                        self.activity.log(.error, "Watchdog: KeepAlive stopped — resuming")
+                        BackgroundKeepAlive.shared.resumePlayback()
+                    }
+
+                    // Check ring buffer is receiving data
                     let silentDuration = Date().timeIntervalSince(self.ringBuffer.lastWriteTime)
                     if silentDuration > 10 {
                         self.logger.warning("Watchdog: no audio data for \(Int(silentDuration))s, restarting engine")
@@ -256,6 +271,10 @@ final class AudioRecordingEngine {
     }
 
     private func startProcessingLoop() {
+        // Cancel any existing processing task to prevent double-running
+        processingTask?.cancel()
+        processingTask = nil
+
         processingTask = Task { [weak self] in
             guard let self else { return }
             // Process in ~100ms intervals
@@ -752,9 +771,9 @@ final class AudioRecordingEngine {
                     self.resumeAfterInterruption(attempt: attempt + 1)
                 }
             } else {
-                // All retries exhausted — go idle, watchdog will pick up
-                activity.log(.error, "All \(maxAttempts) resume attempts failed — watchdog will retry")
-                state = .idle
+                // All retries exhausted — full restart (more aggressive than resumeAfterInterruption)
+                activity.log(.error, "All \(maxAttempts) resume attempts failed — attempting full restartEngine()")
+                restartEngine()
             }
         }
     }
