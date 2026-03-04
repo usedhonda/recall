@@ -136,7 +136,7 @@ struct RecordingView: View {
                 tracking: 4,
                 continuousGlitch: viewModel.isRecording
             )
-            .neonGlow(color: stateColor, radius: 12)
+            .shadow(color: stateColor.opacity(heroGlowOpacity), radius: heroGlowRadius)
 
             // Accent line
             Rectangle()
@@ -326,6 +326,24 @@ struct RecordingView: View {
         case .listening: "LISTENING"
         case .recording: "RECORDING"
         case .paused: "PAUSED"
+        }
+    }
+
+    private var heroGlowOpacity: CGFloat {
+        switch viewModel.state {
+        case .idle: 0
+        case .listening: 0.3
+        case .recording: 0.6
+        case .paused: 0.2
+        }
+    }
+
+    private var heroGlowRadius: CGFloat {
+        switch viewModel.state {
+        case .idle: 0
+        case .listening: 4
+        case .recording: 8
+        case .paused: 3
         }
     }
 
