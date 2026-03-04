@@ -154,6 +154,13 @@ final class UploadManager {
         if chunk.vadAvgProb > 0 { metadata["vad_avg_prob"] = String(format: "%.4f", chunk.vadAvgProb) }
         if chunk.noiseFloorRMS > 0 { metadata["noise_floor_rms"] = String(format: "%.6f", chunk.noiseFloorRMS) }
 
+        // Location metadata (attach current position to audio chunk)
+        if let location = TelemetryService.shared.locationManager.currentLocation {
+            metadata["latitude"] = String(format: "%.6f", location.coordinate.latitude)
+            metadata["longitude"] = String(format: "%.6f", location.coordinate.longitude)
+            metadata["location_accuracy"] = String(format: "%.1f", location.horizontalAccuracy)
+        }
+
         chunk.uploadStatus = .uploading
         try? modelContext.save()
         uploadProgress = "Uploading \(chunk.fileName)..."
