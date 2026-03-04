@@ -214,8 +214,10 @@ final class AudioRecordingEngine {
 
     // MARK: - Processing Loop
 
+    /// Watchdog is immortal — never cancelled except by stop().
+    /// It survives restartEngine() failures and keeps retrying forever.
     private func startWatchdog() {
-        watchdogTask?.cancel()
+        guard watchdogTask == nil else { return } // don't double-start
         watchdogTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
@@ -705,7 +707,6 @@ final class AudioRecordingEngine {
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
-            startWatchdog()
             activity.log(.state, "Resumed after interruption — Listening (attempt \(attempt))")
         } catch {
             logger.error("Resume attempt \(attempt) failed: \(error.localizedDescription)")
@@ -733,10 +734,9 @@ final class AudioRecordingEngine {
 
     // MARK: - Engine Restart (shared by route change + watchdog)
 
+    /// Restart engine. Does NOT touch watchdog — watchdog is immortal.
     private func restartEngine() {
-        // Cancel existing processing
-        watchdogTask?.cancel()
-        watchdogTask = nil
+        // Cancel existing processing (but NOT watchdog)
         processingTask?.cancel()
         processingTask = nil
 
@@ -760,7 +760,6 @@ final class AudioRecordingEngine {
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
-            startWatchdog()
 
             logger.info("Engine restarted successfully (\(Int(hwSampleRate))Hz)")
             activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
@@ -768,6 +767,7 @@ final class AudioRecordingEngine {
             logger.error("Failed to restart engine: \(error.localizedDescription)")
             activity.log(.error, "Engine restart failed: \(error.localizedDescription)")
             state = .idle
+            // Watchdog remains alive — will retry in 30s
         }
     }
 }
