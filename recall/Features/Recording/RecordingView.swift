@@ -19,14 +19,12 @@ struct RecordingView: View {
 
                 NeonDivider(color: RecallTheme.Colors.neonCyan)
                     .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
 
                 ScrollView {
                     VStack(spacing: 16) {
                         dataStreamsBar
                             .padding(.horizontal, 12)
-
-                        NeonDivider()
-                            .padding(.horizontal, 24)
 
                         heroStateSection
                             .padding(.vertical, 8)
@@ -66,7 +64,7 @@ struct RecordingView: View {
                 Image("cyberpunk_bg")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .opacity(0.4)
+                    .opacity(0.85)
                 VignetteOverlay()
                 ScanlineOverlay()
             }

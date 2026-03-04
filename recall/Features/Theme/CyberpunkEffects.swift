@@ -165,10 +165,10 @@ struct PulsingDot: View {
 struct VignetteOverlay: View {
     var body: some View {
         RadialGradient(
-            colors: [.clear, Color.black.opacity(0.6)],
+            colors: [.clear, Color.black.opacity(0.25)],
             center: .center,
-            startRadius: 200,
-            endRadius: 500
+            startRadius: 250,
+            endRadius: 550
         )
         .allowsHitTesting(false)
     }
