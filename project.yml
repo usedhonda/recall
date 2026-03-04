@@ -57,6 +57,7 @@ targets:
         product: FluidAudio
       - sdk: HealthKit.framework
       - sdk: CoreLocation.framework
+      - sdk: MediaPlayer.framework
       - target: RecordingControl
         embed: true
     info:

@@ -164,6 +164,9 @@ final class AudioRecordingEngine {
         logger.info("Recording engine started, listening for voice")
         activity.log(.state, "Engine started — Listening (\(Int(hwSampleRate))Hz, buf=\(tapBufferSize))")
 
+        // Start silent playback + NowPlaying to keep iOS from killing our session
+        BackgroundKeepAlive.shared.start()
+
         // Start the processing loop
         startProcessingLoop()
 
@@ -186,6 +189,9 @@ final class AudioRecordingEngine {
                 await self.finalizeCurrentChunk()
             }
         }
+
+        // Stop keep-alive silent playback
+        BackgroundKeepAlive.shared.stop()
 
         state = .idle
         currentRMS = 0
@@ -707,6 +713,7 @@ final class AudioRecordingEngine {
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
+            BackgroundKeepAlive.shared.resumePlayback()
             activity.log(.state, "Resumed after interruption — Listening (attempt \(attempt))")
         } catch {
             logger.error("Resume attempt \(attempt) failed: \(error.localizedDescription)")
@@ -760,6 +767,7 @@ final class AudioRecordingEngine {
             try audioEngine.start()
             state = .listening
             startProcessingLoop()
+            BackgroundKeepAlive.shared.resumePlayback()
 
             logger.info("Engine restarted successfully (\(Int(hwSampleRate))Hz)")
             activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
