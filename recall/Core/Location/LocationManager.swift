@@ -91,9 +91,7 @@ final class LocationManager: NSObject {
         backgroundEnabled = settings.locationBackgroundEnabled
 
         let savedEnabled = settings.locationEnabled
-        if savedEnabled && hasAuthorization {
-            isEnabled = true
-        }
+        isEnabled = savedEnabled
     }
 
     // MARK: - Authorization
