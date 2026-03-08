@@ -3,6 +3,7 @@ import FluidAudio
 import Observation
 import OSLog
 import SwiftData
+import UIKit
 
 /// Central orchestrator: AVAudioEngine tap -> RingBuffer -> RMS -> VAD -> ChunkWriter.
 @Observable
@@ -70,6 +71,10 @@ final class AudioRecordingEngine {
     private var chunkRMSCount: Int = 0
     private var chunkVADSum: Float = 0
     private var chunkVADCount: Int = 0
+
+    // MARK: - Zombie Engine Detection
+
+    private var zombieSilenceCount: Int = 0
 
     // MARK: - Adaptive Noise Floor
 
@@ -229,12 +234,16 @@ final class AudioRecordingEngine {
                 try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
                 guard let self else { return }
 
+                // Heartbeat: always log watchdog cycle for liveness monitoring
+                self.activity.log(.state, "WD \(self.state.rawValue) eng=\(self.audioEngine.isRunning) ka=\(BackgroundKeepAlive.shared.isPlaying)")
+
                 switch self.state {
                 case .listening, .recording:
                     // Check audio engine is still running
                     if !self.audioEngine.isRunning {
                         self.logger.warning("Watchdog: audioEngine not running, restarting")
                         self.activity.log(.error, "Watchdog: audioEngine stopped — restarting")
+                        self.zombieSilenceCount = 0
                         self.restartEngine()
                         continue
                     }
@@ -251,7 +260,24 @@ final class AudioRecordingEngine {
                     if silentDuration > 10 {
                         self.logger.warning("Watchdog: no audio data for \(Int(silentDuration))s, restarting engine")
                         self.activity.log(.error, "Watchdog triggered — no data for \(Int(silentDuration))s, restarting")
+                        self.zombieSilenceCount = 0
                         self.restartEngine()
+                        continue
+                    }
+
+                    // Check for zombie engine (tap running but producing only silence/zeros)
+                    let recentSamples = self.ringBuffer.read(lastSamples: 1600) // 100ms at 16kHz
+                    let recentRMS = RMSCalculator.rms(of: recentSamples)
+                    if recentRMS < 0.0001 {
+                        self.zombieSilenceCount += 1
+                        if self.zombieSilenceCount >= 3 { // 30s continuous zero data
+                            self.activity.log(.error, "Watchdog: zombie engine (RMS~0 for \(self.zombieSilenceCount * 10)s) — force restart")
+                            self.zombieSilenceCount = 0
+                            self.restartEngine()
+                            continue
+                        }
+                    } else {
+                        self.zombieSilenceCount = 0
                     }
 
                 case .idle:
@@ -732,7 +758,11 @@ final class AudioRecordingEngine {
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
             audioEngine.reset()
-            // NOTE: Do NOT deactivate audio session here — see restartEngine() comment.
+            // Conditionally deactivate in foreground only (same rationale as restartEngine)
+            if UIApplication.shared.applicationState != .background {
+                sessionManager.deactivate()
+                activity.log(.state, "Session deactivated (foreground resume attempt \(attempt))")
+            }
         }
 
         do {
@@ -793,11 +823,14 @@ final class AudioRecordingEngine {
         // Full reset clears corrupted internal state ('what' error after interruption)
         audioEngine.reset()
 
-        // NOTE: Do NOT call sessionManager.deactivate() here.
-        // In background, deactivating the audio session causes iOS to revoke
-        // the audio background mode and suspend the app (freezing all Tasks
-        // including the watchdog). audioEngine.reset() is sufficient to clear
-        // stale engine state. sessionManager.configure() will reactivate if needed.
+        // Conditionally deactivate audio session in foreground only.
+        // In foreground: deactivate → reactivate cycle clears corrupted session state.
+        // In background: deactivating causes iOS to revoke audio background mode
+        // and suspend the app (freezing all Tasks including the watchdog).
+        if UIApplication.shared.applicationState != .background {
+            sessionManager.deactivate()
+            activity.log(.state, "Session deactivated (foreground restart)")
+        }
 
         // Re-setup and start
         do {
