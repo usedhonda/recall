@@ -1,7 +1,7 @@
 /**
  * POST /api/telemetry handler.
  *
- * Accepts batched telemetry events from Vibeterm iOS.
+ * Accepts batched telemetry events from recall iOS.
  * Deduplicates by UUID and stores in memory.
  *
  * Request:
@@ -34,6 +34,10 @@ const LOCATION_AGG_WINDOW_MS = 30 * 60 * 1000;
 const LOCATION_DEDUP_EPS = 0.0001;
 const LOCATION_MIN_WRITE_DISTANCE_M = 200;
 const LOCATION_MIN_WRITE_DURATION_MS = 30 * 60 * 1000;
+
+const MEMORY_ROOT = join(homedir(), ".openclaw", "workspace", "memory");
+const CURRENT_LOCATION_PATH = join(MEMORY_ROOT, "current-location.json");
+const HEALTH_STATE_PATH = join(MEMORY_ROOT, "health-state.json");
 
 let locationAggWindow = null;
 
@@ -125,9 +129,9 @@ async function flushLocationAggWindow(log) {
   try {
     await fs.mkdir(memoryDir, { recursive: true });
     await fs.appendFile(diaryPath, line, "utf-8");
-    log?.debug?.(`vibeterm-telemetry: location aggregated diary entry written to ${locationAggWindow.dateStr}.md`);
+    log?.debug?.(`recall-telemetry: location aggregated diary entry written to ${locationAggWindow.dateStr}.md`);
   } catch (err) {
-    log?.warn?.(`vibeterm-telemetry: failed to write aggregated diary: ${err.message}`);
+    log?.warn?.(`recall-telemetry: failed to write aggregated diary: ${err.message}`);
   } finally {
     locationAggWindow = null;
   }
@@ -237,9 +241,51 @@ async function maybeWriteHealthDiary(health, log) {
     await fs.mkdir(memoryDir, { recursive: true });
     await fs.appendFile(diaryPath, line, "utf-8");
     lastHealthDiaryWrite = now.getTime();
-    log?.debug?.(`vibeterm-telemetry: health diary entry written to ${dateStr}.md`);
+    log?.debug?.(`recall-telemetry: health diary entry written to ${dateStr}.md`);
   } catch (err) {
-    log?.warn?.(`vibeterm-telemetry: failed to write health diary: ${err.message}`);
+    log?.warn?.(`recall-telemetry: failed to write health diary: ${err.message}`);
+  }
+}
+
+/**
+ * Persist current location to disk for heartbeat/other consumers.
+ */
+async function persistCurrentLocation(sample, log) {
+  const now = new Date();
+  const state = {
+    lat: sample.lat,
+    lon: sample.lon,
+    accuracy: sample.accuracy,
+    altitude: sample.altitude,
+    speed: sample.speed,
+    timestamp: sample.timestamp,
+    updatedAt: now.toISOString(),
+    source: "recall-telemetry",
+  };
+  try {
+    await fs.mkdir(MEMORY_ROOT, { recursive: true });
+    await fs.writeFile(CURRENT_LOCATION_PATH, JSON.stringify(state, null, 2), "utf-8");
+  } catch (err) {
+    log?.warn?.(`recall-telemetry: failed to persist current-location.json: ${err.message}`);
+  }
+}
+
+/**
+ * Persist health state to disk for heartbeat/other consumers.
+ */
+async function persistHealthState(health, log) {
+  const now = new Date();
+  const state = {
+    ...health,
+    updatedAt: now.toISOString(),
+    receivedAt: now.toISOString(),
+    source: "recall-telemetry",
+  };
+  try {
+    await fs.mkdir(MEMORY_ROOT, { recursive: true });
+    await fs.writeFile(HEALTH_STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+  } catch (err) {
+    log?.warn?.(`recall-telemetry: failed to persist health-state.json: ${err.message}`);
   }
 }
 
@@ -289,7 +335,7 @@ export function createTelemetryHandler(api) {
   const log = api.logger;
 
   if (!gatewayToken) {
-    log?.warn?.("vibeterm-telemetry: no gateway auth token found in config");
+    log?.warn?.("recall-telemetry: no gateway auth token found in config");
   }
 
   return async (req, res) => {
@@ -303,7 +349,7 @@ export function createTelemetryHandler(api) {
     if (gatewayToken) {
       const auth = verifyAuth(req, gatewayToken);
       if (!auth.valid) {
-        log?.debug?.(`vibeterm-telemetry: auth failed: ${auth.error}`);
+        log?.debug?.(`recall-telemetry: auth failed: ${auth.error}`);
         sendError(res, 401, "UNAUTHORIZED", auth.error);
         return;
       }
@@ -350,17 +396,18 @@ export function createTelemetryHandler(api) {
         case "location": {
           const sample = { id: event.id, ...event.data, timestamp: event.timestamp };
           if (typeof sample.lat !== "number" || typeof sample.lon !== "number") {
-            log?.debug?.(`vibeterm-telemetry: skipping invalid location event: ${JSON.stringify(event).slice(0, 100)}`);
+            log?.debug?.(`recall-telemetry: skipping invalid location event: ${JSON.stringify(event).slice(0, 100)}`);
             break;
           }
           if (storeSample(sample)) {
             received++;
             maybeWriteDiary(sample, log).catch(() => {});
+            persistCurrentLocation(sample, log).catch(() => {});
           }
           break;
         }
         default:
-          log?.debug?.(`vibeterm-telemetry: unknown event type "${event.type}", skipping`);
+          log?.debug?.(`recall-telemetry: unknown event type "${event.type}", skipping`);
       }
     }
 
@@ -370,14 +417,15 @@ export function createTelemetryHandler(api) {
       storeHealth(body.health);
       healthReceived = true;
       maybeWriteHealthDiary(body.health, log).catch(() => {});
+      persistHealthState(body.health, log).catch(() => {});
     }
 
     const { lastLocationNewAt, lastHealthAt } = getLastSuccessTimes();
     log?.info?.(
-      `vibeterm-telemetry: httpAccepted=true locationNew=${received} healthReceived=${healthReceived}` +
+      `recall-telemetry: httpAccepted=true locationNew=${received} healthReceived=${healthReceived}` +
       ` lastLocationNewAt=${lastLocationNewAt ?? "-"} lastHealthAt=${lastHealthAt ?? "-"}`
     );
-    log?.info?.(`vibeterm-telemetry: processed ${events.length} events, ${received} new${healthReceived ? ", health received" : ""}`);
+    log?.info?.(`recall-telemetry: processed ${events.length} events, ${received} new${healthReceived ? ", health received" : ""}`);
 
     sendJson(res, {
       received,

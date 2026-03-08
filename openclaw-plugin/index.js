@@ -23,6 +23,7 @@ const plugin = {
     api.registerHttpRoute({
       path: "/api/telemetry",
       handler,
+      auth: "gateway",
     });
     api.logger?.info?.("recall-telemetry: registered POST /api/telemetry");
   },
