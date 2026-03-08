@@ -732,7 +732,7 @@ final class AudioRecordingEngine {
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
             audioEngine.reset()
-            sessionManager.deactivate()
+            // NOTE: Do NOT deactivate audio session here — see restartEngine() comment.
         }
 
         do {
@@ -793,8 +793,11 @@ final class AudioRecordingEngine {
         // Full reset clears corrupted internal state ('what' error after interruption)
         audioEngine.reset()
 
-        // Deactivate then reactivate session to clear stale audio state
-        sessionManager.deactivate()
+        // NOTE: Do NOT call sessionManager.deactivate() here.
+        // In background, deactivating the audio session causes iOS to revoke
+        // the audio background mode and suspend the app (freezing all Tasks
+        // including the watchdog). audioEngine.reset() is sufficient to clear
+        // stale engine state. sessionManager.configure() will reactivate if needed.
 
         // Re-setup and start
         do {

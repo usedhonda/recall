@@ -33,6 +33,7 @@ final class RecordingViewModel {
         } catch {
             errorMessage = error.localizedDescription
             logger.error("Failed to start: \(error)")
+            ActivityLogger.shared.log(.error, "ENGINE start failed: \(error)")
         }
     }
 
