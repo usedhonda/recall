@@ -264,21 +264,33 @@ final class HealthKitManager {
     // MARK: - Data Aggregation
 
     func aggregateHealthData(from start: Date, to end: Date) async -> HealthSummary {
-        var summary = HealthSummary(periodStart: start, periodEnd: end)
+        // Per-metric query windows (sendInterval is too narrow for most metrics)
+        let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: end)
+        let tenMinAgo = end.addingTimeInterval(-10 * 60)
+        let oneHourAgo = end.addingTimeInterval(-3600)
+        let twentyFourHoursAgo = end.addingTimeInterval(-24 * 3600)
 
-        async let stepsResult = queryCumulativeSum(.stepCount, unit: .count(), from: start, to: end)
-        async let energyResult = queryCumulativeSum(.activeEnergyBurned, unit: .kilocalorie(), from: start, to: end)
-        async let distanceResult = queryCumulativeSum(.distanceWalkingRunning, unit: .meter(), from: start, to: end)
-        async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: start, to: end)
-        async let restingHRResult = queryLatestSample(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: start, to: end)
-        async let hrvResult = queryDiscreteAvg(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: start, to: end)
-        async let oxygenResult = queryLatestSample(.oxygenSaturation, unit: .percent(), from: start, to: end)
-        async let respiratoryResult = queryDiscreteAvg(.respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute()), from: start, to: end)
-        async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: start, to: end)
-        async let bodyTempResult = queryLatestSample(.bodyTemperature, unit: .degreeCelsius(), from: start, to: end)
-        async let wristTempResult = queryLatestSample(.appleSleepingWristTemperature, unit: .degreeCelsius(), from: start, to: end)
-        async let sleepResult = querySleep(from: start, to: end)
-        async let workoutsResult = queryWorkouts(from: start, to: end)
+        var summary = HealthSummary(periodStart: todayStart, periodEnd: end)
+
+        // Cumulative daily totals — today 00:00 to now
+        async let stepsResult = queryCumulativeSum(.stepCount, unit: .count(), from: todayStart, to: end)
+        async let energyResult = queryCumulativeSum(.activeEnergyBurned, unit: .kilocalorie(), from: todayStart, to: end)
+        async let distanceResult = queryCumulativeSum(.distanceWalkingRunning, unit: .meter(), from: todayStart, to: end)
+        // Heart rate — last 10 min (Watch records every ~5 min)
+        async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: tenMinAgo, to: end)
+        // Low-frequency vitals — last 1 hour
+        async let restingHRResult = queryLatestSample(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: oneHourAgo, to: end)
+        async let hrvResult = queryDiscreteAvg(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: oneHourAgo, to: end)
+        async let oxygenResult = queryLatestSample(.oxygenSaturation, unit: .percent(), from: oneHourAgo, to: end)
+        async let respiratoryResult = queryDiscreteAvg(.respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute()), from: oneHourAgo, to: end)
+        // Once-daily body metrics — last 24 hours
+        async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: twentyFourHoursAgo, to: end)
+        async let bodyTempResult = queryLatestSample(.bodyTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
+        async let wristTempResult = queryLatestSample(.appleSleepingWristTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
+        // Daily summary — today
+        async let sleepResult = querySleep(from: todayStart, to: end)
+        async let workoutsResult = queryWorkouts(from: todayStart, to: end)
 
         if let steps = await stepsResult {
             summary.steps = Int(steps)

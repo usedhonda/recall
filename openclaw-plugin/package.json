@@ -1,0 +1,13 @@
+{
+  "name": "@recall/recall-telemetry",
+  "version": "2026.3.8",
+  "description": "Recall telemetry REST endpoint - receives location and health data from iOS",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.js"],
+    "install": {
+      "localPath": "openclaw-plugin",
+      "defaultChoice": "local"
+    }
+  }
+}

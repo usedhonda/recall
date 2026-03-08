@@ -1,0 +1,10 @@
+{
+  "id": "recall-telemetry",
+  "name": "Recall Telemetry",
+  "description": "REST endpoint for recall iOS location and health telemetry",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
