@@ -76,6 +76,7 @@ final class AudioRecordingEngine {
 
     private var zombieSilenceCount: Int = 0
     private var engineStartTime: Date = .distantPast
+    private var userStopped: Bool = false
 
     // MARK: - Adaptive Noise Floor
 
@@ -112,6 +113,7 @@ final class AudioRecordingEngine {
             logger.warning("Cannot start from state: \(self.state.rawValue)")
             return
         }
+        userStopped = false
 
         // Configure audio session
         try sessionManager.configure()
@@ -202,6 +204,7 @@ final class AudioRecordingEngine {
         BackgroundKeepAlive.shared.stop()
 
         state = .idle
+        userStopped = true
         currentRMS = 0
         vadProbability = 0
         silenceStart = nil
@@ -210,6 +213,7 @@ final class AudioRecordingEngine {
         pendingChunkStartedAt = nil
 
         logger.info("Recording engine stopped")
+        activity.log(.state, "Engine stopped (user)")
         activity.log(.state, "Engine stopped")
     }
 
@@ -290,6 +294,10 @@ final class AudioRecordingEngine {
                     }
 
                 case .idle:
+                    if self.userStopped {
+                        // User explicitly stopped — don't auto-restart
+                        break
+                    }
                     // Engine died (e.g. resume failed) — try full restart
                     self.logger.warning("Watchdog: engine idle, attempting full restart")
                     self.activity.log(.error, "Watchdog: engine idle — attempting restart")

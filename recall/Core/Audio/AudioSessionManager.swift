@@ -24,11 +24,13 @@ final class AudioSessionManager {
 
     func configure() throws {
         // Use built-in mic for ambient recording — avoid BluetoothHFP which routes
-        // audio input to connected devices (e.g. smart rings) at 16kHz with idle silence
+        // audio input to connected devices (e.g. smart rings) at 16kHz with idle silence.
+        // allowBluetoothA2DP: let Bluetooth headphones work for output (A2DP = output only,
+        // does not affect mic input). Without this, Bluetooth headphones are blocked.
         try session.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.mixWithOthers, .defaultToSpeaker]
+            options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
         )
 
         // iOS 17+: Don't treat Bluetooth disconnect as interruption
