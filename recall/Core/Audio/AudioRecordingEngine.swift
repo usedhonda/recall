@@ -75,6 +75,7 @@ final class AudioRecordingEngine {
     // MARK: - Zombie Engine Detection
 
     private var zombieSilenceCount: Int = 0
+    private var engineStartTime: Date = .distantPast
 
     // MARK: - Adaptive Noise Floor
 
@@ -166,6 +167,8 @@ final class AudioRecordingEngine {
         try audioEngine.start()
 
         state = .listening
+        engineStartTime = Date()
+        zombieSilenceCount = 0
         logger.info("Recording engine started, listening for voice")
         activity.log(.state, "Engine started — Listening (\(Int(hwSampleRate))Hz, buf=\(tapBufferSize))")
 
@@ -235,7 +238,9 @@ final class AudioRecordingEngine {
                 guard let self else { return }
 
                 // Heartbeat: always log watchdog cycle for liveness monitoring
-                self.activity.log(.state, "WD \(self.state.rawValue) eng=\(self.audioEngine.isRunning) ka=\(BackgroundKeepAlive.shared.isPlaying)")
+                let route = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portType.rawValue ?? "none"
+                let sr = Int(self.audioEngine.inputNode.outputFormat(forBus: 0).sampleRate)
+                self.activity.log(.state, "WD \(self.state.rawValue) eng=\(self.audioEngine.isRunning) ka=\(BackgroundKeepAlive.shared.isPlaying) \(sr)Hz \(route)")
 
                 switch self.state {
                 case .listening, .recording:
@@ -266,18 +271,22 @@ final class AudioRecordingEngine {
                     }
 
                     // Check for zombie engine (tap running but producing only silence/zeros)
-                    let recentSamples = self.ringBuffer.read(lastSamples: 1600) // 100ms at 16kHz
-                    let recentRMS = RMSCalculator.rms(of: recentSamples)
-                    if recentRMS < 0.0001 {
-                        self.zombieSilenceCount += 1
-                        if self.zombieSilenceCount >= 3 { // 30s continuous zero data
-                            self.activity.log(.error, "Watchdog: zombie engine (RMS~0 for \(self.zombieSilenceCount * 10)s) — force restart")
+                    // Skip during 60s grace period after engine start (tap needs warmup)
+                    let engineAge = Date().timeIntervalSince(self.engineStartTime)
+                    if engineAge > 60 {
+                        let recentSamples = self.ringBuffer.read(lastSamples: 1600) // 100ms at 16kHz
+                        let recentRMS = RMSCalculator.rms(of: recentSamples)
+                        if recentRMS < 0.0001 {
+                            self.zombieSilenceCount += 1
+                            if self.zombieSilenceCount >= 3 { // 30s continuous zero data
+                                self.activity.log(.error, "Watchdog: zombie engine (RMS~0 for \(self.zombieSilenceCount * 10)s) — force restart")
+                                self.zombieSilenceCount = 0
+                                self.restartEngine()
+                                continue
+                            }
+                        } else {
                             self.zombieSilenceCount = 0
-                            self.restartEngine()
-                            continue
                         }
-                    } else {
-                        self.zombieSilenceCount = 0
                     }
 
                 case .idle:
@@ -753,16 +762,10 @@ final class AudioRecordingEngine {
         let maxAttempts = 3
         logger.info("Resuming after interruption (attempt \(attempt)/\(maxAttempts))")
 
-        // On retry attempts, reset engine to clear corrupted state
+        // On retry attempts, stop and reinstall tap (avoid reset to preserve sample rate)
         if attempt > 1 {
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
-            audioEngine.reset()
-            // Conditionally deactivate in foreground only (same rationale as restartEngine)
-            if UIApplication.shared.applicationState != .background {
-                sessionManager.deactivate()
-                activity.log(.state, "Session deactivated (foreground resume attempt \(attempt))")
-            }
         }
 
         do {
@@ -811,26 +814,15 @@ final class AudioRecordingEngine {
     // MARK: - Engine Restart (shared by route change + watchdog)
 
     /// Restart engine. Does NOT touch watchdog — watchdog is immortal.
+    /// Avoids audioEngine.reset() which destroys inputNode and creates 16kHz replacement.
     private func restartEngine() {
         // Cancel existing processing (but NOT watchdog)
         processingTask?.cancel()
         processingTask = nil
 
-        // Stop engine and remove tap
+        // Stop engine and remove tap (preserve inputNode by NOT calling reset)
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
-
-        // Full reset clears corrupted internal state ('what' error after interruption)
-        audioEngine.reset()
-
-        // Conditionally deactivate audio session in foreground only.
-        // In foreground: deactivate → reactivate cycle clears corrupted session state.
-        // In background: deactivating causes iOS to revoke audio background mode
-        // and suspend the app (freezing all Tasks including the watchdog).
-        if UIApplication.shared.applicationState != .background {
-            sessionManager.deactivate()
-            activity.log(.state, "Session deactivated (foreground restart)")
-        }
 
         // Re-setup and start
         do {
@@ -840,6 +832,8 @@ final class AudioRecordingEngine {
             let hwFormat = inputNode.outputFormat(forBus: 0)
             let hwSampleRate = hwFormat.sampleRate
 
+            activity.log(.state, "Restart: format \(Int(hwSampleRate))Hz ch=\(hwFormat.channelCount)")
+
             inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
                 self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
             }
@@ -847,16 +841,39 @@ final class AudioRecordingEngine {
             audioEngine.prepare()
             try audioEngine.start()
             state = .listening
+            engineStartTime = Date()
+            zombieSilenceCount = 0
             startProcessingLoop()
             BackgroundKeepAlive.shared.resumePlayback()
 
-            logger.info("Engine restarted successfully (\(Int(hwSampleRate))Hz)")
             activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
         } catch {
-            logger.error("Failed to restart engine: \(error.localizedDescription)")
-            activity.log(.error, "Engine restart failed: \(error.localizedDescription)")
-            state = .idle
-            // Watchdog remains alive — will retry in 30s
+            // If stop+start fails, try with full reset as last resort
+            activity.log(.error, "Soft restart failed: \(error.localizedDescription), trying hard reset")
+            audioEngine.reset()
+            do {
+                try sessionManager.configure()
+                let inputNode = audioEngine.inputNode
+                let hwFormat = inputNode.outputFormat(forBus: 0)
+                let hwSampleRate = hwFormat.sampleRate
+                activity.log(.state, "Hard reset format: \(Int(hwSampleRate))Hz")
+
+                inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
+                    self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
+                }
+                audioEngine.prepare()
+                try audioEngine.start()
+                state = .listening
+                engineStartTime = Date()
+                zombieSilenceCount = 0
+                startProcessingLoop()
+                BackgroundKeepAlive.shared.resumePlayback()
+                activity.log(.state, "Engine restarted (hard) — Listening (\(Int(hwSampleRate))Hz)")
+            } catch {
+                logger.error("Failed to restart engine: \(error.localizedDescription)")
+                activity.log(.error, "Engine restart failed: \(error.localizedDescription)")
+                state = .idle
+            }
         }
     }
 }
