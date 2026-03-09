@@ -264,11 +264,10 @@ final class HealthKitManager {
     // MARK: - Data Aggregation
 
     func aggregateHealthData(from start: Date, to end: Date) async -> HealthSummary {
-        // Per-metric query windows (sendInterval is too narrow for most metrics)
+        // Per-metric query windows — widened for smart ring batch sync patterns
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: end)
-        let tenMinAgo = end.addingTimeInterval(-10 * 60)
-        let oneHourAgo = end.addingTimeInterval(-3600)
+        let twoHoursAgo = end.addingTimeInterval(-2 * 3600)
         let twentyFourHoursAgo = end.addingTimeInterval(-24 * 3600)
 
         var summary = HealthSummary(periodStart: todayStart, periodEnd: end)
@@ -277,19 +276,20 @@ final class HealthKitManager {
         async let stepsResult = queryCumulativeSum(.stepCount, unit: .count(), from: todayStart, to: end)
         async let energyResult = queryCumulativeSum(.activeEnergyBurned, unit: .kilocalorie(), from: todayStart, to: end)
         async let distanceResult = queryCumulativeSum(.distanceWalkingRunning, unit: .meter(), from: todayStart, to: end)
-        // Heart rate — last 10 min (Watch records every ~5 min)
-        async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: tenMinAgo, to: end)
-        // Low-frequency vitals — last 1 hour
-        async let restingHRResult = queryLatestSample(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: oneHourAgo, to: end)
-        async let hrvResult = queryDiscreteAvg(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: oneHourAgo, to: end)
-        async let oxygenResult = queryLatestSample(.oxygenSaturation, unit: .percent(), from: oneHourAgo, to: end)
-        async let respiratoryResult = queryDiscreteAvg(.respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute()), from: oneHourAgo, to: end)
-        // Once-daily body metrics — last 24 hours
+        // Heart rate — last 2 hours (smart rings batch-sync, not realtime like Watch)
+        async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twoHoursAgo, to: end)
+        // Vitals — last 24 hours (resting HR, HRV, SpO2 are typically calculated once per sleep/day)
+        async let restingHRResult = queryLatestSample(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
+        async let hrvResult = queryDiscreteAvg(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: twentyFourHoursAgo, to: end)
+        async let oxygenResult = queryLatestSample(.oxygenSaturation, unit: .percent(), from: twentyFourHoursAgo, to: end)
+        async let respiratoryResult = queryDiscreteAvg(.respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
+        // Body metrics — last 24 hours
         async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: twentyFourHoursAgo, to: end)
         async let bodyTempResult = queryLatestSample(.bodyTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
         async let wristTempResult = queryLatestSample(.appleSleepingWristTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
-        // Daily summary — today
-        async let sleepResult = querySleep(from: todayStart, to: end)
+        // Sleep — look back to previous evening (sleep spans midnight)
+        let sleepLookback = calendar.date(byAdding: .hour, value: -14, to: end) ?? twentyFourHoursAgo
+        async let sleepResult = querySleep(from: sleepLookback, to: end)
         async let workoutsResult = queryWorkouts(from: todayStart, to: end)
 
         if let steps = await stepsResult {

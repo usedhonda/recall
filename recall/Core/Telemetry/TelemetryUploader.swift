@@ -269,92 +269,19 @@ final class TelemetryUploader: NSObject {
         }
     }
 
-    /// Query HealthKit data for background upload piggyback
+    /// Query HealthKit data for background upload piggyback.
+    /// Delegates to HealthKitManager for consistent query windows across all code paths.
     @MainActor
     private func queryHealthForBackground() async -> HealthSummary? {
         guard AppSettings.shared.healthEnabled else { return nil }
         guard HKHealthStore.isHealthDataAvailable() else { return nil }
 
-        let store = HKHealthStore()
         let now = Date()
-        let start = now.addingTimeInterval(-3600)
-
-        var summary = HealthSummary(periodStart: start, periodEnd: now)
-
-        // Steps (today)
-        if let type = HKQuantityType.quantityType(forIdentifier: .stepCount) {
-            let predicate = HKQuery.predicateForSamples(withStart: Calendar.current.startOfDay(for: now), end: now)
-            summary.steps = await queryCumulativeSum(store: store, type: type, unit: .count(), predicate: predicate).map { Int($0) }
-        }
-
-        // Heart rate (last hour)
-        if let type = HKQuantityType.quantityType(forIdentifier: .heartRate) {
-            let predicate = HKQuery.predicateForSamples(withStart: start, end: now)
-            let unit = HKUnit.count().unitDivided(by: .minute())
-            if let stats = await queryStats(store: store, type: type, unit: unit, predicate: predicate, options: [.discreteAverage, .discreteMin, .discreteMax]) {
-                summary.heartRateAvg = stats.avg
-                summary.heartRateMin = stats.min
-                summary.heartRateMax = stats.max
-            }
-        }
-
-        // Active energy (today)
-        if let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) {
-            let predicate = HKQuery.predicateForSamples(withStart: Calendar.current.startOfDay(for: now), end: now)
-            summary.activeEnergyKcal = await queryCumulativeSum(store: store, type: type, unit: .kilocalorie(), predicate: predicate)
-        }
-
-        // Distance (today)
-        if let type = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning) {
-            let predicate = HKQuery.predicateForSamples(withStart: Calendar.current.startOfDay(for: now), end: now)
-            summary.distanceMeters = await queryCumulativeSum(store: store, type: type, unit: .meter(), predicate: predicate)
-        }
-
-        // SpO2
-        if let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) {
-            let predicate = HKQuery.predicateForSamples(withStart: start, end: now)
-            if let val = await queryLatest(store: store, type: type, unit: .percent(), predicate: predicate) {
-                summary.bloodOxygenPercent = val * 100
-            }
-        }
+        let manager = HealthKitManager()
+        let summary = await manager.aggregateHealthData(from: now.addingTimeInterval(-3600), to: now)
 
         let hasData = summary.steps != nil || summary.heartRateAvg != nil || summary.activeEnergyKcal != nil
         return hasData ? summary : nil
-    }
-
-    // MARK: - Background HealthKit Query Helpers
-
-    private func queryCumulativeSum(store: HKHealthStore, type: HKQuantityType, unit: HKUnit, predicate: NSPredicate) async -> Double? {
-        await withCheckedContinuation { continuation in
-            let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, stats, _ in
-                continuation.resume(returning: stats?.sumQuantity()?.doubleValue(for: unit))
-            }
-            store.execute(query)
-        }
-    }
-
-    private func queryStats(store: HKHealthStore, type: HKQuantityType, unit: HKUnit, predicate: NSPredicate, options: HKStatisticsOptions) async -> (avg: Double, min: Double, max: Double)? {
-        await withCheckedContinuation { continuation in
-            let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: options) { _, stats, _ in
-                guard let avg = stats?.averageQuantity()?.doubleValue(for: unit),
-                      let min = stats?.minimumQuantity()?.doubleValue(for: unit),
-                      let max = stats?.maximumQuantity()?.doubleValue(for: unit) else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                continuation.resume(returning: (avg, min, max))
-            }
-            store.execute(query)
-        }
-    }
-
-    private func queryLatest(store: HKHealthStore, type: HKQuantityType, unit: HKUnit, predicate: NSPredicate) async -> Double? {
-        await withCheckedContinuation { continuation in
-            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 1, sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]) { _, samples, _ in
-                continuation.resume(returning: (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
-            }
-            store.execute(query)
-        }
     }
 
     /// Process completed background session
