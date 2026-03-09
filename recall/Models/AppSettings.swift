@@ -41,12 +41,12 @@ final class AppSettings {
     }
 
     var uploadServerURL: String {
-        get { UserDefaults.standard.string(forKey: "uploadServerURL") ?? "http://192.0.2.10:8300" }
+        get { UserDefaults.standard.string(forKey: "uploadServerURL") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "uploadServerURL") }
     }
 
     var debugLogHost: String {
-        get { UserDefaults.standard.string(forKey: "debugLogHost") ?? "192.0.2.11" }
+        get { UserDefaults.standard.string(forKey: "debugLogHost") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "debugLogHost") }
     }
 

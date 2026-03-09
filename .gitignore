@@ -20,6 +20,14 @@ build/
 Packages/
 Package.resolved
 *.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+!recall.xcodeproj/
+!recall.xcodeproj/project.xcworkspace/
+!recall.xcodeproj/project.xcworkspace/xcshareddata/
+!recall.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+!recall.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+recall.xcodeproj/project.pbxproj
+recall.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+recall.xcodeproj/xcshareddata/
 
 # Local config
 .local/
@@ -37,11 +45,14 @@ Pods/
 
 # Claude
 .claude/
+CLAUDE.md
 
 # Docs
 docs/log/
 docs/ask/
 
 .codex/config.toml
+.cc-status-bar*
+*.env.local
 
 AGENTS.md

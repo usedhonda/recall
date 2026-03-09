@@ -158,11 +158,15 @@ final class UploadManager {
 
     private func uploadChunk(_ chunk: AudioChunk, modelContext: ModelContext) async {
         let settings = AppSettings.shared
-        guard let serverURL = URL(string: settings.uploadServerURL + "/ingest") else {
+        guard let baseURL = URL(string: settings.uploadServerURL),
+              let scheme = baseURL.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              baseURL.host != nil else {
             Self.logger.error("Invalid upload server URL: \(settings.uploadServerURL)")
             uploadProgress = "Invalid server URL"
             return
         }
+        let serverURL = baseURL.appendingPathComponent("ingest")
 
         let fileURL = URL(fileURLWithPath: chunk.filePath)
         guard FileManager.default.fileExists(atPath: chunk.filePath) else {

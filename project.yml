@@ -87,9 +87,6 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
               NSExceptionRequiresForwardSecrecy: false
               NSIncludesSubdomains: true
-            192.0.2.10:
-              NSExceptionAllowsInsecureHTTPLoads: true
-              NSExceptionRequiresForwardSecrecy: false
 
   RecordingControl:
     type: app-extension

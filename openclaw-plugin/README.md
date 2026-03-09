@@ -159,12 +159,6 @@ Throttle:
 - location: 30分ウィンドウで事前集計し、移動200m以上または継続30分以上のウィンドウのみ記録
 - health: max 1 write per 30min
 
-## API Reference
-
-Full specification:
-
-- `docs/openclaw-telemetry-api.md`
-
 ## Troubleshooting
 
 ### Plugin not loading

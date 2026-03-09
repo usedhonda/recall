@@ -38,15 +38,6 @@ struct RecallApp: App {
                         AppSettings.shared.rmsThreshold = 0.002
                     }
 
-                    // Auto-configure telemetry server if not set
-                    if AppSettings.shared.telemetryServerURL.isEmpty {
-                        AppSettings.shared.telemetryServerURL = "http://telemetry.example.invalid:18789"
-                    }
-                    // Auto-configure telemetry token if not set
-                    if !KeychainHelper.shared.hasToken {
-                        try? KeychainHelper.shared.saveToken("REDACTED_TELEMETRY_TOKEN")
-                    }
-
                     // Force telemetry interval to 15s for max frequency
                     if AppSettings.shared.telemetrySendInterval > 15 {
                         AppSettings.shared.telemetrySendInterval = 15
