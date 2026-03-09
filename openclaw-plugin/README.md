@@ -1,13 +1,21 @@
-# Vibeterm Telemetry - OpenClaw Plugin
+# Recall Telemetry - OpenClaw Plugin
 
-Receives Vibeterm iOS telemetry via `POST /api/telemetry`.
+Receives recall iOS telemetry via `POST /api/telemetry`.
+
+Important naming note:
+
+- Product name: `recall`
+- Current OpenClaw plugin display name / manifest: `Recall Telemetry`
+- Current install directory and config namespace: `vibeterm-telemetry` (legacy compatibility)
+
+This repository no longer uses `vibeterm` as the product name. The legacy plugin ID / config namespace remains in install and host config paths for compatibility with existing OpenClaw setups.
 
 Supported telemetry:
 
-- location samples (`samples` / `events`)
+- location events (`events`) and legacy location samples (`samples`)
 - health summary (`health`)
 
-The plugin deduplicates location events, stores latest snapshots in memory, and writes diary lines for OpenClaw context.
+The plugin deduplicates location events, stores runtime state in memory, persists latest snapshots to disk, and writes diary lines for OpenClaw context.
 
 ## Prerequisites
 
@@ -37,7 +45,7 @@ Default behavior:
 
 1. Copies plugin files into `~/.openclaw/extensions/vibeterm-telemetry/`
 2. Backs up `~/.openclaw/openclaw.json`
-3. Registers `plugins.entries.vibeterm-telemetry.enabled = true`
+3. Registers `plugins.entries.vibeterm-telemetry.enabled = true` (legacy namespace, still expected today)
 4. Restarts OpenClaw gateway (unless disabled)
 
 ## Installer Options
@@ -56,6 +64,8 @@ Default behavior:
 
 ## Manual Install
 
+Manual install still uses the legacy namespace below. That is intentional today because `install.sh` and existing OpenClaw hosts still expect `vibeterm-telemetry`.
+
 ### 1. Copy plugin files
 
 ```bash
@@ -65,7 +75,7 @@ cp -R openclaw-plugin/* ~/.openclaw/extensions/vibeterm-telemetry/
 
 ### 2. Register plugin
 
-Update `~/.openclaw/openclaw.json`:
+Update `~/.openclaw/openclaw.json` and enable the legacy namespace key:
 
 ```json
 {
@@ -88,7 +98,14 @@ openclaw gateway start
 
 ## Verify
 
-### 1) Location only
+Verification should also assume the current compatibility state:
+
+- Endpoint path is `POST /api/telemetry`
+- Auth token comes from `gateway.auth.token`
+- Preferred location payload is `events`
+- Legacy `samples` payload is still accepted for older clients
+
+### 1) Location only (`events`, preferred)
 
 ```bash
 TOKEN=$(python3 -c "import json; print(json.load(open('$HOME/.openclaw/openclaw.json'))['gateway']['auth']['token'])")
@@ -96,7 +113,7 @@ TOKEN=$(python3 -c "import json; print(json.load(open('$HOME/.openclaw/openclaw.
 curl -s -X POST http://localhost:18789/api/telemetry \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"samples":[{"id":"test-loc-001","lat":35.6762,"lon":139.6503,"accuracy":10,"timestamp":"2026-01-01T00:00:00Z"}]}'
+  -d '{"events":[{"type":"location","id":"test-loc-001","timestamp":"2026-01-01T00:00:00Z","data":{"lat":35.6762,"lon":139.6503,"accuracy":10}}]}'
 ```
 
 Expected response:
@@ -126,7 +143,7 @@ Expected response:
 curl -s -X POST http://localhost:18789/api/telemetry \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"samples":[{"id":"test-mix-001","lat":35.68,"lon":139.66,"accuracy":12,"timestamp":"2026-01-01T01:00:00Z"}],"health":{"steps":7100,"heartRateAvg":70}}'
+  -d '{"events":[{"type":"location","id":"test-mix-001","timestamp":"2026-01-01T01:00:00Z","data":{"lat":35.68,"lon":139.66,"accuracy":12}}],"health":{"steps":7100,"heartRateAvg":70}}'
 ```
 
 Expected response:
@@ -137,11 +154,17 @@ Expected response:
 
 ## Data Behavior
 
-### In-memory state
+### Runtime state
 
-- latest location snapshot
-- location history ring buffer
-- latest health summary
+- Location dedup cache with 1-hour TTL
+- Location history ring buffer (last 100 samples)
+- Latest location snapshot in memory
+- Latest health summary in memory
+
+### Persisted state
+
+- `~/.openclaw/workspace/memory/current-location.json`
+- `~/.openclaw/workspace/memory/health-state.json`
 
 ### Diary writes
 
@@ -165,7 +188,8 @@ Throttle:
 
 - Check `~/.openclaw/logs/gateway.log`
 - Confirm `~/.openclaw/extensions/vibeterm-telemetry/openclaw.plugin.json` exists
-- Confirm plugin enabled in `~/.openclaw/openclaw.json`
+- Confirm `plugins.entries.vibeterm-telemetry.enabled = true` in `~/.openclaw/openclaw.json`
+- The `vibeterm-telemetry` directory/key is legacy naming and is still correct today
 
 ### 401 Unauthorized
 
@@ -186,3 +210,31 @@ Throttle:
 The installer restores the latest backup under:
 
 - `~/.openclaw/backups/vibeterm-telemetry/`
+
+## Migration Plan (Draft)
+
+### Phase 1: Document the compatibility state
+
+- Keep product naming as `recall` in docs and UI
+- Keep install directory and host config namespace as `vibeterm-telemetry`
+- Treat the legacy namespace as expected behavior, not a user mistake
+
+### Phase 2: Add dual-read compatibility
+
+- Teach plugin discovery / host config loading to accept both `recall-telemetry` and `vibeterm-telemetry`
+- Prefer `recall-telemetry` as the canonical name in logs and docs
+- Keep legacy read compatibility so existing hosts continue to boot without manual edits
+
+### Phase 3: Ship migration tooling
+
+- Update installer to detect an existing `vibeterm-telemetry` install and migrate it to `recall-telemetry`
+- Migrate `plugins.entries.vibeterm-telemetry` to `plugins.entries.recall-telemetry`
+- Preserve backups and rollback instructions so hosts can recover if migration fails
+- During this phase, keep compatibility reads enabled for both names
+
+### Phase 4: Remove the legacy namespace
+
+- Only set a hard removal date after dual-read support and migration tooling have shipped
+- Keep the legacy read path for at least one release cycle or 30 days, whichever is longer
+- Before removal, warn in release notes and docs that `vibeterm-telemetry` will stop loading
+- After the deadline, remove legacy reads and treat `recall-telemetry` as the only supported namespace
