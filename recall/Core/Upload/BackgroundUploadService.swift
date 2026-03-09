@@ -6,6 +6,10 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
 
     private static let logger = Logger(subsystem: "com.recall", category: "BackgroundUploadService")
     private static let backgroundIdentifier = "com.recall.background-upload"
+    private static let stateDirectoryName = "BackgroundUploadState"
+    private static let pendingUploadsFileName = "pending-uploads.json"
+    private static let completedUploadsFileName = "completed-uploads.json"
+    private static let reconcileGraceSeconds: TimeInterval = 15
 
     private let foregroundSession: URLSession = {
         let config = URLSessionConfiguration.default
@@ -13,6 +17,7 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
         config.timeoutIntervalForResource = 300
         return URLSession(configuration: config)
     }()
+    private let stateQueue = DispatchQueue(label: "com.recall.background-upload.state")
 
     // Background session for when the app is backgrounded
     private var backgroundSession: URLSession?
@@ -41,6 +46,61 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
     /// Initialize the background session (call on app launch to reconnect to pending transfers)
     func initializeBackgroundSession() {
         _ = getBackgroundSession()
+    }
+
+    func activeBackgroundChunkIDs() async -> Set<UUID> {
+        let tasks = await getBackgroundSession().allTasks
+        return Set(tasks.compactMap { task in
+            guard let description = task.taskDescription else { return nil }
+            return UUID(uuidString: description)
+        })
+    }
+
+    func backgroundUploadSnapshot(now: Date = Date()) async -> BackgroundUploadSnapshot {
+        let activeChunkIDs = await activeBackgroundChunkIDs()
+        let activeStrings = Set(activeChunkIDs.map(\.uuidString))
+
+        return stateQueue.sync {
+            var pending = loadPendingUploadsLocked()
+            var didPrune = false
+
+            for (key, record) in pending {
+                guard let chunkID = UUID(uuidString: key) else {
+                    if let removed = pending.removeValue(forKey: key) {
+                        try? FileManager.default.removeItem(at: URL(fileURLWithPath: removed.tempFilePath))
+                    }
+                    didPrune = true
+                    continue
+                }
+
+                guard !activeStrings.contains(key) else { continue }
+                let queuedAt = record.queuedAt ?? now
+                guard now.timeIntervalSince(queuedAt) >= Self.reconcileGraceSeconds else { continue }
+
+                if let removed = pending.removeValue(forKey: key) {
+                    Self.logger.warning("Pruned stale background upload record: \(chunkID.uuidString)")
+                    try? FileManager.default.removeItem(at: URL(fileURLWithPath: removed.tempFilePath))
+                }
+                didPrune = true
+            }
+
+            if didPrune {
+                savePendingUploadsLocked(pending)
+            }
+
+            return BackgroundUploadSnapshot(
+                activeChunkIDs: activeChunkIDs,
+                pendingChunkIDs: Set(pending.keys.compactMap(UUID.init(uuidString:)))
+            )
+        }
+    }
+
+    func drainCompletedUploads() -> [CompletedBackgroundUpload] {
+        stateQueue.sync {
+            let outcomes = loadCompletedUploadsLocked()
+            saveCompletedUploadsLocked([])
+            return outcomes
+        }
     }
 
     /// Upload an audio file to the VoiceLog server.
@@ -96,7 +156,7 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
     }
 
     /// Upload using background session (writes multipart body to temp file)
-    func backgroundUpload(fileURL: URL, to serverURL: URL, metadata: [String: String]) throws {
+    func backgroundUpload(chunkID: UUID, fileURL: URL, to serverURL: URL, metadata: [String: String]) throws {
         let fileData = try Data(contentsOf: fileURL)
         let fileName = fileURL.lastPathComponent
 
@@ -120,8 +180,115 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
         let body = form.build()
         try body.write(to: tempURL)
 
+        let task = getBackgroundSession().uploadTask(with: request, fromFile: tempURL)
+        task.taskDescription = chunkID.uuidString
+        stateQueue.sync {
+            var pending = loadPendingUploadsLocked()
+            pending[chunkID.uuidString] = PendingBackgroundUpload(
+                chunkID: chunkID.uuidString,
+                tempFilePath: tempURL.path,
+                queuedAt: Date()
+            )
+            savePendingUploadsLocked(pending)
+        }
+
         Self.logger.info("Background uploading \(fileName) (\(fileData.count) bytes)")
-        getBackgroundSession().uploadTask(with: request, fromFile: tempURL).resume()
+        task.resume()
+    }
+
+    private func recordCompletion(for task: URLSessionTask, error: Error?) {
+        guard let chunkID = task.taskDescription, !chunkID.isEmpty else { return }
+
+        stateQueue.sync {
+            var pending = loadPendingUploadsLocked()
+            let pendingRecord = pending.removeValue(forKey: chunkID)
+            savePendingUploadsLocked(pending)
+
+            if let pendingRecord {
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: pendingRecord.tempFilePath))
+            }
+
+            var completed = loadCompletedUploadsLocked()
+            let outcome: CompletedBackgroundUpload
+            if let error {
+                outcome = CompletedBackgroundUpload(
+                    chunkID: chunkID,
+                    status: .failed,
+                    detail: error.localizedDescription,
+                    completedAt: Date()
+                )
+            } else if let response = task.response as? HTTPURLResponse {
+                if (200...299).contains(response.statusCode) {
+                    outcome = CompletedBackgroundUpload(
+                        chunkID: chunkID,
+                        status: .uploaded,
+                        detail: "HTTP \(response.statusCode)",
+                        completedAt: Date()
+                    )
+                } else {
+                    outcome = CompletedBackgroundUpload(
+                        chunkID: chunkID,
+                        status: .failed,
+                        detail: "HTTP \(response.statusCode)",
+                        completedAt: Date()
+                    )
+                }
+            } else {
+                outcome = CompletedBackgroundUpload(
+                    chunkID: chunkID,
+                    status: .failed,
+                    detail: "invalid response",
+                    completedAt: Date()
+                )
+            }
+
+            completed.append(outcome)
+            saveCompletedUploadsLocked(completed)
+        }
+    }
+
+    private static var stateDirectoryURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return appSupport.appendingPathComponent(stateDirectoryName, isDirectory: true)
+    }
+
+    private static var pendingUploadsURL: URL {
+        stateDirectoryURL.appendingPathComponent(pendingUploadsFileName)
+    }
+
+    private static var completedUploadsURL: URL {
+        stateDirectoryURL.appendingPathComponent(completedUploadsFileName)
+    }
+
+    private func ensureStateDirectoryLocked() {
+        try? FileManager.default.createDirectory(
+            at: Self.stateDirectoryURL,
+            withIntermediateDirectories: true
+        )
+    }
+
+    private func loadPendingUploadsLocked() -> [String: PendingBackgroundUpload] {
+        ensureStateDirectoryLocked()
+        guard let data = try? Data(contentsOf: Self.pendingUploadsURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: PendingBackgroundUpload].self, from: data)) ?? [:]
+    }
+
+    private func savePendingUploadsLocked(_ uploads: [String: PendingBackgroundUpload]) {
+        ensureStateDirectoryLocked()
+        let data = try? JSONEncoder().encode(uploads)
+        try? data?.write(to: Self.pendingUploadsURL, options: .atomic)
+    }
+
+    private func loadCompletedUploadsLocked() -> [CompletedBackgroundUpload] {
+        ensureStateDirectoryLocked()
+        guard let data = try? Data(contentsOf: Self.completedUploadsURL) else { return [] }
+        return (try? JSONDecoder().decode([CompletedBackgroundUpload].self, from: data)) ?? []
+    }
+
+    private func saveCompletedUploadsLocked(_ uploads: [CompletedBackgroundUpload]) {
+        ensureStateDirectoryLocked()
+        let data = try? JSONEncoder().encode(uploads)
+        try? data?.write(to: Self.completedUploadsURL, options: .atomic)
     }
 }
 
@@ -138,6 +305,7 @@ extension BackgroundUploadService: URLSessionDelegate, URLSessionDataDelegate {
         } else {
             Self.logger.info("Background upload task completed")
         }
+        recordCompletion(for: task, error: error)
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
@@ -159,6 +327,29 @@ extension BackgroundUploadService: URLSessionDelegate, URLSessionDataDelegate {
 }
 
 // MARK: - UploadError
+
+struct CompletedBackgroundUpload: Codable {
+    enum Status: String, Codable {
+        case uploaded
+        case failed
+    }
+
+    let chunkID: String
+    let status: Status
+    let detail: String
+    let completedAt: Date
+}
+
+private struct PendingBackgroundUpload: Codable {
+    let chunkID: String
+    let tempFilePath: String
+    let queuedAt: Date?
+}
+
+struct BackgroundUploadSnapshot {
+    let activeChunkIDs: Set<UUID>
+    let pendingChunkIDs: Set<UUID>
+}
 
 enum UploadError: LocalizedError {
     case invalidMetadata

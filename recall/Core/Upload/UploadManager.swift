@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import OSLog
 import SwiftData
+import UIKit
 
 @Observable
 @MainActor
@@ -27,10 +28,12 @@ final class UploadManager {
         guard !isUploading else { return }
         shouldContinue = true
         isUploading = true
+        uploadService.initializeBackgroundSession()
         Self.logger.info("Upload processing started")
         activity.log(.upload, "Upload queue started")
 
         processingTask = Task { [weak self] in
+            await self?.reconcileUploadState(modelContext: modelContext)
             await self?.processLoop(modelContext: modelContext)
         }
     }
@@ -64,10 +67,36 @@ final class UploadManager {
         }
     }
 
+    // MARK: - Reconciliation
+
+    /// Unconditionally reset all `.uploading` chunks to `.pending` on startup.
+    /// Called before `startProcessing` to recover from app kill scenarios
+    /// where no background session can vouch for the chunks.
+    func reconcileStuckUploads(modelContext: ModelContext) {
+        let uploading = AudioChunk.UploadStatus.uploading.rawValue
+        let predicate = #Predicate<AudioChunk> { $0.uploadStatusRaw == uploading }
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
+
+        do {
+            let stuck = try modelContext.fetch(descriptor)
+            guard !stuck.isEmpty else { return }
+            for chunk in stuck {
+                chunk.uploadStatus = .pending
+            }
+            try modelContext.save()
+            Self.logger.info("Reconciled \(stuck.count) stuck uploads -> pending")
+            activity.log(.upload, "Reconciled \(stuck.count) stuck -> pending")
+        } catch {
+            Self.logger.error("Reconcile failed: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Private
 
     private func processLoop(modelContext: ModelContext) async {
         while shouldContinue, !Task.isCancelled {
+            await reconcileUploadState(modelContext: modelContext)
+
             // Check connectivity
             guard ConnectivityMonitor.shared.canUpload else {
                 let cm = ConnectivityMonitor.shared
@@ -84,6 +113,9 @@ final class UploadManager {
 
             // Refresh counts
             refreshCounts(modelContext: modelContext)
+
+            // Reset uploads stuck in .uploading with stale lastUploadAttempt
+            resetStaleUploads(modelContext: modelContext)
 
             // Fetch next pending chunk
             guard let chunk = fetchNextPending(modelContext: modelContext) else {
@@ -163,6 +195,36 @@ final class UploadManager {
 
         chunk.uploadStatus = .uploading
         try? modelContext.save()
+
+        let appState = UIApplication.shared.applicationState
+        let shouldUseBackgroundSession = appState != .active
+
+        if shouldUseBackgroundSession {
+            do {
+                try uploadService.backgroundUpload(
+                    chunkID: chunk.id,
+                    fileURL: fileURL,
+                    to: serverURL,
+                    metadata: metadata
+                )
+                refreshCounts(modelContext: modelContext)
+                uploadProgress = "Queued \(chunk.fileName)..."
+                Self.logger.info("Queued background upload: \(chunk.fileName)")
+                activity.log(.upload, "Queued bg upload \(chunk.fileName)")
+            } catch {
+                chunk.uploadStatus = .failed
+                chunk.uploadAttempts += 1
+                chunk.lastUploadAttempt = Date()
+                try? modelContext.save()
+
+                refreshCounts(modelContext: modelContext)
+                uploadProgress = "Failed: \(chunk.fileName)"
+                Self.logger.error("Background queue failed for \(chunk.fileName): \(error.localizedDescription)")
+                activity.log(.error, "BG queue failed: \(chunk.fileName) (#\(chunk.uploadAttempts)) \(error.localizedDescription)")
+            }
+            return
+        }
+
         uploadProgress = "Uploading \(chunk.fileName)..."
         Self.logger.info("Uploading chunk: \(chunk.fileName)")
         activity.log(.upload, "Uploading \(chunk.fileName)")
@@ -198,6 +260,73 @@ final class UploadManager {
         }
     }
 
+    /// Reset `.uploading` chunks whose `lastUploadAttempt` is older than 5 min.
+    /// Catches in-flight uploads that stalled (e.g. app kill mid-upload).
+    private func resetStaleUploads(modelContext: ModelContext) {
+        let uploading = AudioChunk.UploadStatus.uploading.rawValue
+        let staleThreshold = Date().addingTimeInterval(-300) // 5 min
+        let predicate = #Predicate<AudioChunk> {
+            $0.uploadStatusRaw == uploading && $0.lastUploadAttempt != nil && $0.lastUploadAttempt! < staleThreshold
+        }
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
+
+        guard let stale = try? modelContext.fetch(descriptor), !stale.isEmpty else { return }
+        for chunk in stale {
+            chunk.uploadStatus = .pending
+        }
+        try? modelContext.save()
+        Self.logger.info("Reset \(stale.count) stale uploads -> pending")
+        activity.log(.upload, "Reset \(stale.count) stale -> pending")
+    }
+
+    private func reconcileUploadState(modelContext: ModelContext) async {
+        let backgroundSnapshot = await uploadService.backgroundUploadSnapshot()
+
+        var didChange = false
+        let completedUploads = uploadService.drainCompletedUploads()
+        for completed in completedUploads {
+            guard let chunkID = UUID(uuidString: completed.chunkID),
+                  let chunk = fetchChunk(id: chunkID, modelContext: modelContext) else {
+                continue
+            }
+
+            switch completed.status {
+            case .uploaded:
+                chunk.uploadStatus = .uploaded
+                chunk.uploadedAt = completed.completedAt
+                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+                activity.log(.upload, "BG uploaded \(chunk.fileName)")
+
+            case .failed:
+                chunk.uploadStatus = .failed
+                chunk.uploadAttempts += 1
+                chunk.lastUploadAttempt = completed.completedAt
+                activity.log(.error, "BG upload failed: \(chunk.fileName) (#\(chunk.uploadAttempts)) \(completed.detail)")
+            }
+            didChange = true
+        }
+
+        let uploadingRaw = AudioChunk.UploadStatus.uploading.rawValue
+        let uploadingDescriptor = FetchDescriptor<AudioChunk>(
+            predicate: #Predicate<AudioChunk> { $0.uploadStatusRaw == uploadingRaw }
+        )
+        if let uploadingChunks = try? modelContext.fetch(uploadingDescriptor) {
+            for chunk in uploadingChunks {
+                if backgroundSnapshot.activeChunkIDs.contains(chunk.id) { continue }
+                if backgroundSnapshot.pendingChunkIDs.contains(chunk.id) { continue }
+
+                chunk.uploadStatus = .pending
+                activity.log(.upload, "Recovered stale upload \(chunk.fileName) -> pending")
+                didChange = true
+            }
+        }
+
+        if didChange {
+            try? modelContext.save()
+            refreshCounts(modelContext: modelContext)
+        }
+    }
+
     private func fetchNextPending(modelContext: ModelContext) -> AudioChunk? {
         let pending = AudioChunk.UploadStatus.pending.rawValue
         let predicate = #Predicate<AudioChunk> { $0.uploadStatusRaw == pending }
@@ -207,6 +336,13 @@ final class UploadManager {
         )
         descriptor.fetchLimit = 1
 
+        return try? modelContext.fetch(descriptor).first
+    }
+
+    private func fetchChunk(id: UUID, modelContext: ModelContext) -> AudioChunk? {
+        let descriptor = FetchDescriptor<AudioChunk>(
+            predicate: #Predicate<AudioChunk> { $0.id == id }
+        )
         return try? modelContext.fetch(descriptor).first
     }
 

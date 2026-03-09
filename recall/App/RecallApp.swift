@@ -27,6 +27,7 @@ struct RecallApp: App {
 
                     // Auto-start upload queue on app launch
                     let context = ModelContext(sharedModelContainer)
+                    UploadManager.shared.reconcileStuckUploads(modelContext: context)
                     UploadManager.shared.startProcessing(modelContext: context)
 
                     // Start connectivity monitoring
