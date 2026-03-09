@@ -64,6 +64,7 @@ final class AudioRecordingEngine {
     private var silenceStart: Date?
     private var processingTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
+    private var resumeRetryTask: Task<Void, Never>?
 
     // MARK: - Per-Chunk Quality Metrics
 
@@ -171,6 +172,7 @@ final class AudioRecordingEngine {
         state = .listening
         engineStartTime = Date()
         zombieSilenceCount = 0
+        lastInputPortUID = AVAudioSession.sharedInstance().currentRoute.inputs.first?.uid
         logger.info("Recording engine started, listening for voice")
         activity.log(.state, "Engine started — Listening (\(Int(hwSampleRate))Hz, buf=\(tapBufferSize))")
 
@@ -189,6 +191,8 @@ final class AudioRecordingEngine {
         watchdogTask = nil
         processingTask?.cancel()
         processingTask = nil
+        resumeRetryTask?.cancel()
+        resumeRetryTask = nil
 
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
@@ -714,12 +718,25 @@ final class AudioRecordingEngine {
 
     // MARK: - Route Change Handling
 
+    /// Track current input port to detect input-side route changes
+    private var lastInputPortUID: String?
+
     private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
         switch reason {
         case .oldDeviceUnavailable, .newDeviceAvailable:
             guard state == .listening || state == .recording else { return }
-            logger.info("Route change detected (reason=\(reason.rawValue)), restarting engine")
-            activity.log(.state, "Route change — restarting engine")
+
+            // Only restart if the input route actually changed (ignore output-only changes
+            // like connecting/disconnecting A2DP headphones)
+            let currentInputUID = AVAudioSession.sharedInstance().currentRoute.inputs.first?.uid
+            if currentInputUID == lastInputPortUID {
+                activity.log(.state, "Route change (output only) — no restart needed")
+                return
+            }
+            lastInputPortUID = currentInputUID
+
+            logger.info("Route change detected (reason=\(reason.rawValue)), input changed — restarting engine")
+            activity.log(.state, "Route change (input) — restarting engine")
 
             if state == .recording {
                 Task { await finalizeCurrentChunk() }
@@ -758,9 +775,9 @@ final class AudioRecordingEngine {
             // Always-on app: force resume even when shouldResume=false (after 2s delay)
             logger.info("shouldResume=false, scheduling forced resume in 2s")
             activity.log(.state, "Interruption ended (shouldResume=false) — will force-resume in 2s")
-            Task { @MainActor [weak self] in
+            resumeRetryTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard let self, self.state == .paused else { return }
+                guard let self, !self.userStopped, self.state == .paused else { return }
                 self.resumeAfterInterruption()
             }
         }
@@ -792,6 +809,8 @@ final class AudioRecordingEngine {
 
             try audioEngine.start()
             state = .listening
+            engineStartTime = Date()
+            zombieSilenceCount = 0
             startProcessingLoop()
             BackgroundKeepAlive.shared.resumePlayback()
             activity.log(.state, "Resumed after interruption — Listening (attempt \(attempt))")
@@ -804,9 +823,10 @@ final class AudioRecordingEngine {
                 let delaySec = 2.0 * pow(2.0, Double(attempt - 1))
                 let delayNs = UInt64(delaySec * 1_000_000_000)
                 activity.log(.state, "Retry resume in \(Int(delaySec))s...")
-                Task { @MainActor [weak self] in
+                resumeRetryTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: delayNs)
                     guard let self else { return }
+                    guard !self.userStopped else { return }
                     // Still need recovery? (not manually restarted)
                     guard self.state == .paused || self.state == .idle else { return }
                     self.resumeAfterInterruption(attempt: attempt + 1)
