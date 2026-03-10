@@ -84,6 +84,7 @@ final class AudioRecordingEngine {
     private var noiseFloorRMS: Float = 0.002
     private let noiseFloorAlpha: Float = 0.05 // smoothing factor
     private let noiseFloorMultiplier: Float = 1.5 // threshold = floor * multiplier (Step 1: pocket/distance capture)
+    private let noiseFloorCap: Float = 0.01 // prevent runaway in noisy environments (meetings, cafes)
 
     // MARK: - SwiftData
 
@@ -379,7 +380,10 @@ final class AudioRecordingEngine {
         // Update noise floor estimate during listening (silence)
         let effectiveThreshold: Float
         if state == .listening {
-            noiseFloorRMS = noiseFloorRMS * (1 - noiseFloorAlpha) + rms * noiseFloorAlpha
+            noiseFloorRMS = min(
+                noiseFloorRMS * (1 - noiseFloorAlpha) + rms * noiseFloorAlpha,
+                noiseFloorCap
+            )
             effectiveThreshold = max(noiseFloorRMS * noiseFloorMultiplier, settings.rmsThreshold)
         } else {
             effectiveThreshold = max(noiseFloorRMS * noiseFloorMultiplier, settings.rmsThreshold)

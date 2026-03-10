@@ -16,7 +16,7 @@ final class AppSettings {
     }
 
     var silenceTimeout: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 5.0 }
+        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 10.0 }
         set { UserDefaults.standard.set(newValue, forKey: "silenceTimeout") }
     }
 
@@ -36,7 +36,7 @@ final class AppSettings {
     }
 
     var minChunkDurationSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "minChunkDurationSeconds").nonZero ?? 5.0 }
+        get { UserDefaults.standard.double(forKey: "minChunkDurationSeconds").nonZero ?? 2.0 }
         set { UserDefaults.standard.set(newValue, forKey: "minChunkDurationSeconds") }
     }
 
