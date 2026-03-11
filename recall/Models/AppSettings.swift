@@ -11,17 +11,17 @@ final class AppSettings {
     }
 
     var vadThreshold: Float {
-        get { Float(UserDefaults.standard.double(forKey: "vadThreshold")).nonZero ?? 0.35 }
+        get { Float(UserDefaults.standard.double(forKey: "vadThreshold")).nonZero ?? 0.25 }
         set { UserDefaults.standard.set(Double(newValue), forKey: "vadThreshold") }
     }
 
     var silenceTimeout: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 10.0 }
+        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 15.0 }
         set { UserDefaults.standard.set(newValue, forKey: "silenceTimeout") }
     }
 
     var preMarginSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "preMarginSeconds").nonZero ?? 2.0 }
+        get { UserDefaults.standard.double(forKey: "preMarginSeconds").nonZero ?? 3.0 }
         set { UserDefaults.standard.set(newValue, forKey: "preMarginSeconds") }
     }
 
