@@ -30,13 +30,18 @@ final class TelemetryService {
         }
 
         // Restore and start health if enabled
+        // restoreSettings() sets isEnabled without starting timer (isRestoring flag)
+        // so we can await authorization before the first query fires
         healthManager.restoreSettings()
         if healthManager.isEnabled {
             Task {
                 let authorized = await healthManager.requestAuthorization()
                 if authorized {
                     healthManager.startTimer()
-                    ActivityLogger.shared.log(.health, "HealthKit authorized and timer started")
+                    await healthManager.queryAndSend()
+                    ActivityLogger.shared.log(.health, "HealthKit authorized, timer started, first query sent")
+                } else {
+                    ActivityLogger.shared.log(.health, "HealthKit authorization denied — health data will not be collected")
                 }
             }
         }

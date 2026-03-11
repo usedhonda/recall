@@ -32,6 +32,7 @@ final class HealthKitManager {
     var isEnabled: Bool = false {
         didSet {
             AppSettings.shared.healthEnabled = isEnabled
+            guard !isRestoring else { return }
             if isEnabled {
                 ActivityLogger.shared.log(.health, "Health enabled")
                 startTimer()
@@ -52,6 +53,7 @@ final class HealthKitManager {
     private let healthStore = HKHealthStore()
     private var timer: Timer?
     private var observerQueries: [HKObserverQuery] = []
+    private var isRestoring = false
     private var sendInterval: TimeInterval {
         AppSettings.shared.telemetrySendInterval  // same as Location (default 60s)
     }
@@ -60,12 +62,16 @@ final class HealthKitManager {
 
     init() {}
 
-    /// Restore enabled state from AppSettings
+    /// Restore enabled state from AppSettings without triggering side effects
+    /// (timer start / immediate query). Caller is responsible for starting the timer
+    /// after authorization completes.
     func restoreSettings() {
+        isRestoring = true
         let savedEnabled = AppSettings.shared.healthEnabled
         if savedEnabled && HKHealthStore.isHealthDataAvailable() {
             isEnabled = true
         }
+        isRestoring = false
     }
 
     // MARK: - Authorization
@@ -219,6 +225,17 @@ final class HealthKitManager {
 
         let isBackground = UIApplication.shared.applicationState != .active
         ActivityLogger.shared.log(.health, "Queried \(start.formatted(.dateTime.hour().minute()))–\(end.formatted(.dateTime.hour().minute())) [\(isBackground ? "bg" : "fg")]")
+
+        // Skip sending if all health metrics are nil — prevents overwriting good data on server
+        let hasAnyData = summary.steps != nil || summary.heartRateAvg != nil
+            || summary.activeEnergyKcal != nil || summary.bloodOxygenPercent != nil
+            || summary.restingHeartRate != nil || summary.hrvAvgMs != nil
+            || summary.distanceMeters != nil || summary.sleepMinutes != nil
+        if !hasAnyData {
+            ActivityLogger.shared.log(.health, "All health metrics nil — skipping send (auth=\(isAuthorized))")
+            lastSendResult = .error("all metrics nil")
+            return
+        }
 
         if isBackground {
             // In background, use TelemetryUploader with beginBackgroundTask for reliable delivery

@@ -270,14 +270,14 @@ final class TelemetryUploader: NSObject {
     }
 
     /// Query HealthKit data for background upload piggyback.
-    /// Delegates to HealthKitManager for consistent query windows across all code paths.
+    /// Uses the shared HealthKitManager (which has been authorized) for consistent behavior.
     @MainActor
     private func queryHealthForBackground() async -> HealthSummary? {
-        guard AppSettings.shared.healthEnabled else { return nil }
+        let manager = TelemetryService.shared.healthManager
+        guard manager.isEnabled, manager.isAuthorized else { return nil }
         guard HKHealthStore.isHealthDataAvailable() else { return nil }
 
         let now = Date()
-        let manager = HealthKitManager()
         let summary = await manager.aggregateHealthData(from: now.addingTimeInterval(-3600), to: now)
 
         let hasData = summary.steps != nil || summary.heartRateAvg != nil || summary.activeEnergyKcal != nil
