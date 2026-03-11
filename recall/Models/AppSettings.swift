@@ -31,7 +31,7 @@ final class AppSettings {
     }
 
     var chunkDurationSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 30.0 }
+        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 120.0 }
         set { UserDefaults.standard.set(newValue, forKey: "chunkDurationSeconds") }
     }
 

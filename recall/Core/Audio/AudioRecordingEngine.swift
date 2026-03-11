@@ -603,7 +603,9 @@ final class AudioRecordingEngine {
         let result = await writer.finish()
         cleanupCurrentChunkState()
 
-        guard result.fileSize > 0 else {
+        guard result.fileSize > 0, result.duration >= 1.0 else {
+            logger.info("Discarding empty/short chunk: \(url.lastPathComponent) duration=\(result.duration, format: .fixed(precision: 1))s size=\(result.fileSize)")
+            activity.log(.chunk, "Discarded chunk < 1.0s (\(String(format: "%.1f", result.duration))s)")
             try? FileManager.default.removeItem(at: url)
             return
         }
@@ -662,7 +664,9 @@ final class AudioRecordingEngine {
         pendingSegmentBuffer = []
         pendingChunkStartedAt = nil
 
-        guard result.fileSize > 0 else {
+        guard result.fileSize > 0, result.duration >= 1.0 else {
+            logger.info("Discarding empty/short pending chunk: \(url.lastPathComponent) duration=\(result.duration, format: .fixed(precision: 1))s")
+            activity.log(.chunk, "Discarded pending chunk < 1.0s (\(String(format: "%.1f", result.duration))s)")
             try? FileManager.default.removeItem(at: url)
             return
         }
