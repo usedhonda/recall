@@ -205,9 +205,6 @@ final class AudioRecordingEngine {
             }
         }
 
-        // Stop keep-alive silent playback
-        BackgroundKeepAlive.shared.stop()
-
         state = .idle
         userStopped = true
         currentRMS = 0
