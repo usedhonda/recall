@@ -198,37 +198,12 @@ final class UploadManager {
         }
 
         chunk.uploadStatus = .uploading
+        chunk.lastUploadAttempt = Date()
         try? modelContext.save()
 
-        let appState = UIApplication.shared.applicationState
-        let shouldUseBackgroundSession = appState != .active
-
-        if shouldUseBackgroundSession {
-            do {
-                try uploadService.backgroundUpload(
-                    chunkID: chunk.id,
-                    fileURL: fileURL,
-                    to: serverURL,
-                    metadata: metadata
-                )
-                refreshCounts(modelContext: modelContext)
-                uploadProgress = "Queued \(chunk.fileName)..."
-                Self.logger.info("Queued background upload: \(chunk.fileName)")
-                activity.log(.upload, "Queued bg upload \(chunk.fileName)")
-            } catch {
-                chunk.uploadStatus = .failed
-                chunk.uploadAttempts += 1
-                chunk.lastUploadAttempt = Date()
-                try? modelContext.save()
-
-                refreshCounts(modelContext: modelContext)
-                uploadProgress = "Failed: \(chunk.fileName)"
-                Self.logger.error("Background queue failed for \(chunk.fileName): \(error.localizedDescription)")
-                activity.log(.error, "BG queue failed: \(chunk.fileName) (#\(chunk.uploadAttempts)) \(error.localizedDescription)")
-            }
-            return
-        }
-
+        // Always use foreground session — recall's audio background mode keeps
+        // the process alive, so background URLSession is unnecessary and adds
+        // failure modes (ATS edge cases, stuck tasks, delegate timing).
         uploadProgress = "Uploading \(chunk.fileName)..."
         Self.logger.info("Uploading chunk: \(chunk.fileName)")
         activity.log(.upload, "Uploading \(chunk.fileName)")

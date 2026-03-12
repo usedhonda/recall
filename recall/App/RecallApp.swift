@@ -25,9 +25,13 @@ struct RecallApp: App {
                     RecordingStateManager.shared.isRecording = true
                     await recordingViewModel.start(modelContainer: sharedModelContainer)
 
+                    // Migrate Tailscale IP-based URLs to hostname (ATS requires .ts.net domain)
+                    Self.migrateTailscaleURLs()
+
                     // Auto-start upload queue on app launch
                     let context = ModelContext(sharedModelContainer)
                     UploadManager.shared.reconcileStuckUploads(modelContext: context)
+                    UploadManager.shared.retryFailed(modelContext: context)
                     UploadManager.shared.startProcessing(modelContext: context)
 
                     // Start connectivity monitoring
@@ -63,6 +67,34 @@ struct RecallApp: App {
                 }
         }
         .modelContainer(sharedModelContainer)
+    }
+
+    /// Migrate any Tailscale IP-based URLs to .ts.net hostname.
+    /// ATS blocks plain HTTP to IP addresses, but allows .ts.net via NSExceptionDomains.
+    private static func migrateTailscaleURLs() {
+        let settings = AppSettings.shared
+        let urlValues = [
+            (settings.uploadServerURL, "uploadServerURL"),
+            (settings.telemetryServerURL, "telemetryServerURL"),
+        ]
+
+        // Find the .ts.net hostname from telemetryServerURL (which is known-good)
+        guard let tsURL = URL(string: settings.telemetryServerURL),
+              let tsHost = tsURL.host, tsHost.hasSuffix(".ts.net") else {
+            return // No .ts.net reference to migrate to
+        }
+
+        for (value, key) in urlValues {
+            guard !value.isEmpty, !value.contains("ts.net") else { continue }
+            guard let url = URL(string: value),
+                  let host = url.host, host.starts(with: "100.") else { continue }
+            let port = url.port.map { ":\($0)" } ?? ""
+            let path = url.path
+            let scheme = url.scheme ?? "http"
+            let migrated = "\(scheme)://\(tsHost)\(port)\(path)"
+            UserDefaults.standard.set(migrated, forKey: key)
+            ActivityLogger.shared.log(.network, "Migrated URL: \(value) -> \(migrated)")
+        }
     }
 
     @MainActor

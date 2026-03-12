@@ -20,20 +20,32 @@ final class RecordingViewModel {
     var currentChunkDuration: TimeInterval { engine?.currentChunkDuration ?? 0 }
     var errorMessage: String?
 
+    private let maxStartRetries = 3
+
     func start(modelContainer: ModelContainer) async {
-        do {
-            if engine == nil {
-                engine = AudioRecordingEngine()
-                engine?.setModelContainer(modelContainer)
+        for attempt in 1...maxStartRetries {
+            do {
+                if engine == nil {
+                    engine = AudioRecordingEngine()
+                    engine?.setModelContainer(modelContainer)
+                }
+                try await engine?.start()
+                errorMessage = nil
+                logger.info("Recording started")
+                syncSharedState()
+                return
+            } catch {
+                logger.error("Engine start attempt \(attempt)/\(self.maxStartRetries) failed: \(error)")
+                ActivityLogger.shared.log(.error, "ENGINE start failed (#\(attempt)): \(error)")
+                if attempt < maxStartRetries {
+                    // Reset engine for fresh retry
+                    engine?.stop()
+                    engine = nil
+                    try? await Task.sleep(for: .seconds(2))
+                } else {
+                    errorMessage = error.localizedDescription
+                }
             }
-            try await engine?.start()
-            errorMessage = nil
-            logger.info("Recording started")
-            syncSharedState()
-        } catch {
-            errorMessage = error.localizedDescription
-            logger.error("Failed to start: \(error)")
-            ActivityLogger.shared.log(.error, "ENGINE start failed: \(error)")
         }
     }
 
