@@ -26,6 +26,8 @@ struct RecordingView: View {
                         dataStreamsBar
                             .padding(.horizontal, 12)
 
+                        telemetryStatusBanner
+
                         heroStateSection
                             .padding(.vertical, 8)
 
@@ -305,6 +307,54 @@ struct RecordingView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Telemetry Status Banner
+
+    @ViewBuilder
+    private var telemetryStatusBanner: some View {
+        let loc = telemetry.locationManager
+        if loc.isEnabled {
+            TimelineView(.periodic(from: .now, by: 15)) { context in
+                let stale = telemetryStaleMinutes(at: context.date)
+                if stale >= 5 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                        if let lastErr = loc.lastError {
+                            Text("LINK DOWN \(Int(stale))m — \(lastErr)")
+                                .font(RecallTheme.Fonts.hudMicro)
+                        } else {
+                            Text("LINK DOWN \(Int(stale))m — no server response")
+                                .font(RecallTheme.Fonts.hudMicro)
+                        }
+                    }
+                    .foregroundStyle(stale >= 30 ? RecallTheme.Colors.neonRed : RecallTheme.Colors.neonAmber)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill((stale >= 30 ? RecallTheme.Colors.neonRed : RecallTheme.Colors.neonAmber).opacity(0.1))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke((stale >= 30 ? RecallTheme.Colors.neonRed : RecallTheme.Colors.neonAmber).opacity(0.3), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 12)
+                }
+            }
+        }
+    }
+
+    private func telemetryStaleMinutes(at now: Date) -> TimeInterval {
+        let loc = telemetry.locationManager
+        guard let lastSuccess = loc.lastHttpAcceptedAt else {
+            // Never sent successfully — show stale if location has been enabled for > 1 min
+            guard loc.isUpdating else { return 0 }
+            return 5 // trigger banner immediately
+        }
+        return now.timeIntervalSince(lastSuccess) / 60
     }
 
     // MARK: - Helpers
