@@ -21,9 +21,6 @@ struct RecallApp: App {
             ContentView()
                 .environment(recordingViewModel)
                 .task {
-                    // Keep app alive in background regardless of recording state
-                    BackgroundKeepAlive.shared.start()
-
                     // Auto-start recording on launch
                     RecordingStateManager.shared.isRecording = true
                     await recordingViewModel.start(modelContainer: sharedModelContainer)

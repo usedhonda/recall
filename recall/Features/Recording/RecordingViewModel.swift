@@ -32,6 +32,13 @@ final class RecordingViewModel {
                 try await engine?.start()
                 errorMessage = nil
                 logger.info("Recording started")
+
+                // Resume upload queue if not already running
+                if !UploadManager.shared.isUploading {
+                    let context = ModelContext(modelContainer)
+                    UploadManager.shared.startProcessing(modelContext: context)
+                }
+
                 syncSharedState()
                 return
             } catch {
@@ -51,6 +58,7 @@ final class RecordingViewModel {
 
     func stop() {
         engine?.stop()
+        UploadManager.shared.stopProcessing()
         logger.info("Recording stopped")
         syncSharedState()
     }
