@@ -198,10 +198,6 @@ final class AudioRecordingEngine {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
 
-        // Release audio resources to save battery when not recording
-        BackgroundKeepAlive.shared.stop()
-        AudioSessionManager.shared.deactivate()
-
         // Finalize any in-progress chunk
         if currentWriter != nil {
             Task { @MainActor in
