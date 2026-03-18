@@ -23,6 +23,11 @@ struct SettingsView: View {
             }
         }
         .background(RecallTheme.Colors.bg)
+        .sheet(isPresented: $viewModel.showQRScanner) {
+            QRScannerView { code in
+                _ = viewModel.applyQRCode(code)
+            }
+        }
     }
 
     // MARK: - VAD
@@ -98,23 +103,16 @@ struct SettingsView: View {
         VStack(spacing: 8) {
             HUDSectionHeader(title: "Upload")
             VStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("SERVER URL")
+                HStack {
+                    Text("SERVER")
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(RecallTheme.Colors.textSecondary)
-                    TextField("", text: $viewModel.serverURL)
-                        .font(RecallTheme.Fonts.hudBody)
-                        .foregroundStyle(RecallTheme.Colors.textPrimary)
-                        .textContentType(.URL)
-                        .autocapitalization(.none)
-                        .keyboardType(.URL)
-                        .padding(8)
-                        .background(RecallTheme.Colors.surfaceAlt)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(RecallTheme.Colors.border, lineWidth: 1)
-                        )
+                    Spacer()
+                    Text(viewModel.serverURL.isEmpty ? "NOT CONFIGURED" : viewModel.serverURL)
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(viewModel.serverURL.isEmpty ? RecallTheme.Colors.textMuted : RecallTheme.Colors.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
                 hudToggle(label: "WIFI ONLY", isOn: $viewModel.wifiOnly)
             }
@@ -220,6 +218,14 @@ struct SettingsView: View {
                 }
 
                 HUDActionButton(
+                    title: "Scan QR Code",
+                    icon: "qrcode.viewfinder",
+                    color: RecallTheme.Colors.neonGreen
+                ) {
+                    viewModel.showQRScanner = true
+                }
+
+                HUDActionButton(
                     title: "Test Connection",
                     icon: "antenna.radiowaves.left.and.right",
                     color: RecallTheme.Colors.neonCyan
@@ -233,6 +239,12 @@ struct SettingsView: View {
                     Text(result)
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(result.contains("OK") ? RecallTheme.Colors.neonGreen : RecallTheme.Colors.neonRed)
+                }
+
+                if let qrResult = viewModel.qrScanResult {
+                    Text(qrResult)
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.neonGreen)
                 }
             }
             .hudCard()

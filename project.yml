@@ -78,6 +78,7 @@ targets:
         UIBackgroundModes:
           - audio
           - location
+        NSCameraUsageDescription: "recall uses the camera to scan QR codes for server configuration."
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

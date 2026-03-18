@@ -145,4 +145,30 @@ final class SettingsViewModel {
     var lastLocationSentTime: Date? {
         telemetry.locationManager.lastSentTime
     }
+
+    // MARK: - QR Code
+
+    var showQRScanner = false
+    var qrScanResult: String?
+
+    func applyQRCode(_ urlString: String) -> Bool {
+        guard let url = URL(string: urlString),
+              url.scheme == "openclaw", url.host == "connect",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let items = components.queryItems,
+              let host = items.first(where: { $0.name == "host" })?.value,
+              !host.isEmpty else { return false }
+
+        let port = items.first(where: { $0.name == "port" })?.value ?? "18789"
+        settings.telemetryServerURL = "http://\(host):\(port)"
+        settings.uploadServerURL = "http://\(host):8300"
+
+        if let token = items.first(where: { $0.name == "token" })?.value, !token.isEmpty {
+            try? KeychainHelper.shared.saveToken(token)
+        }
+
+        qrScanResult = "Configured: \(host)"
+        ActivityLogger.shared.log(.network, "QR config applied: host=\(host) port=\(port)")
+        return true
+    }
 }

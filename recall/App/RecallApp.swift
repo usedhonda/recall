@@ -28,7 +28,7 @@ struct RecallApp: App {
                     RecordingStateManager.shared.isRecording = true
                     await recordingViewModel.start(modelContainer: sharedModelContainer)
 
-                    // Migrate Tailscale IP-based URLs to hostname (ATS requires .ts.net domain)
+                    // Migrate legacy Tailscale hostnames
                     Self.migrateTailscaleURLs()
 
                     // Auto-start upload queue on app launch
@@ -76,19 +76,33 @@ struct RecallApp: App {
     /// ATS blocks plain HTTP to IP addresses, but allows .ts.net via NSExceptionDomains.
     private static func migrateTailscaleURLs() {
         let settings = AppSettings.shared
-        let urlValues = [
-            (settings.uploadServerURL, "uploadServerURL"),
-            (settings.telemetryServerURL, "telemetryServerURL"),
-        ]
+        let urlKeys = ["uploadServerURL", "telemetryServerURL"]
 
-        // Find the .ts.net hostname from telemetryServerURL (which is known-good)
-        guard let tsURL = URL(string: settings.telemetryServerURL),
-              let tsHost = tsURL.host, tsHost.hasSuffix(".ts.net") else {
-            return // No .ts.net reference to migrate to
+        // Phase 1: Hostname rename (yuzurumac-mini → yuzurumac-mini-1)
+        let hostnameRenames = [
+            "yuzurumac-mini.tailfeb2b0.ts.net": "yuzurumac-mini-1.tailfeb2b0.ts.net",
+        ]
+        for key in urlKeys {
+            guard var value = UserDefaults.standard.string(forKey: key), !value.isEmpty else { continue }
+            for (oldHost, newHost) in hostnameRenames {
+                if value.contains(oldHost) {
+                    let migrated = value.replacingOccurrences(of: oldHost, with: newHost)
+                    UserDefaults.standard.set(migrated, forKey: key)
+                    ActivityLogger.shared.log(.network, "Migrated hostname: \(value) -> \(migrated)")
+                    value = migrated
+                }
+            }
         }
 
-        for (value, key) in urlValues {
-            guard !value.isEmpty, !value.contains("ts.net") else { continue }
+        // Phase 2: IP → .ts.net migration (existing logic)
+        guard let tsURL = URL(string: settings.telemetryServerURL),
+              let tsHost = tsURL.host, tsHost.hasSuffix(".ts.net") else {
+            return
+        }
+
+        for key in urlKeys {
+            guard let value = UserDefaults.standard.string(forKey: key), !value.isEmpty,
+                  !value.contains("ts.net") else { continue }
             guard let url = URL(string: value),
                   let host = url.host, host.starts(with: "100.") else { continue }
             let port = url.port.map { ":\($0)" } ?? ""

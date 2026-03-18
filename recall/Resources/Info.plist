@@ -58,6 +58,8 @@
 		<string>audio</string>
 		<string>location</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>recall uses the camera to scan QR codes for server configuration.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
