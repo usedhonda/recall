@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>recall Web History</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="panel">
+      <header class="hero">
+        <p class="eyebrow">recall / OpenClaw</p>
+        <h1>Web History</h1>
+        <p class="subtitle">Capture active tabs, ship them in real time, and fall back to a local queue when the route goes dark.</p>
+      </header>
+
+      <section class="card status-card">
+        <label class="toggle-row" for="enabledToggle">
+          <span>
+            <strong>Capture Enabled</strong>
+            <small>Pause collection without clearing local state.</small>
+          </span>
+          <input id="enabledToggle" type="checkbox">
+        </label>
+        <div class="status-grid">
+          <div>
+            <span class="status-label">Queue</span>
+            <strong id="queueCount">0</strong>
+          </div>
+          <div>
+            <span class="status-label">Connection</span>
+            <strong id="healthStatus">Unknown</strong>
+          </div>
+        </div>
+        <p id="statusMessage" class="status-message">No diagnostics yet.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>Connection</h2>
+            <p>Point the extension at the OpenClaw gateway.</p>
+          </div>
+          <button id="scanQrButton" class="ghost-button" type="button">Scan QR</button>
+        </div>
+
+        <label class="field">
+          <span>Server URL</span>
+          <input id="serverUrlInput" type="url" placeholder="http://macmini:18789">
+        </label>
+
+        <label class="field">
+          <span>Bearer Token</span>
+          <input id="tokenInput" type="password" placeholder="gateway auth token">
+        </label>
+
+        <div class="button-row">
+          <button id="saveButton" type="button">Save</button>
+          <button id="testButton" class="ghost-button" type="button">Test</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Capture Rules</h2>
+        <label class="field">
+          <span>Minimum dwell time</span>
+          <div class="slider-row">
+            <input id="dwellSlider" type="range" min="5" max="300" step="5">
+            <strong id="dwellValue">15s</strong>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Blocked domains / patterns</span>
+          <textarea id="blocklistInput" rows="8" spellcheck="false" placeholder="mail.google.com&#10;*.bank.com"></textarea>
+          <small>One entry per line. Exact hostnames and `*` wildcards are supported.</small>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Recent Captures</h2>
+        <ul id="recentEntries" class="recent-list"></ul>
+      </section>
+    </main>
+
+    <section id="qrOverlay" class="qr-overlay hidden" aria-hidden="true">
+      <div class="qr-shell">
+        <div class="qr-head">
+          <h2>Scan OpenClaw QR</h2>
+          <button id="closeQrButton" class="ghost-button" type="button">Close</button>
+        </div>
+        <video id="qrVideo" autoplay playsinline muted></video>
+        <p id="qrMessage" class="qr-message">Point the camera at an `openclaw://connect?...` QR code.</p>
+      </div>
+    </section>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
