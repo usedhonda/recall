@@ -56,27 +56,31 @@ function extractPagePayload() {
   };
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "extract-page-content") {
-    // Reset scroll tracking on new content extraction (SPA navigation)
-    maxScrollPct = 0;
-    try {
-      sendResponse(extractPagePayload());
-    } catch (error) {
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        url: window.location.href,
-        title: normalizeText(document.title),
-        content: "",
-        meta: {}
-      });
+try {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "extract-page-content") {
+      // Reset scroll tracking on new content extraction (SPA navigation)
+      maxScrollPct = 0;
+      try {
+        sendResponse(extractPagePayload());
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          url: window.location.href,
+          title: normalizeText(document.title),
+          content: "",
+          meta: {}
+        });
+      }
+      return false;
     }
-    return false;
-  }
 
-  return undefined;
-});
+    return undefined;
+  });
+} catch {
+  // extension context invalidated — content script orphaned
+}
 
 // --- Engagement tracking ---
 
