@@ -164,6 +164,22 @@ final class SettingsViewModel {
         }
     }
 
+    var lineDeliveryEnabled: Bool {
+        get { settings.lineDeliveryEnabled }
+        set {
+            settings.lineDeliveryEnabled = newValue
+            Task { await telemetry.syncReactionSettings() }
+        }
+    }
+
+    var vibetermDeliveryEnabled: Bool {
+        get { settings.vibetermDeliveryEnabled }
+        set {
+            settings.vibetermDeliveryEnabled = newValue
+            Task { await telemetry.syncReactionSettings() }
+        }
+    }
+
     // MARK: - QR Code
 
     var showQRScanner = false

@@ -201,7 +201,15 @@ export function createWebHistoryHandler(api) {
     });
   }
 
-  function buildEventText(entry) {
+  function buildDeliveryDirective(settings) {
+    const channels = [];
+    if (settings.lineDeliveryEnabled) channels.push("LINE");
+    if (settings.vibetermDeliveryEnabled) channels.push("Vibeterm");
+    if (channels.length === 0) return "\n\u3010\u914D\u4FE1\u5148\u3011\u306A\u3057\uFF08\u914D\u4FE1\u30B9\u30AD\u30C3\u30D7\uFF09";
+    return `\n\u3010\u914D\u4FE1\u5148\u3011${channels.join(", ")}`;
+  }
+
+  function buildEventText(entry, settings) {
     const lines = [
       "\u{1F310} \u3054\u4E3B\u4EBA\u69D8\u304C\u30A6\u30A7\u30D6\u8A18\u4E8B\u3092\u3057\u3063\u304B\u308A\u8AAD\u3093\u3067\u3044\u305F\u3002web-react \u30B9\u30AD\u30EB\u3067\u53CD\u5FDC\u3057\u3066\u3002",
       `\u30BF\u30A4\u30C8\u30EB: ${entry.title}`,
@@ -218,24 +226,27 @@ export function createWebHistoryHandler(api) {
     }
     const eng = entry.engagement;
     lines.push(`\u6EDE\u5728: ${entry.dwellSeconds}\u79D2 / \u30A2\u30AF\u30C6\u30A3\u30D6: ${eng?.activeSeconds ?? "?"}\u79D2 / \u30B9\u30AF\u30ED\u30FC\u30EB: ${eng?.scrollDepthPct ?? "?"}%`);
+    lines.push(buildDeliveryDirective(settings));
     return lines.join("\n");
   }
 
-  async function tryWakeCron(entry) {
+  async function trySendChat(entry) {
     if (!entry.engagement?.engaged) return;
     if (!gatewayToken) return;
 
     const settings = await getReactionSettings();
     if (!settings.webReactionsEnabled) return;
 
-    const eventText = buildEventText(entry);
-    rpc("system-event", { text: eventText })
-      .then(() => log?.info?.("recall-web-history: system-event sent"))
-      .catch(() => {});
+    const eventText = buildEventText(entry, settings);
+    const idempotencyKey = `web-${entry.id}-${Date.now()}`;
 
-    rpc("cron.wake", { mode: "now", text: "engaged web reading detected" })
-      .then(() => log?.info?.("recall-web-history: cron.wake sent"))
-      .catch(() => {});
+    rpc("chat.send", {
+      sessionKey: "main",
+      message: eventText,
+      idempotencyKey,
+    })
+      .then(() => log?.info?.("recall-web-history: chat.send sent"))
+      .catch((err) => log?.warn?.(`recall-web-history: chat.send failed: ${err.message}`));
   }
 
   return async (req, res) => {
@@ -282,7 +293,7 @@ export function createWebHistoryHandler(api) {
       received++;
       await appendDiaryEntry(entry, log);
       await persistLatestState(entry, log);
-      await tryWakeCron(entry);
+      await trySendChat(entry);
     }
 
     if (received > 0) {

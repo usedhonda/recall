@@ -169,7 +169,15 @@ async function persistState(data, log) {
   }
 }
 
-function buildEventText(data) {
+function buildDeliveryDirective(settings) {
+  const channels = [];
+  if (settings.lineDeliveryEnabled) channels.push("LINE");
+  if (settings.vibetermDeliveryEnabled) channels.push("Vibeterm");
+  if (channels.length === 0) return "\n\u3010\u914D\u4FE1\u5148\u3011\u306A\u3057\uFF08\u914D\u4FE1\u30B9\u30AD\u30C3\u30D7\uFF09";
+  return `\n\u3010\u914D\u4FE1\u5148\u3011${channels.join(", ")}`;
+}
+
+function buildEventText(data, settings) {
   const segments = data.segments || [];
   const durationSec = Math.round(data.duration_sec || 0);
   const lang = data.language || "?";
@@ -196,6 +204,9 @@ function buildEventText(data) {
     lines.push(context);
   }
 
+  // Append delivery channel directive
+  lines.push(buildDeliveryDirective(settings));
+
   return lines.join("\n");
 }
 
@@ -220,9 +231,9 @@ export function createVoiceTranscriptHandler(api) {
     });
   }
 
-  async function tryWakeCron(data) {
+  async function trySendChat(data) {
     if (!gatewayToken) {
-      log?.warn?.("voice-transcript: skipping system-event (no gateway token)");
+      log?.warn?.("voice-transcript: skipping chat.send (no gateway token)");
       return;
     }
 
@@ -235,19 +246,21 @@ export function createVoiceTranscriptHandler(api) {
     const fullText = extractFullText(data);
     if (fullText.length < MIN_FIRE_CHARS) {
       log?.info?.(
-        `voice-transcript: text too short (${fullText.length}/${MIN_FIRE_CHARS} chars), skipping system-event`
+        `voice-transcript: text too short (${fullText.length}/${MIN_FIRE_CHARS} chars), skipping chat.send`
       );
       return;
     }
 
-    const eventText = buildEventText(data);
-    rpc("system-event", { text: eventText })
-      .then(() => log?.info?.("voice-transcript: system-event sent"))
-      .catch((err) => log?.warn?.(`voice-transcript: system-event failed: ${err.message}`));
+    const eventText = buildEventText(data, settings);
+    const idempotencyKey = `voice-${data.recording_id || Date.now()}`;
 
-    rpc("cron.wake", { mode: "now", text: "voice transcript received" })
-      .then(() => log?.info?.("voice-transcript: cron.wake sent"))
-      .catch((err) => log?.warn?.(`voice-transcript: cron.wake failed: ${err.message}`));
+    rpc("chat.send", {
+      sessionKey: "main",
+      message: eventText,
+      idempotencyKey,
+    })
+      .then(() => log?.info?.("voice-transcript: chat.send sent"))
+      .catch((err) => log?.warn?.(`voice-transcript: chat.send failed: ${err.message}`));
   }
 
   return async (req, res) => {
@@ -288,8 +301,8 @@ export function createVoiceTranscriptHandler(api) {
     await persistState(body, log);
     addToBuffer(body);
 
-    // Conditional: system-event (only if text >= MIN_FIRE_CHARS)
-    await tryWakeCron(body);
+    // Conditional: chat.send (only if text >= MIN_FIRE_CHARS)
+    await trySendChat(body);
 
     sendJson(res, { received: true });
   };

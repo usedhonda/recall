@@ -200,6 +200,8 @@ final class TelemetryService {
         let payload: [String: Bool] = [
             "webReactionsEnabled": AppSettings.shared.webReactionsEnabled,
             "voiceReactionsEnabled": AppSettings.shared.voiceReactionsEnabled,
+            "lineDeliveryEnabled": AppSettings.shared.lineDeliveryEnabled,
+            "vibetermDeliveryEnabled": AppSettings.shared.vibetermDeliveryEnabled,
         ]
 
         do {

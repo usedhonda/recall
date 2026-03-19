@@ -261,6 +261,8 @@ struct SettingsView: View {
             VStack(spacing: 12) {
                 hudToggle(label: "WEB REACTIONS", isOn: $viewModel.webReactionsEnabled)
                 hudToggle(label: "VOICE REACTIONS", isOn: $viewModel.voiceReactionsEnabled)
+                hudToggle(label: "LINE DELIVERY", isOn: $viewModel.lineDeliveryEnabled)
+                hudToggle(label: "VIBETERM DELIVERY", isOn: $viewModel.vibetermDeliveryEnabled)
             }
             .hudCard()
         }

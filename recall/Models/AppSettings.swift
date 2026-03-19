@@ -131,6 +131,22 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "voiceReactionsEnabled") }
     }
 
+    var lineDeliveryEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "lineDeliveryEnabled") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "lineDeliveryEnabled")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "lineDeliveryEnabled") }
+    }
+
+    var vibetermDeliveryEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "vibetermDeliveryEnabled") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "vibetermDeliveryEnabled")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "vibetermDeliveryEnabled") }
+    }
+
     private init() {}
 }
 

@@ -19,6 +19,8 @@ const SETTINGS_PATH = join(
 const DEFAULTS = {
   webReactionsEnabled: true,
   voiceReactionsEnabled: true,
+  lineDeliveryEnabled: true,
+  vibetermDeliveryEnabled: true,
 };
 
 export async function getReactionSettings() {
@@ -28,6 +30,8 @@ export async function getReactionSettings() {
     return {
       webReactionsEnabled: data.webReactionsEnabled ?? DEFAULTS.webReactionsEnabled,
       voiceReactionsEnabled: data.voiceReactionsEnabled ?? DEFAULTS.voiceReactionsEnabled,
+      lineDeliveryEnabled: data.lineDeliveryEnabled ?? DEFAULTS.lineDeliveryEnabled,
+      vibetermDeliveryEnabled: data.vibetermDeliveryEnabled ?? DEFAULTS.vibetermDeliveryEnabled,
       updatedAt: data.updatedAt ?? null,
     };
   } catch {
@@ -40,6 +44,8 @@ export async function saveReactionSettings(settings) {
   const merged = {
     webReactionsEnabled: settings.webReactionsEnabled ?? current.webReactionsEnabled,
     voiceReactionsEnabled: settings.voiceReactionsEnabled ?? current.voiceReactionsEnabled,
+    lineDeliveryEnabled: settings.lineDeliveryEnabled ?? current.lineDeliveryEnabled,
+    vibetermDeliveryEnabled: settings.vibetermDeliveryEnabled ?? current.vibetermDeliveryEnabled,
     updatedAt: new Date().toISOString(),
   };
   const dir = join(homedir(), ".openclaw", "workspace", "memory");
