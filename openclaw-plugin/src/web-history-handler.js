@@ -67,6 +67,9 @@ function normalizeEntry(entry) {
   const content = typeof entry.content === "string" ? entry.content : "";
   const meta = entry.meta && typeof entry.meta === "object" && !Array.isArray(entry.meta) ? entry.meta : {};
 
+  const engagement = entry.engagement && typeof entry.engagement === "object" && !Array.isArray(entry.engagement)
+    ? entry.engagement : null;
+
   return {
     id,
     url: parsedUrl.href,
@@ -76,6 +79,7 @@ function normalizeEntry(entry) {
     visitedAt: visitedAt.toISOString(),
     dwellSeconds,
     meta,
+    ...(engagement ? { engagement } : {}),
   };
 }
 
@@ -84,7 +88,14 @@ async function appendDiaryEntry(entry, log) {
   const dateStr = formatJstDate(visitedAt);
   const timeStr = formatJstTime(visitedAt);
   const preview = toPreview(entry.content);
-  const header = `\u{1F310} ${timeStr} - ${entry.title} (${entry.domain}) [${entry.dwellSeconds}s]\n`;
+  const eng = entry.engagement;
+  let engagementTag = "";
+  if (eng?.tweetsViewed > 0) {
+    engagementTag = ` \u{1F426}${eng.tweetsViewed} tweets`;
+  } else if (eng?.scrollDepthPct > 0 && eng?.engaged) {
+    engagementTag = ` \u{1F4D6}${eng.scrollDepthPct}%`;
+  }
+  const header = `\u{1F310} ${timeStr} - ${entry.title} (${entry.domain}) [${entry.dwellSeconds}s${engagementTag}]\n`;
   const body = preview ? `   ${preview}\n` : "";
   const diaryPath = join(MEMORY_ROOT, `${dateStr}.md`);
 

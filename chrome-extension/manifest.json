@@ -3,7 +3,7 @@
   "name": "recall Web History",
   "version": "0.1.0",
   "description": "Capture active browsing history and sync it to OpenClaw.",
-  "permissions": ["tabs", "activeTab", "storage", "alarms", "contextMenus"],
+  "permissions": ["tabs", "activeTab", "storage", "alarms", "contextMenus", "idle"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",

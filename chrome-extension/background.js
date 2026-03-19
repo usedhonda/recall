@@ -7,6 +7,8 @@ const RECENT_ENTRIES_KEY = "webHistoryRecentEntries";
 const SESSION_KEY = "webHistorySessionState";
 const ALARM_NAME = "recall-web-history-sync";
 const MAX_RECENT_ENTRIES = 10;
+const IDLE_THRESHOLD_SECONDS = 60;
+const MAX_ACTIVE_SECONDS = 1800;
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -111,7 +113,127 @@ function shouldHandleUrl(url, settings) {
   return settings.enabled && isTrackableUrl(url) && !isBlocked(url, settings.blocklist);
 }
 
-function buildEntry(tabState, contentState, dwellSeconds) {
+function createEngagementState() {
+  const now = Date.now();
+  return {
+    visibleSince: now,
+    activeSince: now,
+    visibleMs: 0,
+    activeMs: 0,
+    scrollDepthPct: 0,
+    isVisible: true,
+    isIdle: false,
+    tweetsViewed: 0,
+    totalViewMs: 0
+  };
+}
+
+function flushEngagementTimers(tabState) {
+  const now = Date.now();
+  if (tabState.visibleSince) {
+    tabState.visibleMs = (tabState.visibleMs || 0) + (now - tabState.visibleSince);
+    tabState.visibleSince = null;
+  }
+  if (tabState.activeSince) {
+    tabState.activeMs = (tabState.activeMs || 0) + (now - tabState.activeSince);
+    tabState.activeSince = null;
+  }
+}
+
+function computeEngagement(tabState) {
+  const activeSeconds = Math.min(MAX_ACTIVE_SECONDS, Math.max(0, Math.round((tabState.activeMs || 0) / 1000)));
+  const scrollDepthPct = tabState.scrollDepthPct || 0;
+  const engaged = activeSeconds >= 10 || scrollDepthPct >= 75;
+
+  const engagement = { activeSeconds, scrollDepthPct, engaged };
+
+  if (tabState.tweetsViewed > 0) {
+    engagement.tweetsViewed = tabState.tweetsViewed;
+    engagement.avgViewSeconds = Math.round((tabState.totalViewMs || 0) / tabState.tweetsViewed / 1000);
+  }
+
+  return { dwellSeconds: activeSeconds, engagement };
+}
+
+async function handleEngagementMessage(message, tabId) {
+  await ensureHydrated();
+  const key = tabKey(tabId);
+  const tabState = sessionState.tabStates[key];
+  if (!tabState) return;
+
+  const now = Date.now();
+
+  switch (message.type) {
+    case "engagement:visibility": {
+      if (message.hidden) {
+        // Page became hidden — pause timers
+        if (tabState.visibleSince) {
+          tabState.visibleMs = (tabState.visibleMs || 0) + (now - tabState.visibleSince);
+          tabState.visibleSince = null;
+        }
+        if (tabState.activeSince) {
+          tabState.activeMs = (tabState.activeMs || 0) + (now - tabState.activeSince);
+          tabState.activeSince = null;
+        }
+        tabState.isVisible = false;
+      } else {
+        // Page became visible — resume timers
+        tabState.visibleSince = now;
+        if (!tabState.isIdle) {
+          tabState.activeSince = now;
+        }
+        tabState.isVisible = true;
+      }
+      break;
+    }
+    case "engagement:scroll": {
+      const pct = Number(message.scrollDepthPct);
+      if (Number.isFinite(pct) && pct > (tabState.scrollDepthPct || 0)) {
+        tabState.scrollDepthPct = pct;
+      }
+      break;
+    }
+    case "engagement:x-feed": {
+      tabState.tweetsViewed = Number(message.tweetsViewed) || 0;
+      tabState.totalViewMs = Number(message.totalViewMs) || 0;
+      break;
+    }
+  }
+
+  await persistSessionState();
+}
+
+async function handleIdleStateChanged(newState) {
+  await ensureHydrated();
+  const activeTabId = sessionState.activeTabId;
+  if (!Number.isInteger(activeTabId)) return;
+
+  const key = tabKey(activeTabId);
+  const tabState = sessionState.tabStates[key];
+  if (!tabState) return;
+
+  const now = Date.now();
+  const isIdle = newState !== "active";
+
+  if (isIdle && !tabState.isIdle) {
+    // Became idle — pause active timer
+    if (tabState.activeSince) {
+      tabState.activeMs = (tabState.activeMs || 0) + (now - tabState.activeSince);
+      tabState.activeSince = null;
+    }
+    tabState.isIdle = true;
+  } else if (!isIdle && tabState.isIdle) {
+    // Became active — resume active timer (only if visible)
+    tabState.isIdle = false;
+    if (tabState.isVisible) {
+      tabState.activeSince = now;
+    }
+  }
+
+  await persistSessionState();
+}
+
+function buildEntry(tabState, contentState, dwellSeconds, engagement) {
   if (!tabState?.url) return null;
 
   let parsedUrl;
@@ -129,7 +251,8 @@ function buildEntry(tabState, contentState, dwellSeconds) {
     content: contentState?.content || "",
     visitedAt: new Date(tabState.activatedAt || Date.now()).toISOString(),
     dwellSeconds,
-    meta: contentState?.meta || {}
+    meta: contentState?.meta || {},
+    engagement
   };
 }
 
@@ -197,13 +320,14 @@ async function finalizeVisit(tabId, reason) {
     return null;
   }
 
-  const dwellSeconds = Math.max(0, Math.round((Date.now() - tabState.activatedAt) / 1000));
+  flushEngagementTimers(tabState);
+  const { dwellSeconds, engagement } = computeEngagement(tabState);
   if (!shouldTrackVisit(dwellSeconds, settings.minDwellSeconds)) {
     return null;
   }
 
   const contentState = sessionState.contentCache[key];
-  const entry = buildEntry(tabState, contentState, dwellSeconds);
+  const entry = buildEntry(tabState, contentState, dwellSeconds, engagement);
   if (!entry) {
     return null;
   }
@@ -273,11 +397,13 @@ async function bootstrapActiveTab() {
   const [activeTab] = tabs;
   if (!activeTab?.id) return;
 
-  const activatedAt = sessionState.tabStates[tabKey(activeTab.id)]?.activatedAt || Date.now();
+  const existingTab = sessionState.tabStates[tabKey(activeTab.id)];
+  const activatedAt = existingTab?.activatedAt || Date.now();
   await updateTabState(activeTab.id, {
-    url: activeTab.url || sessionState.tabStates[tabKey(activeTab.id)]?.url || "",
-    title: activeTab.title || sessionState.tabStates[tabKey(activeTab.id)]?.title || "",
-    activatedAt
+    url: activeTab.url || existingTab?.url || "",
+    title: activeTab.title || existingTab?.title || "",
+    activatedAt,
+    ...(existingTab?.visibleSince != null ? {} : createEngagementState())
   });
   sessionState.activeTabId = activeTab.id;
   await persistSessionState();
@@ -313,7 +439,8 @@ async function handleTabActivated(activeInfo) {
   await updateTabState(activeInfo.tabId, {
     url: tab?.url || sessionState.tabStates[tabKey(activeInfo.tabId)]?.url || "",
     title: tab?.title || sessionState.tabStates[tabKey(activeInfo.tabId)]?.title || "",
-    activatedAt: Date.now()
+    activatedAt: Date.now(),
+    ...createEngagementState()
   });
   await persistSessionState();
 
@@ -345,7 +472,8 @@ async function handleTabUpdated(tabId, changeInfo, tab) {
     await updateTabState(tabId, {
       url: changeInfo.url,
       title: tab?.title || changeInfo.title || "",
-      activatedAt: tab?.active ? Date.now() : null
+      activatedAt: tab?.active ? Date.now() : null,
+      ...(tab?.active ? createEngagementState() : {})
     });
   } else {
     await updateTabState(tabId, {
@@ -447,7 +575,19 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.idle.setDetectionInterval(IDLE_THRESHOLD_SECONDS);
+chrome.idle.onStateChanged.addListener((newState) => {
+  void handleIdleStateChanged(newState);
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (typeof message?.type === "string" && message.type.startsWith("engagement:") && sender.tab?.id) {
+    void handleEngagementMessage(message, sender.tab.id)
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   void handlePopupMessage(message)
     .then((response) => sendResponse(response))
     .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
