@@ -213,16 +213,36 @@ export function createWebHistoryHandler(api) {
     if (!settings.webReactionsEnabled) return;
 
     const eventText = buildEventText(entry, settings);
-    try {
-      await runtime.subagent.run({
-        sessionKey: "main",
-        message: eventText,
-        deliver: true,
-        idempotencyKey: `web-${entry.id}-${Date.now()}`,
-      });
-      log?.info?.("recall-web-history: subagent.run sent");
-    } catch (err) {
-      log?.warn?.(`recall-web-history: subagent.run failed: ${err.message}`);
+    const ts = Date.now();
+
+    // LINE delivery: deliver: true pushes response to ClawGate -> LINE
+    if (settings.lineDeliveryEnabled) {
+      try {
+        await runtime.subagent.run({
+          sessionKey: "main",
+          message: eventText,
+          deliver: true,
+          idempotencyKey: `web-line-${entry.id}-${ts}`,
+        });
+        log?.info?.("recall-web-history: subagent.run sent (LINE)");
+      } catch (err) {
+        log?.warn?.(`recall-web-history: subagent.run LINE failed: ${err.message}`);
+      }
+    }
+
+    // Vibeterm delivery: deliver: false, response flows through WebSocket session
+    if (settings.vibetermDeliveryEnabled && !settings.lineDeliveryEnabled) {
+      try {
+        await runtime.subagent.run({
+          sessionKey: "main",
+          message: eventText,
+          deliver: false,
+          idempotencyKey: `web-vt-${entry.id}-${ts}`,
+        });
+        log?.info?.("recall-web-history: subagent.run sent (Vibeterm)");
+      } catch (err) {
+        log?.warn?.(`recall-web-history: subagent.run Vibeterm failed: ${err.message}`);
+      }
     }
   }
 

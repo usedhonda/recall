@@ -227,16 +227,36 @@ export function createVoiceTranscriptHandler(api) {
     }
 
     const eventText = buildEventText(data, settings);
-    try {
-      await runtime.subagent.run({
-        sessionKey: "main",
-        message: eventText,
-        deliver: true,
-        idempotencyKey: `voice-${data.recording_id || Date.now()}`,
-      });
-      log?.info?.("voice-transcript: subagent.run sent");
-    } catch (err) {
-      log?.warn?.(`voice-transcript: subagent.run failed: ${err.message}`);
+    const rid = data.recording_id || Date.now();
+
+    // LINE delivery: deliver: true pushes response to ClawGate -> LINE
+    if (settings.lineDeliveryEnabled) {
+      try {
+        await runtime.subagent.run({
+          sessionKey: "main",
+          message: eventText,
+          deliver: true,
+          idempotencyKey: `voice-line-${rid}`,
+        });
+        log?.info?.("voice-transcript: subagent.run sent (LINE)");
+      } catch (err) {
+        log?.warn?.(`voice-transcript: subagent.run LINE failed: ${err.message}`);
+      }
+    }
+
+    // Vibeterm delivery: deliver: false, response flows through WebSocket session
+    if (settings.vibetermDeliveryEnabled && !settings.lineDeliveryEnabled) {
+      try {
+        await runtime.subagent.run({
+          sessionKey: "main",
+          message: eventText,
+          deliver: false,
+          idempotencyKey: `voice-vt-${rid}`,
+        });
+        log?.info?.("voice-transcript: subagent.run sent (Vibeterm)");
+      } catch (err) {
+        log?.warn?.(`voice-transcript: subagent.run Vibeterm failed: ${err.message}`);
+      }
     }
   }
 
