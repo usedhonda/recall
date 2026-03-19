@@ -412,6 +412,17 @@ async function handlePopupMessage(message) {
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureInitialized();
+  chrome.contextMenus.create({
+    id: "recall-settings",
+    title: "recall Settings",
+    contexts: ["action"]
+  });
+});
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === "recall-settings") {
+    chrome.runtime.openOptionsPage();
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
