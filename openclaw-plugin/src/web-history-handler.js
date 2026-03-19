@@ -165,9 +165,33 @@ function sendJson(res, data) {
   res.end(JSON.stringify(data));
 }
 
+const WAKE_COOLDOWN_MS = 30 * 60 * 1000;
+
 export function createWebHistoryHandler(api) {
   const gatewayToken = api.config?.gateway?.auth?.token;
   const log = api.logger;
+  let lastWakeMs = 0;
+
+  function tryWakeCron(entry) {
+    if (!entry.engagement?.engaged) return;
+    if (!gatewayToken) return;
+    const now = Date.now();
+    if (now - lastWakeMs < WAKE_COOLDOWN_MS) return;
+    lastWakeMs = now;
+    fetch("http://127.0.0.1:18789/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${gatewayToken}`
+      },
+      body: JSON.stringify({
+        method: "cron.wake",
+        params: { mode: "now", text: "engaged web reading detected" }
+      })
+    }).then(() => {
+      log?.info?.("recall-web-history: cron.wake sent");
+    }).catch(() => {});
+  }
 
   if (!gatewayToken) {
     log?.warn?.("recall-web-history: no gateway auth token found in config");
@@ -217,6 +241,7 @@ export function createWebHistoryHandler(api) {
       received++;
       await appendDiaryEntry(entry, log);
       await persistLatestState(entry, log);
+      tryWakeCron(entry);
     }
 
     if (received > 0) {
