@@ -81,10 +81,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // --- Engagement tracking ---
 
 function sendEngagement(payload) {
+  if (!chrome.runtime?.id) return; // context invalidated — stop silently
   try {
     chrome.runtime.sendMessage(payload).catch(() => {});
   } catch {
-    // Extension context invalidated — content script is stale, ignore
+    // context just became invalid — nothing to do
   }
 }
 
