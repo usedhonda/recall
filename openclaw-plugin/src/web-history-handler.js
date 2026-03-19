@@ -230,37 +230,23 @@ export function createWebHistoryHandler(api) {
     const settings = await getReactionSettings();
     if (!settings.webReactionsEnabled) return;
 
+    const wantsLine = settings.lineDeliveryEnabled;
+    const wantsVibeterm = settings.vibetermDeliveryEnabled;
+    if (!wantsLine && !wantsVibeterm) return;
+
     const eventText = buildEventText(entry, settings);
-    const ts = Date.now();
 
-    // LINE delivery: deliver: true pushes response to ClawGate -> LINE
-    if (settings.lineDeliveryEnabled) {
-      try {
-        await runtime.subagent.run({
-          sessionKey: "main",
-          message: eventText,
-          deliver: true,
-          idempotencyKey: `web-line-${entry.id}-${ts}`,
-        });
-        log?.info?.("recall-web-history: subagent.run sent (LINE)");
-      } catch (err) {
-        log?.warn?.(`recall-web-history: subagent.run LINE failed: ${err.message}`);
-      }
-    }
-
-    // Vibeterm delivery: deliver: false, response flows through WebSocket session
-    if (settings.vibetermDeliveryEnabled && !settings.lineDeliveryEnabled) {
-      try {
-        await runtime.subagent.run({
-          sessionKey: "main",
-          message: eventText,
-          deliver: false,
-          idempotencyKey: `web-vt-${entry.id}-${ts}`,
-        });
-        log?.info?.("recall-web-history: subagent.run sent (Vibeterm)");
-      } catch (err) {
-        log?.warn?.(`recall-web-history: subagent.run Vibeterm failed: ${err.message}`);
-      }
+    // Single subagent.run: deliver=true sends to LINE, WS broadcast always sends to Vibeterm
+    try {
+      await runtime.subagent.run({
+        sessionKey: "main",
+        message: eventText,
+        deliver: wantsLine,
+        idempotencyKey: `web-${entry.id}-${Date.now()}`,
+      });
+      log?.info?.(`recall-web-history: subagent.run sent (LINE=${wantsLine}, Vibeterm=${wantsVibeterm})`);
+    } catch (err) {
+      log?.warn?.(`recall-web-history: subagent.run failed: ${err.message}`);
     }
   }
 

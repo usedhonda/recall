@@ -244,21 +244,26 @@ export function createVoiceTranscriptHandler(api) {
       return;
     }
 
+    const wantsLine = settings.lineDeliveryEnabled;
+    const wantsVibeterm = settings.vibetermDeliveryEnabled;
+    if (!wantsLine && !wantsVibeterm) {
+      log?.info?.("voice-transcript: no delivery channels enabled, skipping");
+      return;
+    }
+
     const eventText = buildEventText(data, settings);
 
-    // LINE delivery
-    if (settings.lineDeliveryEnabled) {
-      try {
-        await runtime.subagent.run({
-          sessionKey: "main",
-          message: eventText,
-          deliver: true,
-          idempotencyKey: `voice-line-${rid}`,
-        });
-        log?.info?.("voice-transcript: subagent.run sent (LINE)");
-      } catch (err) {
-        log?.warn?.(`voice-transcript: subagent.run LINE failed: ${err.message}`);
-      }
+    // Single subagent.run: deliver=true sends to LINE, WS broadcast always sends to Vibeterm
+    try {
+      await runtime.subagent.run({
+        sessionKey: "main",
+        message: eventText,
+        deliver: wantsLine,
+        idempotencyKey: `voice-${rid}`,
+      });
+      log?.info?.(`voice-transcript: subagent.run sent (LINE=${wantsLine}, Vibeterm=${wantsVibeterm})`);
+    } catch (err) {
+      log?.warn?.(`voice-transcript: subagent.run failed: ${err.message}`);
     }
   }
 
