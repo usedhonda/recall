@@ -16,6 +16,14 @@ final class TelemetryService {
         AppSettings.shared.hasValidTelemetryConfig
     }
 
+    /// Dedicated URLSession with no caching to avoid stale connection issues
+    nonisolated let urlSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        return URLSession(configuration: config)
+    }()
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -38,8 +46,8 @@ final class TelemetryService {
                 let authorized = await healthManager.requestAuthorization()
                 if authorized {
                     healthManager.startTimer()
-                    await healthManager.queryAndSend()
-                    ActivityLogger.shared.log(.health, "HealthKit authorized, timer started, first query sent")
+                    await healthManager.queryAndSendFull()  // 24h lookback on launch to catch up
+                    ActivityLogger.shared.log(.health, "HealthKit authorized, timer started, first full query sent")
                 } else {
                     ActivityLogger.shared.log(.health, "HealthKit authorization denied — health data will not be collected")
                 }
@@ -98,7 +106,7 @@ final class TelemetryService {
 
         do {
             request.httpBody = try encoder.encode(batch)
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await urlSession.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .httpError("invalid response")
@@ -155,7 +163,7 @@ final class TelemetryService {
 
         do {
             request.httpBody = try encoder.encode(batch)
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await urlSession.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .error("invalid response")
@@ -171,6 +179,36 @@ final class TelemetryService {
             return .sent(status: httpResponse.statusCode, body: body)
         } catch {
             return .error(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Reaction Settings Sync
+
+    func syncReactionSettings() async {
+        guard hasValidConfig,
+              let token = KeychainHelper.shared.getToken() else { return }
+
+        let serverURL = AppSettings.shared.telemetryServerURL
+        guard let url = URL(string: "\(serverURL)/api/recall-settings") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("recall-ios/1.0", forHTTPHeaderField: "User-Agent")
+
+        let payload: [String: Bool] = [
+            "webReactionsEnabled": AppSettings.shared.webReactionsEnabled,
+            "voiceReactionsEnabled": AppSettings.shared.voiceReactionsEnabled,
+        ]
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            let (_, response) = try await urlSession.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { return }
+            ActivityLogger.shared.log(.telemetry, "Reaction settings synced: HTTP \(httpResponse.statusCode)")
+        } catch {
+            ActivityLogger.shared.log(.telemetry, "Reaction settings sync failed: \(error.localizedDescription)")
         }
     }
 
@@ -195,7 +233,7 @@ final class TelemetryService {
         request.httpBody = try? encoder.encode(batch)
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await urlSession.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else { return false }
             return (200...299).contains(httpResponse.statusCode)
         } catch {

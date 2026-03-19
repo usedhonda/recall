@@ -81,7 +81,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // --- Engagement tracking ---
 
 function sendEngagement(payload) {
-  chrome.runtime.sendMessage(payload).catch(() => {});
+  try {
+    chrome.runtime.sendMessage(payload).catch(() => {});
+  } catch {
+    // Extension context invalidated — content script is stale, ignore
+  }
 }
 
 // Visibility tracking

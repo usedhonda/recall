@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { verifyAuth } from "./auth.js";
+import { getReactionSettings } from "./recall-settings.js";
 import { flushSeenIds, getRecentEntries, getStats, storeEntry } from "./web-history-store.js";
 
 const NEXT_MIN_INTERVAL_SEC = 60;
@@ -203,9 +204,13 @@ export function createWebHistoryHandler(api) {
     return lines.join("\n");
   }
 
-  function tryWakeCron(entry) {
+  async function tryWakeCron(entry) {
     if (!entry.engagement?.engaged) return;
     if (!gatewayToken) return;
+
+    const settings = await getReactionSettings();
+    if (!settings.webReactionsEnabled) return;
+
     const now = Date.now();
     if (now - lastWakeMs < WAKE_COOLDOWN_MS) return;
     lastWakeMs = now;
@@ -268,7 +273,7 @@ export function createWebHistoryHandler(api) {
       received++;
       await appendDiaryEntry(entry, log);
       await persistLatestState(entry, log);
-      tryWakeCron(entry);
+      await tryWakeCron(entry);
     }
 
     if (received > 0) {

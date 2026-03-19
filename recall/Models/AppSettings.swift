@@ -113,6 +113,24 @@ final class AppSettings {
         !telemetryServerURL.isEmpty && KeychainHelper.shared.hasToken
     }
 
+    // MARK: - Chi Reaction Settings
+
+    var webReactionsEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "webReactionsEnabled") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "webReactionsEnabled")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "webReactionsEnabled") }
+    }
+
+    var voiceReactionsEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "voiceReactionsEnabled") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "voiceReactionsEnabled")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "voiceReactionsEnabled") }
+    }
+
     private init() {}
 }
 

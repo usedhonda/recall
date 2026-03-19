@@ -6,6 +6,8 @@
  */
 
 import { createTelemetryHandler } from "./src/handler.js";
+import { createSettingsHandler } from "./src/settings-handler.js";
+import { createVoiceTranscriptHandler } from "./src/voice-transcript-handler.js";
 import { createWebHistoryHandler } from "./src/web-history-handler.js";
 
 const plugin = {
@@ -22,6 +24,8 @@ const plugin = {
   register(api) {
     const telemetryHandler = createTelemetryHandler(api);
     const webHistoryHandler = createWebHistoryHandler(api);
+    const settingsHandler = createSettingsHandler(api);
+    const voiceTranscriptHandler = createVoiceTranscriptHandler(api);
     api.registerHttpRoute({
       path: "/api/telemetry",
       handler: telemetryHandler,
@@ -34,6 +38,18 @@ const plugin = {
       auth: "gateway",
     });
     api.logger?.info?.("recall-web-history: registered POST /api/web-history");
+    api.registerHttpRoute({
+      path: "/api/recall-settings",
+      handler: settingsHandler,
+      auth: "gateway",
+    });
+    api.logger?.info?.("recall-settings: registered GET/POST /api/recall-settings");
+    api.registerHttpRoute({
+      path: "/api/voice-transcript",
+      handler: voiceTranscriptHandler,
+      auth: "gateway",
+    });
+    api.logger?.info?.("voice-transcript: registered POST /api/voice-transcript");
   },
 };
 

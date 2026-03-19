@@ -10,6 +10,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     telemetryServerSection
+                    chiReactionsSection
                     vadSection
                     recordingSection
                     uploadSection
@@ -246,6 +247,20 @@ struct SettingsView: View {
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(RecallTheme.Colors.neonGreen)
                 }
+            }
+            .hudCard()
+        }
+    }
+
+    // MARK: - Chi Reactions
+
+    @ViewBuilder
+    private var chiReactionsSection: some View {
+        VStack(spacing: 8) {
+            HUDSectionHeader(title: "Chi Reactions", color: RecallTheme.Colors.neonMagenta)
+            VStack(spacing: 12) {
+                hudToggle(label: "WEB REACTIONS", isOn: $viewModel.webReactionsEnabled)
+                hudToggle(label: "VOICE REACTIONS", isOn: $viewModel.voiceReactionsEnabled)
             }
             .hudCard()
         }

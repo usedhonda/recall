@@ -146,6 +146,24 @@ final class SettingsViewModel {
         telemetry.locationManager.lastSentTime
     }
 
+    // MARK: - Chi Reactions
+
+    var webReactionsEnabled: Bool {
+        get { settings.webReactionsEnabled }
+        set {
+            settings.webReactionsEnabled = newValue
+            Task { await telemetry.syncReactionSettings() }
+        }
+    }
+
+    var voiceReactionsEnabled: Bool {
+        get { settings.voiceReactionsEnabled }
+        set {
+            settings.voiceReactionsEnabled = newValue
+            Task { await telemetry.syncReactionSettings() }
+        }
+    }
+
     // MARK: - QR Code
 
     var showQRScanner = false
