@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { verifyAuth } from "./auth.js";
-import { flushSeenIds, getStats, storeEntry } from "./web-history-store.js";
+import { flushSeenIds, getRecentEntries, getStats, storeEntry } from "./web-history-store.js";
 
 const NEXT_MIN_INTERVAL_SEC = 60;
 const PREVIEW_LIMIT = 200;
@@ -115,10 +115,25 @@ async function appendDiaryEntry(entry, log) {
   }
 }
 
+function toRecentEntry(entry) {
+  return {
+    id: entry.id,
+    url: entry.url,
+    title: entry.title,
+    domain: entry.domain,
+    contentPreview: toPreview(entry.content),
+    visitedAt: entry.visitedAt,
+    dwellSeconds: entry.dwellSeconds,
+    engagement: entry.engagement || null,
+  };
+}
+
 async function persistLatestState(entry, log) {
+  const recent = getRecentEntries(10);
   const state = {
     ...entry,
     contentPreview: toPreview(entry.content),
+    recentEntries: recent.map(toRecentEntry),
     updatedAt: new Date().toISOString(),
     source: "recall-web-history",
   };

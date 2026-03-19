@@ -132,6 +132,17 @@ export function getLatest() {
   return latestEntry;
 }
 
+export function getRecentEntries(limit = 10, maxAgeMs = 24 * 60 * 60 * 1000) {
+  const cutoff = Date.now() - maxAgeMs;
+  return history
+    .filter((e) => {
+      const ts = Date.parse(e.visitedAt || e.receivedAt);
+      return Number.isFinite(ts) && ts >= cutoff;
+    })
+    .slice(-limit)
+    .reverse();
+}
+
 export function getStats() {
   return {
     dedupSize: seenIds.size,
