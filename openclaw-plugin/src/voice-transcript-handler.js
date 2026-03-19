@@ -13,7 +13,6 @@ import { getReactionSettings } from "./recall-settings.js";
 
 const MEMORY_ROOT = join(homedir(), ".openclaw", "workspace", "memory");
 const STATE_PATH = join(MEMORY_ROOT, "voice-transcript-state.json");
-const WAKE_COOLDOWN_MS = 30 * 60 * 1000;
 const MAX_SEGMENTS = 20;
 
 function formatJstTime(ts) {
@@ -124,7 +123,6 @@ function buildEventText(data) {
 export function createVoiceTranscriptHandler(api) {
   const gatewayToken = api.config?.gateway?.auth?.token;
   const log = api.logger;
-  let lastWakeMs = 0;
 
   function rpc(method, params) {
     return fetch("http://127.0.0.1:18789/rpc", {
@@ -142,10 +140,6 @@ export function createVoiceTranscriptHandler(api) {
 
     const settings = await getReactionSettings();
     if (!settings.voiceReactionsEnabled) return;
-
-    const now = Date.now();
-    if (now - lastWakeMs < WAKE_COOLDOWN_MS) return;
-    lastWakeMs = now;
 
     const eventText = buildEventText(data);
     rpc("system-event", { text: eventText })
