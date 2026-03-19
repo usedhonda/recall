@@ -81,6 +81,7 @@ struct RecallApp: App {
         // Phase 1: Hostname rename (yuzurumac-mini → yuzurumac-mini-1)
         let hostnameRenames = [
             "yuzurumac-mini.tailfeb2b0.ts.net": "yuzurumac-mini-1.tailfeb2b0.ts.net",
+            "macbook-pro-3.tailfeb2b0.ts.net": "yuzurumac-mini-1.tailfeb2b0.ts.net",
         ]
         for key in urlKeys {
             guard var value = UserDefaults.standard.string(forKey: key), !value.isEmpty else { continue }

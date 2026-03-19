@@ -175,7 +175,33 @@ final class HealthKitManager {
             observerQueries.append(query)
         }
 
-        ActivityLogger.shared.log(.health, "Background delivery registered for \(monitoredTypes.count) types")
+        // Sleep analysis — category type, handled separately from quantity types
+        if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
+            healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { _, error in
+                if let error {
+                    ActivityLogger.shared.logFromBackground(.health, "BG delivery failed for sleep: \(error.localizedDescription)")
+                }
+            }
+
+            let query = HKObserverQuery(sampleType: sleepType, predicate: nil) { [weak self] _, completionHandler, error in
+                guard error == nil else {
+                    completionHandler()
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    guard let self, self.isEnabled else {
+                        completionHandler()
+                        return
+                    }
+                    await self.queryAndSend()
+                    completionHandler()
+                }
+            }
+            healthStore.execute(query)
+            observerQueries.append(query)
+        }
+
+        ActivityLogger.shared.log(.health, "Background delivery registered for \(monitoredTypes.count + 1) types (incl. sleep)")
     }
 
     /// Stop observer queries (called on disable)
