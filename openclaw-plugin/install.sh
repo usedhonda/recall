@@ -145,14 +145,16 @@ require_file "$SCRIPT_DIR/src/store.js"
 require_file "$SCRIPT_DIR/src/auth.js"
 require_file "$SCRIPT_DIR/src/web-history-handler.js"
 require_file "$SCRIPT_DIR/src/web-history-store.js"
+require_file "$SCRIPT_DIR/scripts/cleanup-memory.sh"
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: $CONFIG_FILE not found. Is OpenClaw installed?" >&2
   exit 1
 fi
 
-echo "[1/3] copying plugin files to $DEST_DIR"
+echo "[1/4] copying plugin files to $DEST_DIR"
 run "mkdir -p '$DEST_DIR/src'"
+run "mkdir -p '$DEST_DIR/scripts'"
 run "cp '$SCRIPT_DIR/index.js' '$DEST_DIR/index.js'"
 run "cp '$SCRIPT_DIR/package.json' '$DEST_DIR/package.json'"
 run "cp '$SCRIPT_DIR/openclaw.plugin.json' '$DEST_DIR/openclaw.plugin.json'"
@@ -161,8 +163,10 @@ run "cp '$SCRIPT_DIR/src/store.js' '$DEST_DIR/src/store.js'"
 run "cp '$SCRIPT_DIR/src/auth.js' '$DEST_DIR/src/auth.js'"
 run "cp '$SCRIPT_DIR/src/web-history-handler.js' '$DEST_DIR/src/web-history-handler.js'"
 run "cp '$SCRIPT_DIR/src/web-history-store.js' '$DEST_DIR/src/web-history-store.js'"
+run "cp '$SCRIPT_DIR/scripts/cleanup-memory.sh' '$DEST_DIR/scripts/cleanup-memory.sh'"
+run "chmod +x '$DEST_DIR/scripts/cleanup-memory.sh'"
 
-echo "[2/3] registering plugin in $CONFIG_FILE"
+echo "[2/4] registering plugin in $CONFIG_FILE"
 if [ "$BACKUP_CONFIG" -eq 1 ]; then
   timestamp="$(date +%Y%m%d-%H%M%S)"
   backup_path="$BACKUP_DIR/openclaw.json.$timestamp.bak"
@@ -193,7 +197,14 @@ with config_path.open("w", encoding="utf-8") as f:
 PY
 fi
 
-echo "[3/3] restarting gateway"
+echo "[3/4] running initial memory cleanup"
+if [ "$DRY_RUN" -eq 1 ]; then
+  run "'$DEST_DIR/scripts/cleanup-memory.sh' --dry-run"
+else
+  "$DEST_DIR/scripts/cleanup-memory.sh" || echo "WARNING: cleanup failed (non-fatal)"
+fi
+
+echo "[4/4] restarting gateway"
 restart_gateway
 
 cat <<MSG
@@ -209,6 +220,10 @@ Verify with:
 
 Expected:
   {"received":0,"healthReceived":true,"nextMinIntervalSec":60}
+
+Memory cleanup:
+  Runs automatically on install. To schedule daily:
+  (crontab -l 2>/dev/null; echo "0 4 * * * $DEST_DIR/scripts/cleanup-memory.sh >> \$HOME/.openclaw/logs/cleanup.log 2>&1") | crontab -
 
 Rollback:
   ./install.sh --rollback
