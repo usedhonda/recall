@@ -8,6 +8,19 @@ const NEXT_MIN_INTERVAL_SEC = 60;
 const PREVIEW_LIMIT = 200;
 const MEMORY_ROOT = join(homedir(), ".openclaw", "workspace", "memory");
 const WEB_HISTORY_STATE_PATH = join(MEMORY_ROOT, "web-history-state.json");
+const DEDUP_TTL_MS = 60 * 1000;
+
+// Module-level dedup: prevents duplicate subagent.run from multiple plugin loads
+const _sentIds = new Map();
+function isDuplicate(key) {
+  const now = Date.now();
+  if (_sentIds.has(key) && now - _sentIds.get(key) < DEDUP_TTL_MS) return true;
+  _sentIds.set(key, now);
+  for (const [k, t] of _sentIds) {
+    if (now - t > DEDUP_TTL_MS) _sentIds.delete(k);
+  }
+  return false;
+}
 
 function formatJstTime(ts) {
   return ts.toLocaleTimeString("ja-JP", {
@@ -208,6 +221,11 @@ export function createWebHistoryHandler(api) {
   async function trySendChat(entry) {
     if (!entry.engagement?.engaged) return;
     if (!runtime?.subagent?.run) return;
+
+    if (isDuplicate(`web-${entry.id}`)) {
+      log?.info?.(`recall-web-history: dedup skip (${entry.id})`);
+      return;
+    }
 
     const settings = await getReactionSettings();
     if (!settings.webReactionsEnabled) return;

@@ -19,6 +19,20 @@ const STATE_PATH = join(MEMORY_ROOT, "voice-transcript-state.json");
 const MAX_SEGMENTS = 20;
 const MIN_FIRE_CHARS = 100;
 const BUFFER_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const DEDUP_TTL_MS = 60 * 1000; // 60s dedup window
+
+// Module-level dedup: prevents duplicate subagent.run from multiple plugin loads
+const _sentIds = new Map();
+function isDuplicate(key) {
+  const now = Date.now();
+  if (_sentIds.has(key) && now - _sentIds.get(key) < DEDUP_TTL_MS) return true;
+  _sentIds.set(key, now);
+  // Trim old entries
+  for (const [k, t] of _sentIds) {
+    if (now - t > DEDUP_TTL_MS) _sentIds.delete(k);
+  }
+  return false;
+}
 
 // In-memory rolling buffer of recent transcripts
 const recentTranscripts = [];
@@ -200,15 +214,19 @@ export function createVoiceTranscriptHandler(api) {
   const log = api.logger;
   const runtime = api.runtime;
 
-  if (runtime?.subagent?.run) {
-    log?.info?.("voice-transcript: runtime.subagent.run available");
-  } else {
-    log?.warn?.("voice-transcript: runtime.subagent.run NOT available — chat delivery will fail");
+  if (!runtime?.subagent?.run) {
+    log?.warn?.("voice-transcript: runtime.subagent.run NOT available");
   }
 
   async function trySendChat(data) {
     if (!runtime?.subagent?.run) {
       log?.warn?.("voice-transcript: skipping (no runtime.subagent.run)");
+      return;
+    }
+
+    const rid = data.recording_id || String(Date.now());
+    if (isDuplicate(`voice-${rid}`)) {
+      log?.info?.(`voice-transcript: dedup skip (${rid})`);
       return;
     }
 
@@ -227,9 +245,8 @@ export function createVoiceTranscriptHandler(api) {
     }
 
     const eventText = buildEventText(data, settings);
-    const rid = data.recording_id || Date.now();
 
-    // LINE delivery: deliver: true pushes response to ClawGate -> LINE
+    // LINE delivery
     if (settings.lineDeliveryEnabled) {
       try {
         await runtime.subagent.run({
@@ -241,21 +258,6 @@ export function createVoiceTranscriptHandler(api) {
         log?.info?.("voice-transcript: subagent.run sent (LINE)");
       } catch (err) {
         log?.warn?.(`voice-transcript: subagent.run LINE failed: ${err.message}`);
-      }
-    }
-
-    // Vibeterm delivery: deliver: false, response flows through WebSocket session
-    if (settings.vibetermDeliveryEnabled && !settings.lineDeliveryEnabled) {
-      try {
-        await runtime.subagent.run({
-          sessionKey: "main",
-          message: eventText,
-          deliver: false,
-          idempotencyKey: `voice-vt-${rid}`,
-        });
-        log?.info?.("voice-transcript: subagent.run sent (Vibeterm)");
-      } catch (err) {
-        log?.warn?.(`voice-transcript: subagent.run Vibeterm failed: ${err.message}`);
       }
     }
   }
