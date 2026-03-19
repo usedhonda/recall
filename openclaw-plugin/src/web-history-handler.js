@@ -172,25 +172,52 @@ export function createWebHistoryHandler(api) {
   const log = api.logger;
   let lastWakeMs = 0;
 
+  function rpc(method, params) {
+    return fetch("http://127.0.0.1:18789/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${gatewayToken}`
+      },
+      body: JSON.stringify({ method, params })
+    });
+  }
+
+  function buildEventText(entry) {
+    const lines = [
+      "\u{1F310} \u3054\u4E3B\u4EBA\u69D8\u304C\u30A6\u30A7\u30D6\u8A18\u4E8B\u3092\u3057\u3063\u304B\u308A\u8AAD\u3093\u3067\u3044\u305F\u3002web-react \u30B9\u30AD\u30EB\u3067\u53CD\u5FDC\u3057\u3066\u3002",
+      `\u30BF\u30A4\u30C8\u30EB: ${entry.title}`,
+      `\u30C9\u30E1\u30A4\u30F3: ${entry.domain}`,
+      `URL: ${entry.url}`,
+    ];
+    if (entry.contentPreview) {
+      lines.push(`\u5185\u5BB9: ${entry.contentPreview}`);
+    }
+    const tweets = entry.engagement?.viewedTweets;
+    if (Array.isArray(tweets) && tweets.length > 0) {
+      const summary = tweets.map((t) => `@${t.handle || t.author}: ${normalizeWhitespace(t.text)}`).join(" / ");
+      lines.push(`\u95B2\u89A7\u30C4\u30A4\u30FC\u30C8: ${summary}`);
+    }
+    const eng = entry.engagement;
+    lines.push(`\u6EDE\u5728: ${entry.dwellSeconds}\u79D2 / \u30A2\u30AF\u30C6\u30A3\u30D6: ${eng?.activeSeconds ?? "?"}\u79D2 / \u30B9\u30AF\u30ED\u30FC\u30EB: ${eng?.scrollDepthPct ?? "?"}%`);
+    return lines.join("\n");
+  }
+
   function tryWakeCron(entry) {
     if (!entry.engagement?.engaged) return;
     if (!gatewayToken) return;
     const now = Date.now();
     if (now - lastWakeMs < WAKE_COOLDOWN_MS) return;
     lastWakeMs = now;
-    fetch("http://127.0.0.1:18789/rpc", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${gatewayToken}`
-      },
-      body: JSON.stringify({
-        method: "cron.wake",
-        params: { mode: "now", text: "engaged web reading detected" }
-      })
-    }).then(() => {
-      log?.info?.("recall-web-history: cron.wake sent");
-    }).catch(() => {});
+
+    const eventText = buildEventText(entry);
+    rpc("system-event", { text: eventText })
+      .then(() => log?.info?.("recall-web-history: system-event sent"))
+      .catch(() => {});
+
+    rpc("cron.wake", { mode: "now", text: "engaged web reading detected" })
+      .then(() => log?.info?.("recall-web-history: cron.wake sent"))
+      .catch(() => {});
   }
 
   if (!gatewayToken) {
