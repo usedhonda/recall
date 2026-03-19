@@ -10,7 +10,8 @@ struct SettingsView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     telemetryServerSection
-                    chiReactionsSection
+                    chiTriggersSection
+                    chiDeliverySection
                     vadSection
                     recordingSection
                     uploadSection
@@ -252,17 +253,29 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Chi Reactions
+    // MARK: - Chi Triggers
 
     @ViewBuilder
-    private var chiReactionsSection: some View {
+    private var chiTriggersSection: some View {
         VStack(spacing: 8) {
-            HUDSectionHeader(title: "Chi Reactions", color: RecallTheme.Colors.neonMagenta)
+            HUDSectionHeader(title: "Chi Triggers", color: RecallTheme.Colors.neonMagenta)
             VStack(spacing: 12) {
                 hudToggle(label: "WEB REACTIONS", isOn: $viewModel.webReactionsEnabled)
                 hudToggle(label: "VOICE REACTIONS", isOn: $viewModel.voiceReactionsEnabled)
-                hudToggle(label: "LINE DELIVERY", isOn: $viewModel.lineDeliveryEnabled)
-                hudToggle(label: "VIBETERM DELIVERY", isOn: $viewModel.vibetermDeliveryEnabled)
+            }
+            .hudCard()
+        }
+    }
+
+    // MARK: - Chi Delivery
+
+    @ViewBuilder
+    private var chiDeliverySection: some View {
+        VStack(spacing: 8) {
+            HUDSectionHeader(title: "Chi Delivery", color: RecallTheme.Colors.neonMagenta)
+            VStack(spacing: 12) {
+                hudToggle(label: "LINE", isOn: $viewModel.lineDeliveryEnabled)
+                hudToggle(label: "VIBETERM", isOn: $viewModel.vibetermDeliveryEnabled)
             }
             .hudCard()
         }
