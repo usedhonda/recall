@@ -19,6 +19,7 @@ const elements = {
   queueCount: document.getElementById("queueCount"),
   healthStatus: document.getElementById("healthStatus"),
   statusMessage: document.getElementById("statusMessage"),
+  saveRulesButton: document.getElementById("saveRulesButton"),
   recentEntries: document.getElementById("recentEntries"),
   qrOverlay: document.getElementById("qrOverlay"),
   closeQrButton: document.getElementById("closeQrButton"),
@@ -236,6 +237,9 @@ function bindEvents() {
   elements.dwellSlider.addEventListener("input", () => {
     elements.dwellValue.textContent = `${elements.dwellSlider.value}s`;
   });
+  elements.dwellSlider.addEventListener("change", () => {
+    void saveSettings();
+  });
   elements.saveButton.addEventListener("click", () => {
     void saveSettings();
   });
@@ -243,6 +247,9 @@ function bindEvents() {
     void testConnection();
   });
   elements.enabledToggle.addEventListener("change", () => {
+    void saveSettings();
+  });
+  elements.saveRulesButton.addEventListener("click", () => {
     void saveSettings();
   });
   elements.scanQrButton.addEventListener("click", () => {
