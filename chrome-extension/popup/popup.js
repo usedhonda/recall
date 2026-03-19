@@ -120,7 +120,17 @@ async function refreshState() {
   renderRecentEntries(response.recentEntries || []);
 }
 
-async function saveSettings() {
+function flashSaved(button) {
+  const original = button.textContent;
+  button.textContent = "Saved!";
+  button.classList.add("saved");
+  setTimeout(() => {
+    button.textContent = original;
+    button.classList.remove("saved");
+  }, 1200);
+}
+
+async function saveSettings(triggerButton) {
   const settings = readForm();
   const response = await sendMessage({ type: "popup:save-settings", settings });
   if (!response?.ok) {
@@ -130,7 +140,11 @@ async function saveSettings() {
 
   applySettings(response.settings);
   await refreshState();
-  setStatus("Settings saved.", "success");
+  if (triggerButton) {
+    flashSaved(triggerButton);
+  } else {
+    setStatus("Settings saved.", "success");
+  }
 }
 
 async function testConnection() {
@@ -241,7 +255,7 @@ function bindEvents() {
     void saveSettings();
   });
   elements.saveButton.addEventListener("click", () => {
-    void saveSettings();
+    void saveSettings(elements.saveButton);
   });
   elements.testButton.addEventListener("click", () => {
     void testConnection();
@@ -250,7 +264,7 @@ function bindEvents() {
     void saveSettings();
   });
   elements.saveRulesButton.addEventListener("click", () => {
-    void saveSettings();
+    void saveSettings(elements.saveRulesButton);
   });
   elements.scanQrButton.addEventListener("click", () => {
     void startQrScan().catch((error) => {

@@ -167,6 +167,11 @@ button:hover {
   filter: brightness(1.04);
 }
 
+button.saved {
+  background: var(--accent-strong);
+  pointer-events: none;
+}
+
 .recent-list {
   list-style: none;
   margin: 0;
