@@ -116,34 +116,61 @@ window.addEventListener("scroll", () => {
   }, 2000);
 }, { passive: true });
 
-// --- X (twitter.com / x.com) feed tracking ---
+// --- X (twitter.com / x.com) individual tweet tracking ---
 
 const X_DOMAINS = ["x.com", "twitter.com"];
 const isXDomain = X_DOMAINS.includes(location.hostname);
 
 if (isXDomain) {
   const TWEET_SELECTOR = 'article[data-testid="tweet"]';
-  let tweetsViewed = 0;
-  let totalViewMs = 0;
+  const TWEET_DWELL_MS = 2000;
+
   const viewStartMap = new WeakMap();
-  const visibleTweets = new Set();
+  const reportedTweetIds = new Set();
+  const pendingReports = [];
+
+  function extractTweetData(article) {
+    const textEl = article.querySelector('[data-testid="tweetText"]');
+    const text = textEl?.innerText || "";
+
+    const userNameEl = article.querySelector('[data-testid="User-Name"]');
+    let author = "";
+    let handle = "";
+    if (userNameEl) {
+      author = userNameEl.querySelector("span")?.textContent?.trim() || "";
+      for (const span of userNameEl.querySelectorAll("span")) {
+        const t = span.textContent?.trim() || "";
+        if (t.startsWith("@")) { handle = t; break; }
+      }
+    }
+
+    const timeEl = article.querySelector("time");
+    const linkEl = timeEl?.closest("a");
+    const permalink = linkEl?.getAttribute("href") || "";
+    const tweetIdMatch = permalink.match(/\/status\/(\d+)/);
+    const tweetId = tweetIdMatch?.[1] || "";
+
+    return { tweetId, author, handle, text, permalink };
+  }
 
   const intersectionObserver = new IntersectionObserver((entries) => {
     const now = Date.now();
     for (const entry of entries) {
       if (entry.isIntersecting) {
-        if (!viewStartMap.has(entry.target)) {
-          tweetsViewed++;
-        }
         viewStartMap.set(entry.target, now);
-        visibleTweets.add(entry.target);
       } else {
         const start = viewStartMap.get(entry.target);
-        if (start) {
-          totalViewMs += (now - start);
-          viewStartMap.delete(entry.target);
+        viewStartMap.delete(entry.target);
+        if (start && (now - start) >= TWEET_DWELL_MS) {
+          const data = extractTweetData(entry.target);
+          if (data.tweetId && !reportedTweetIds.has(data.tweetId)) {
+            reportedTweetIds.add(data.tweetId);
+            pendingReports.push({
+              ...data,
+              viewSeconds: Math.round((now - start) / 1000)
+            });
+          }
         }
-        visibleTweets.delete(entry.target);
       }
     }
   }, { threshold: 0.5 });
@@ -154,10 +181,8 @@ if (isXDomain) {
     intersectionObserver.observe(node);
   }
 
-  // Observe tweets already in the DOM
   document.querySelectorAll(TWEET_SELECTOR).forEach(observeTweet);
 
-  // Watch for new tweets added via infinite scroll
   const mutationObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
@@ -173,19 +198,9 @@ if (isXDomain) {
   });
   mutationObserver.observe(document.body, { childList: true, subtree: true });
 
-  // Report X feed engagement periodically
   setInterval(() => {
-    if (tweetsViewed === 0) return;
-    const now = Date.now();
-    let inFlightMs = 0;
-    for (const tweet of visibleTweets) {
-      const start = viewStartMap.get(tweet);
-      if (start) inFlightMs += (now - start);
-    }
-    sendEngagement({
-      type: "engagement:x-feed",
-      tweetsViewed,
-      totalViewMs: totalViewMs + inFlightMs
-    });
+    if (pendingReports.length === 0) return;
+    const batch = pendingReports.splice(0);
+    sendEngagement({ type: "engagement:x-tweets", tweets: batch });
   }, 5000);
 }

@@ -122,9 +122,7 @@ function createEngagementState() {
     activeMs: 0,
     scrollDepthPct: 0,
     isVisible: true,
-    isIdle: false,
-    tweetsViewed: 0,
-    totalViewMs: 0
+    isIdle: false
   };
 }
 
@@ -147,9 +145,8 @@ function computeEngagement(tabState) {
 
   const engagement = { activeSeconds, scrollDepthPct, engaged };
 
-  if (tabState.tweetsViewed > 0) {
-    engagement.tweetsViewed = tabState.tweetsViewed;
-    engagement.avgViewSeconds = Math.round((tabState.totalViewMs || 0) / tabState.tweetsViewed / 1000);
+  if (tabState.viewedTweets?.length > 0) {
+    engagement.viewedTweets = tabState.viewedTweets;
   }
 
   return { dwellSeconds: activeSeconds, engagement };
@@ -193,9 +190,13 @@ async function handleEngagementMessage(message, tabId) {
       }
       break;
     }
-    case "engagement:x-feed": {
-      tabState.tweetsViewed = Number(message.tweetsViewed) || 0;
-      tabState.totalViewMs = Number(message.totalViewMs) || 0;
+    case "engagement:x-tweets": {
+      if (!tabState.viewedTweets) tabState.viewedTweets = [];
+      for (const tweet of (message.tweets || [])) {
+        if (tabState.viewedTweets.length < 200) {
+          tabState.viewedTweets.push(tweet);
+        }
+      }
       break;
     }
   }

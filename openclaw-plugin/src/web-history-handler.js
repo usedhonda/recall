@@ -89,14 +89,22 @@ async function appendDiaryEntry(entry, log) {
   const timeStr = formatJstTime(visitedAt);
   const preview = toPreview(entry.content);
   const eng = entry.engagement;
+  const viewedTweets = eng?.viewedTweets;
   let engagementTag = "";
-  if (eng?.tweetsViewed > 0) {
-    engagementTag = ` \u{1F426}${eng.tweetsViewed} tweets`;
+  if (Array.isArray(viewedTweets) && viewedTweets.length > 0) {
+    engagementTag = ` \u{1F426}${viewedTweets.length} posts read`;
   } else if (eng?.scrollDepthPct > 0 && eng?.engaged) {
     engagementTag = ` \u{1F4D6}${eng.scrollDepthPct}%`;
   }
   const header = `\u{1F310} ${timeStr} - ${entry.title} (${entry.domain}) [${entry.dwellSeconds}s${engagementTag}]\n`;
-  const body = preview ? `   ${preview}\n` : "";
+  let body = "";
+  if (Array.isArray(viewedTweets) && viewedTweets.length > 0) {
+    body = viewedTweets
+      .map((t) => `   ${t.handle || t.author || "?"}: ${normalizeWhitespace(t.text)} (${t.viewSeconds || 0}s)\n`)
+      .join("");
+  } else if (preview) {
+    body = `   ${preview}\n`;
+  }
   const diaryPath = join(MEMORY_ROOT, `${dateStr}.md`);
 
   try {
