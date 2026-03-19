@@ -2,18 +2,16 @@
  * Voice transcript handler — POST /api/voice-transcript
  *
  * Receives transcription results from VoiceLog, writes diary entries,
- * and optionally triggers Chi reaction via system-event + cron.wake.
+ * and optionally triggers Chi reaction via api.runtime.subagent.run().
  *
- * Firing policy: diary is always written, but system-event only fires
+ * Firing policy: diary is always written, but chat message only fires
  * when the latest transcript has >= MIN_FIRE_CHARS of text.
  * A rolling buffer of recent transcripts provides context to Chi.
  */
 
-import { readFileSync } from "fs";
 import { promises as fs } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { verifyAuth } from "./auth.js";
 import { getReactionSettings } from "./recall-settings.js";
 
 const MEMORY_ROOT = join(homedir(), ".openclaw", "workspace", "memory");
@@ -24,19 +22,6 @@ const BUFFER_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 // In-memory rolling buffer of recent transcripts
 const recentTranscripts = [];
-
-function resolveGatewayToken(api) {
-  const fromConfig = api.config?.gateway?.auth?.token;
-  if (fromConfig) return fromConfig;
-  try {
-    const cfg = JSON.parse(
-      readFileSync(join(homedir(), ".openclaw", "openclaw.json"), "utf8")
-    );
-    return cfg?.gateway?.auth?.token;
-  } catch {
-    return undefined;
-  }
-}
 
 function trimBuffer() {
   const cutoff = Date.now() - BUFFER_TTL_MS;
@@ -211,29 +196,18 @@ function buildEventText(data, settings) {
 }
 
 export function createVoiceTranscriptHandler(api) {
-  const gatewayToken = resolveGatewayToken(api);
   const log = api.logger;
+  const runtime = api.runtime;
 
-  if (!gatewayToken) {
-    log?.warn?.("voice-transcript: no gateway auth token found (config + openclaw.json both empty)");
+  if (runtime?.subagent?.run) {
+    log?.info?.("voice-transcript: runtime.subagent.run available");
   } else {
-    log?.info?.("voice-transcript: gateway token resolved");
-  }
-
-  function rpc(method, params) {
-    return fetch("http://127.0.0.1:18789/rpc", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${gatewayToken}`,
-      },
-      body: JSON.stringify({ method, params }),
-    });
+    log?.warn?.("voice-transcript: runtime.subagent.run NOT available — chat delivery will fail");
   }
 
   async function trySendChat(data) {
-    if (!gatewayToken) {
-      log?.warn?.("voice-transcript: skipping chat.send (no gateway token)");
+    if (!runtime?.subagent?.run) {
+      log?.warn?.("voice-transcript: skipping (no runtime.subagent.run)");
       return;
     }
 
@@ -246,35 +220,29 @@ export function createVoiceTranscriptHandler(api) {
     const fullText = extractFullText(data);
     if (fullText.length < MIN_FIRE_CHARS) {
       log?.info?.(
-        `voice-transcript: text too short (${fullText.length}/${MIN_FIRE_CHARS} chars), skipping chat.send`
+        `voice-transcript: text too short (${fullText.length}/${MIN_FIRE_CHARS} chars), skipping`
       );
       return;
     }
 
     const eventText = buildEventText(data, settings);
-    const idempotencyKey = `voice-${data.recording_id || Date.now()}`;
-
-    rpc("chat.send", {
-      sessionKey: "main",
-      message: eventText,
-      idempotencyKey,
-    })
-      .then(() => log?.info?.("voice-transcript: chat.send sent"))
-      .catch((err) => log?.warn?.(`voice-transcript: chat.send failed: ${err.message}`));
+    try {
+      await runtime.subagent.run({
+        sessionKey: "main",
+        message: eventText,
+        deliver: true,
+        idempotencyKey: `voice-${data.recording_id || Date.now()}`,
+      });
+      log?.info?.("voice-transcript: subagent.run sent");
+    } catch (err) {
+      log?.warn?.(`voice-transcript: subagent.run failed: ${err.message}`);
+    }
   }
 
   return async (req, res) => {
     if (req.method !== "POST") {
       sendError(res, 405, "METHOD_NOT_ALLOWED", "Only POST is accepted");
       return;
-    }
-
-    if (gatewayToken) {
-      const auth = verifyAuth(req, gatewayToken);
-      if (!auth.valid) {
-        sendError(res, 401, "UNAUTHORIZED", auth.error);
-        return;
-      }
     }
 
     let body;

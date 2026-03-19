@@ -1,23 +1,8 @@
-import { readFileSync } from "fs";
 import { promises as fs } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { verifyAuth } from "./auth.js";
 import { getReactionSettings } from "./recall-settings.js";
 import { flushSeenIds, getRecentEntries, getStats, storeEntry } from "./web-history-store.js";
-
-function resolveGatewayToken(api) {
-  const fromConfig = api.config?.gateway?.auth?.token;
-  if (fromConfig) return fromConfig;
-  try {
-    const cfg = JSON.parse(
-      readFileSync(join(homedir(), ".openclaw", "openclaw.json"), "utf8")
-    );
-    return cfg?.gateway?.auth?.token;
-  } catch {
-    return undefined;
-  }
-}
 
 const NEXT_MIN_INTERVAL_SEC = 60;
 const PREVIEW_LIMIT = 200;
@@ -181,24 +166,13 @@ function sendJson(res, data) {
 }
 
 export function createWebHistoryHandler(api) {
-  const gatewayToken = resolveGatewayToken(api);
   const log = api.logger;
+  const runtime = api.runtime;
 
-  if (!gatewayToken) {
-    log?.warn?.("recall-web-history: no gateway auth token found (config + openclaw.json both empty)");
+  if (runtime?.subagent?.run) {
+    log?.info?.("recall-web-history: runtime.subagent.run available");
   } else {
-    log?.info?.("recall-web-history: gateway token resolved");
-  }
-
-  function rpc(method, params) {
-    return fetch("http://127.0.0.1:18789/rpc", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${gatewayToken}`
-      },
-      body: JSON.stringify({ method, params })
-    });
+    log?.warn?.("recall-web-history: runtime.subagent.run NOT available — chat delivery will fail");
   }
 
   function buildDeliveryDirective(settings) {
@@ -232,36 +206,29 @@ export function createWebHistoryHandler(api) {
 
   async function trySendChat(entry) {
     if (!entry.engagement?.engaged) return;
-    if (!gatewayToken) return;
+    if (!runtime?.subagent?.run) return;
 
     const settings = await getReactionSettings();
     if (!settings.webReactionsEnabled) return;
 
     const eventText = buildEventText(entry, settings);
-    const idempotencyKey = `web-${entry.id}-${Date.now()}`;
-
-    rpc("chat.send", {
-      sessionKey: "main",
-      message: eventText,
-      idempotencyKey,
-    })
-      .then(() => log?.info?.("recall-web-history: chat.send sent"))
-      .catch((err) => log?.warn?.(`recall-web-history: chat.send failed: ${err.message}`));
+    try {
+      await runtime.subagent.run({
+        sessionKey: "main",
+        message: eventText,
+        deliver: true,
+        idempotencyKey: `web-${entry.id}-${Date.now()}`,
+      });
+      log?.info?.("recall-web-history: subagent.run sent");
+    } catch (err) {
+      log?.warn?.(`recall-web-history: subagent.run failed: ${err.message}`);
+    }
   }
 
   return async (req, res) => {
     if (req.method !== "POST") {
       sendError(res, 405, "METHOD_NOT_ALLOWED", "Only POST is accepted");
       return;
-    }
-
-    if (gatewayToken) {
-      const auth = verifyAuth(req, gatewayToken);
-      if (!auth.valid) {
-        log?.debug?.(`recall-web-history: auth failed: ${auth.error}`);
-        sendError(res, 401, "UNAUTHORIZED", auth.error);
-        return;
-      }
     }
 
     let body;
