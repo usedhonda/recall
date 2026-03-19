@@ -1,9 +1,23 @@
+import { readFileSync } from "fs";
 import { promises as fs } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { verifyAuth } from "./auth.js";
 import { getReactionSettings } from "./recall-settings.js";
 import { flushSeenIds, getRecentEntries, getStats, storeEntry } from "./web-history-store.js";
+
+function resolveGatewayToken(api) {
+  const fromConfig = api.config?.gateway?.auth?.token;
+  if (fromConfig) return fromConfig;
+  try {
+    const cfg = JSON.parse(
+      readFileSync(join(homedir(), ".openclaw", "openclaw.json"), "utf8")
+    );
+    return cfg?.gateway?.auth?.token;
+  } catch {
+    return undefined;
+  }
+}
 
 const NEXT_MIN_INTERVAL_SEC = 60;
 const PREVIEW_LIMIT = 200;
@@ -167,8 +181,14 @@ function sendJson(res, data) {
 }
 
 export function createWebHistoryHandler(api) {
-  const gatewayToken = api.config?.gateway?.auth?.token;
+  const gatewayToken = resolveGatewayToken(api);
   const log = api.logger;
+
+  if (!gatewayToken) {
+    log?.warn?.("recall-web-history: no gateway auth token found (config + openclaw.json both empty)");
+  } else {
+    log?.info?.("recall-web-history: gateway token resolved");
+  }
 
   function rpc(method, params) {
     return fetch("http://127.0.0.1:18789/rpc", {
@@ -216,10 +236,6 @@ export function createWebHistoryHandler(api) {
     rpc("cron.wake", { mode: "now", text: "engaged web reading detected" })
       .then(() => log?.info?.("recall-web-history: cron.wake sent"))
       .catch(() => {});
-  }
-
-  if (!gatewayToken) {
-    log?.warn?.("recall-web-history: no gateway auth token found in config");
   }
 
   return async (req, res) => {
