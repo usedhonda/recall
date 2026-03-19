@@ -9,11 +9,11 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(spacing: 16) {
+                    telemetryServerSection
                     vadSection
                     recordingSection
                     uploadSection
                     storageSection
-                    telemetryServerSection
                     healthSection
                     locationSection
                     deviceSection
