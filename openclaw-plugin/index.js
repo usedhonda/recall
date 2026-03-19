@@ -2,15 +2,16 @@
  * Recall Telemetry plugin for OpenClaw.
  *
  * Registers POST /api/telemetry - receives location and health telemetry
- * from the recall iOS app.
+ * and POST /api/web-history - receives browsing history from recall clients.
  */
 
 import { createTelemetryHandler } from "./src/handler.js";
+import { createWebHistoryHandler } from "./src/web-history-handler.js";
 
 const plugin = {
   id: "recall-telemetry",
   name: "Recall Telemetry",
-  description: "REST endpoint for recall iOS location and health telemetry",
+  description: "REST endpoints for recall telemetry and web history ingestion",
 
   configSchema: {
     type: "object",
@@ -19,13 +20,20 @@ const plugin = {
   },
 
   register(api) {
-    const handler = createTelemetryHandler(api);
+    const telemetryHandler = createTelemetryHandler(api);
+    const webHistoryHandler = createWebHistoryHandler(api);
     api.registerHttpRoute({
       path: "/api/telemetry",
-      handler,
+      handler: telemetryHandler,
       auth: "gateway",
     });
     api.logger?.info?.("recall-telemetry: registered POST /api/telemetry");
+    api.registerHttpRoute({
+      path: "/api/web-history",
+      handler: webHistoryHandler,
+      auth: "gateway",
+    });
+    api.logger?.info?.("recall-web-history: registered POST /api/web-history");
   },
 };
 

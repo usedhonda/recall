@@ -143,6 +143,8 @@ require_file "$SCRIPT_DIR/openclaw.plugin.json"
 require_file "$SCRIPT_DIR/src/handler.js"
 require_file "$SCRIPT_DIR/src/store.js"
 require_file "$SCRIPT_DIR/src/auth.js"
+require_file "$SCRIPT_DIR/src/web-history-handler.js"
+require_file "$SCRIPT_DIR/src/web-history-store.js"
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: $CONFIG_FILE not found. Is OpenClaw installed?" >&2
@@ -157,6 +159,8 @@ run "cp '$SCRIPT_DIR/openclaw.plugin.json' '$DEST_DIR/openclaw.plugin.json'"
 run "cp '$SCRIPT_DIR/src/handler.js' '$DEST_DIR/src/handler.js'"
 run "cp '$SCRIPT_DIR/src/store.js' '$DEST_DIR/src/store.js'"
 run "cp '$SCRIPT_DIR/src/auth.js' '$DEST_DIR/src/auth.js'"
+run "cp '$SCRIPT_DIR/src/web-history-handler.js' '$DEST_DIR/src/web-history-handler.js'"
+run "cp '$SCRIPT_DIR/src/web-history-store.js' '$DEST_DIR/src/web-history-store.js'"
 
 echo "[2/3] registering plugin in $CONFIG_FILE"
 if [ "$BACKUP_CONFIG" -eq 1 ]; then
