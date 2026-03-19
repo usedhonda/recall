@@ -95,7 +95,10 @@ function queueFlushSeenIds() {
   void flushSeenIds();
 }
 
-await loadSeenIds();
+// Load persisted dedup state on startup (non-blocking)
+loadSeenIds().catch((err) => {
+  console.warn(`recall-web-history: startup load failed: ${err.message}`);
+});
 
 const cleanupTimer = setInterval(() => {
   cleanupSeenIds();
