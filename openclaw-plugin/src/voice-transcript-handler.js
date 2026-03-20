@@ -17,7 +17,7 @@ import { getReactionSettings } from "./recall-settings.js";
 const MEMORY_ROOT = join(homedir(), ".openclaw", "workspace", "memory");
 const STATE_PATH = join(MEMORY_ROOT, "voice-transcript-state.json");
 const MAX_SEGMENTS = 20;
-const MIN_FIRE_CHARS = 100;
+const MIN_FIRE_CHARS = 50;
 const BUFFER_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const DEDUP_TTL_MS = 60 * 1000; // 60s dedup window
 

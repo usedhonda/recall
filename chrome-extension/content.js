@@ -1,3 +1,24 @@
+// --- Context validity guard ---
+// When the extension context is invalidated (update, SW restart),
+// content scripts become orphaned. Detect and clean up all timers/observers.
+let contextAlive = true;
+const cleanupCallbacks = [];
+
+function isContextValid() {
+  if (!contextAlive) return false;
+  try {
+    void chrome.runtime.id;
+    return true;
+  } catch {
+    contextAlive = false;
+    for (const cb of cleanupCallbacks) {
+      try { cb(); } catch { /* ignore */ }
+    }
+    cleanupCallbacks.length = 0;
+    return false;
+  }
+}
+
 const MAX_CONTENT_LENGTH = 5000;
 const ROOT_SELECTORS = ["article", "main", '[role="main"]'];
 const REMOVE_SELECTORS = [
@@ -85,18 +106,21 @@ try {
 // --- Engagement tracking ---
 
 function sendEngagement(payload) {
+  if (!isContextValid()) return;
   try {
-    if (!chrome.runtime?.id) return;
     chrome.runtime.sendMessage(payload).catch(() => {});
   } catch {
-    // context invalidated — nothing to do
+    contextAlive = false;
   }
 }
 
 // Visibility tracking
-document.addEventListener("visibilitychange", () => {
+function onVisibilityChange() {
+  if (!isContextValid()) return;
   sendEngagement({ type: "engagement:visibility", hidden: document.hidden });
-});
+}
+document.addEventListener("visibilitychange", onVisibilityChange);
+cleanupCallbacks.push(() => document.removeEventListener("visibilitychange", onVisibilityChange));
 
 // Scroll depth tracking (throttled, passive)
 let maxScrollPct = 0;
@@ -113,17 +137,24 @@ function computeScrollPct() {
   return Math.min(100, Math.round(((scrollTop + viewportHeight) / docHeight) * 100));
 }
 
-window.addEventListener("scroll", () => {
+function onScroll() {
+  if (!isContextValid()) return;
   if (scrollTimer) return;
   scrollTimer = setTimeout(() => {
     scrollTimer = null;
+    if (!isContextValid()) return;
     const pct = computeScrollPct();
     if (pct > maxScrollPct) {
       maxScrollPct = pct;
       sendEngagement({ type: "engagement:scroll", scrollDepthPct: maxScrollPct });
     }
   }, 2000);
-}, { passive: true });
+}
+window.addEventListener("scroll", onScroll, { passive: true });
+cleanupCallbacks.push(() => {
+  window.removeEventListener("scroll", onScroll);
+  if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = null; }
+});
 
 // --- X (twitter.com / x.com) individual tweet tracking ---
 
@@ -193,6 +224,7 @@ if (isXDomain) {
   document.querySelectorAll(TWEET_SELECTOR).forEach(observeTweet);
 
   const mutationObserver = new MutationObserver((mutations) => {
+    if (!isContextValid()) { mutationObserver.disconnect(); return; }
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -207,9 +239,16 @@ if (isXDomain) {
   });
   mutationObserver.observe(document.body, { childList: true, subtree: true });
 
-  setInterval(() => {
+  const tweetInterval = setInterval(() => {
+    if (!isContextValid()) { clearInterval(tweetInterval); return; }
     if (pendingReports.length === 0) return;
     const batch = pendingReports.splice(0);
     sendEngagement({ type: "engagement:x-tweets", tweets: batch });
   }, 5000);
+
+  cleanupCallbacks.push(() => {
+    intersectionObserver.disconnect();
+    mutationObserver.disconnect();
+    clearInterval(tweetInterval);
+  });
 }
