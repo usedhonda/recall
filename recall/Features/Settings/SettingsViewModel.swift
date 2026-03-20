@@ -146,6 +146,18 @@ final class SettingsViewModel {
         telemetry.locationManager.lastSentTime
     }
 
+    // MARK: - Network
+
+    var healthWifiOnly: Bool {
+        get { settings.healthWifiOnly }
+        set { settings.healthWifiOnly = newValue }
+    }
+
+    var locationWifiOnly: Bool {
+        get { settings.locationWifiOnly }
+        set { settings.locationWifiOnly = newValue }
+    }
+
     // MARK: - Chi Reactions
 
     var webReactionsEnabled: Bool {

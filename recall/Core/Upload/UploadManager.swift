@@ -98,7 +98,7 @@ final class UploadManager {
             await reconcileUploadState(modelContext: modelContext)
 
             // Check connectivity
-            guard ConnectivityMonitor.shared.canUpload else {
+            guard ConnectivityMonitor.shared.canUploadAudio else {
                 let cm = ConnectivityMonitor.shared
                 if cm.isCellular {
                     uploadProgress = "Queuing (cellular)..."

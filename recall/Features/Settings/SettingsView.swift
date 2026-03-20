@@ -12,9 +12,9 @@ struct SettingsView: View {
                     telemetryServerSection
                     chiTriggersSection
                     chiDeliverySection
+                    networkSection
                     vadSection
                     recordingSection
-                    uploadSection
                     storageSection
                     healthSection
                     locationSection
@@ -98,25 +98,16 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Upload
+    // MARK: - Network
 
     @ViewBuilder
-    private var uploadSection: some View {
+    private var networkSection: some View {
         VStack(spacing: 8) {
-            HUDSectionHeader(title: "Upload")
+            HUDSectionHeader(title: "Network")
             VStack(spacing: 12) {
-                HStack {
-                    Text("SERVER")
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(RecallTheme.Colors.textSecondary)
-                    Spacer()
-                    Text(viewModel.serverURL.isEmpty ? "NOT CONFIGURED" : viewModel.serverURL)
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(viewModel.serverURL.isEmpty ? RecallTheme.Colors.textMuted : RecallTheme.Colors.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                hudToggle(label: "WIFI ONLY", isOn: $viewModel.wifiOnly)
+                hudToggle(label: "AUDIO WIFI ONLY", isOn: $viewModel.wifiOnly)
+                hudToggle(label: "HEALTH WIFI ONLY", isOn: $viewModel.healthWifiOnly)
+                hudToggle(label: "LOCATION WIFI ONLY", isOn: $viewModel.locationWifiOnly)
             }
             .hudCard()
         }

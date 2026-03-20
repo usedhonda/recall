@@ -51,7 +51,27 @@ final class ConnectivityMonitor {
         monitor.cancel()
     }
 
-    var canUpload: Bool {
-        isConnected && isWiFi && !isExpensive && !isConstrained
+    var canUploadAudio: Bool {
+        guard isConnected else { return false }
+        if AppSettings.shared.wifiOnlyUpload {
+            return isWiFi && !isExpensive && !isConstrained
+        }
+        return true
+    }
+
+    var canSendHealth: Bool {
+        guard isConnected else { return false }
+        if AppSettings.shared.healthWifiOnly {
+            return isWiFi
+        }
+        return true
+    }
+
+    var canSendLocation: Bool {
+        guard isConnected else { return false }
+        if AppSettings.shared.locationWifiOnly {
+            return isWiFi
+        }
+        return true
     }
 }

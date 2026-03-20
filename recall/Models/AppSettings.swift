@@ -70,6 +70,22 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "wifiOnlyUpload") }
     }
 
+    var healthWifiOnly: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "healthWifiOnly") == nil { return false }
+            return UserDefaults.standard.bool(forKey: "healthWifiOnly")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "healthWifiOnly") }
+    }
+
+    var locationWifiOnly: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "locationWifiOnly") == nil { return false }
+            return UserDefaults.standard.bool(forKey: "locationWifiOnly")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "locationWifiOnly") }
+    }
+
     var storageCapMB: Int {
         get {
             let val = UserDefaults.standard.integer(forKey: "storageCapMB")

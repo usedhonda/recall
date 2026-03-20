@@ -71,6 +71,9 @@ final class TelemetryService {
     // MARK: - Location Send
 
     func sendLocation(_ payload: LocationPayload) async -> LocationSendResult {
+        guard ConnectivityMonitor.shared.canSendLocation else {
+            return .httpError("waiting for WiFi (location wifi-only)")
+        }
         guard hasValidConfig,
               let token = KeychainHelper.shared.getToken() else {
             return .httpError("not configured")
@@ -140,6 +143,9 @@ final class TelemetryService {
     // MARK: - Health Send
 
     func sendHealth(_ summary: HealthSummary) async -> HealthSendResult {
+        guard ConnectivityMonitor.shared.canSendHealth else {
+            return .error("waiting for WiFi (health wifi-only)")
+        }
         guard hasValidConfig,
               let token = KeychainHelper.shared.getToken() else {
             return .error("not configured")
