@@ -1,21 +1,11 @@
-const FORM_IDS = {
-  enabled: "enabledToggle",
-  serverURL: "serverUrlInput",
-  token: "tokenInput",
-  minDwellSeconds: "dwellSlider",
-  minContentChars: "minContentSlider",
-  blocklist: "blocklistInput"
-};
-
 const elements = {
-  enabledToggle: document.getElementById(FORM_IDS.enabled),
-  serverUrlInput: document.getElementById(FORM_IDS.serverURL),
-  tokenInput: document.getElementById(FORM_IDS.token),
-  dwellSlider: document.getElementById(FORM_IDS.minDwellSeconds),
+  enabledToggle: document.getElementById("enabledToggle"),
+  serverUrlInput: document.getElementById("serverUrlInput"),
+  tokenInput: document.getElementById("tokenInput"),
+  dwellSlider: document.getElementById("dwellSlider"),
   dwellValue: document.getElementById("dwellValue"),
-  minContentSlider: document.getElementById(FORM_IDS.minContentChars),
+  minContentSlider: document.getElementById("minContentSlider"),
   minContentValue: document.getElementById("minContentValue"),
-  blocklistInput: document.getElementById(FORM_IDS.blocklist),
   saveButton: document.getElementById("saveButton"),
   testButton: document.getElementById("testButton"),
   scanQrButton: document.getElementById("scanQrButton"),
@@ -27,8 +17,18 @@ const elements = {
   qrOverlay: document.getElementById("qrOverlay"),
   closeQrButton: document.getElementById("closeQrButton"),
   qrVideo: document.getElementById("qrVideo"),
-  qrMessage: document.getElementById("qrMessage")
+  qrMessage: document.getElementById("qrMessage"),
+  // Rules tab
+  rulesList: document.getElementById("rulesList"),
+  rulePatternInput: document.getElementById("rulePatternInput"),
+  ruleActionSelect: document.getElementById("ruleActionSelect"),
+  ruleCustomFields: document.getElementById("ruleCustomFields"),
+  ruleDwellInput: document.getElementById("ruleDwellInput"),
+  ruleContentInput: document.getElementById("ruleContentInput"),
+  addRuleButton: document.getElementById("addRuleButton")
 };
+
+let currentRules = [];
 
 let qrStream = null;
 let qrAnimationFrame = null;
@@ -50,17 +50,6 @@ function setStatus(message, tone = "neutral") {
   elements.statusMessage.dataset.tone = tone;
 }
 
-function formatBlocklist(blocklist = []) {
-  return blocklist.join("\n");
-}
-
-function parseBlocklist(raw) {
-  return raw
-    .split(/\n+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
 function readForm() {
   return {
     enabled: elements.enabledToggle.checked,
@@ -68,7 +57,7 @@ function readForm() {
     token: elements.tokenInput.value.trim(),
     minDwellSeconds: Number(elements.dwellSlider.value),
     minContentChars: Number(elements.minContentSlider.value),
-    blocklist: parseBlocklist(elements.blocklistInput.value)
+    rules: currentRules
   };
 }
 
@@ -80,7 +69,71 @@ function applySettings(settings) {
   elements.dwellValue.textContent = `${elements.dwellSlider.value}s`;
   elements.minContentSlider.value = String(settings.minContentChars ?? 200);
   elements.minContentValue.textContent = String(elements.minContentSlider.value);
-  elements.blocklistInput.value = formatBlocklist(settings.blocklist || []);
+  currentRules = settings.rules || [];
+  renderRules();
+}
+
+// --- Rules tab ---
+
+function renderRules() {
+  if (!elements.rulesList) return;
+  if (currentRules.length === 0) {
+    elements.rulesList.innerHTML = '<p class="log-empty">No rules yet.</p>';
+    return;
+  }
+  elements.rulesList.innerHTML = currentRules.map((rule, i) => {
+    const isBlock = rule.action === "block";
+    const actionClass = isBlock ? "rule-action-block" : "rule-action-allow";
+    const actionLabel = isBlock ? "block" : "allow";
+    const meta = [];
+    if (!isBlock) {
+      if (rule.minDwell != null) meta.push(`${rule.minDwell}s`);
+      if (rule.minContent != null) meta.push(`${rule.minContent}ch`);
+    }
+    const metaStr = meta.length > 0 ? meta.join(" · ") : "";
+    return `<div class="rule-row" data-index="${i}">
+      <button class="rule-btn rule-btn-up" data-dir="up" title="Move up" ${i === 0 ? "disabled" : ""}>▲</button>
+      <button class="rule-btn rule-btn-down" data-dir="down" title="Move down" ${i === currentRules.length - 1 ? "disabled" : ""}>▼</button>
+      <span class="rule-pattern" title="${escapeHtml(rule.pattern)}">${escapeHtml(rule.pattern)}</span>
+      <span class="rule-action ${actionClass}">${actionLabel}</span>
+      ${metaStr ? `<span class="rule-meta">${escapeHtml(metaStr)}</span>` : ""}
+      <button class="rule-btn rule-btn-delete" title="Delete">✕</button>
+    </div>`;
+  }).join("");
+
+  // Bind events
+  for (const btn of elements.rulesList.querySelectorAll(".rule-btn-up, .rule-btn-down")) {
+    btn.addEventListener("click", (e) => {
+      const row = e.currentTarget.closest(".rule-row");
+      const idx = Number(row.dataset.index);
+      const dir = e.currentTarget.dataset.dir;
+      const swap = dir === "up" ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= currentRules.length) return;
+      [currentRules[idx], currentRules[swap]] = [currentRules[swap], currentRules[idx]];
+      renderRules();
+      void saveSettings();
+    });
+  }
+  for (const btn of elements.rulesList.querySelectorAll(".rule-btn-delete")) {
+    btn.addEventListener("click", (e) => {
+      const row = e.currentTarget.closest(".rule-row");
+      const idx = Number(row.dataset.index);
+      currentRules.splice(idx, 1);
+      renderRules();
+      void saveSettings();
+    });
+  }
+}
+
+function addRule(pattern, action, minDwell, minContent) {
+  const rule = { pattern: pattern.trim(), action };
+  if (action === "allow") {
+    if (minDwell != null && minDwell !== "") rule.minDwell = Number(minDwell);
+    if (minContent != null && minContent !== "") rule.minContent = Number(minContent);
+  }
+  currentRules.push(rule);
+  renderRules();
+  void saveSettings();
 }
 
 function formatVisitedAt(value) {
@@ -182,14 +235,11 @@ function renderRecentEntries(entries = [], settings = {}) {
       e.stopPropagation();
       const domain = e.currentTarget.dataset.domain;
       if (!domain) return;
-      const current = parseBlocklist(elements.blocklistInput.value);
-      if (!current.includes(domain)) {
-        current.push(domain);
-        elements.blocklistInput.value = current.join("\n");
+      if (!currentRules.some((r) => r.pattern === domain)) {
+        addRule(domain, "block");
       }
       e.currentTarget.textContent = "Blocked!";
       e.currentTarget.disabled = true;
-      void saveSettings();
     });
   }
 }
@@ -380,6 +430,23 @@ function bindEvents() {
   });
   elements.saveRulesButton.addEventListener("click", () => {
     void saveSettings(elements.saveRulesButton);
+  });
+  // Rules tab
+  elements.ruleActionSelect.addEventListener("change", () => {
+    elements.ruleCustomFields.classList.toggle("hidden", elements.ruleActionSelect.value === "block");
+  });
+  elements.addRuleButton.addEventListener("click", () => {
+    const pattern = elements.rulePatternInput.value.trim();
+    if (!pattern) return;
+    const action = elements.ruleActionSelect.value;
+    const dwell = elements.ruleDwellInput.value;
+    const content = elements.ruleContentInput.value;
+    addRule(pattern, action, dwell || null, content || null);
+    elements.rulePatternInput.value = "";
+    elements.ruleDwellInput.value = "";
+    elements.ruleContentInput.value = "";
+    elements.ruleActionSelect.value = "block";
+    elements.ruleCustomFields.classList.add("hidden");
   });
   elements.scanQrButton.addEventListener("click", () => {
     void startQrScan().catch((error) => {

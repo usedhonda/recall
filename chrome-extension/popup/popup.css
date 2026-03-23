@@ -450,6 +450,131 @@ button.saved {
   object-fit: cover;
 }
 
+/* Rules tab */
+.rule-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(125, 189, 212, 0.08);
+  font-size: 12px;
+}
+
+.rule-row:hover {
+  background: rgba(103, 245, 199, 0.04);
+}
+
+.rule-pattern {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.rule-action {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.rule-action-block {
+  background: rgba(255, 122, 122, 0.14);
+  color: var(--danger);
+}
+
+.rule-action-allow {
+  background: rgba(103, 245, 199, 0.14);
+  color: var(--accent);
+}
+
+.rule-meta {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.rule-btn {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.rule-btn:hover {
+  color: var(--text);
+  background: rgba(145, 170, 183, 0.14);
+}
+
+.rule-btn-delete:hover {
+  color: var(--danger);
+}
+
+.rule-add-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rule-add-form input[type="text"] {
+  width: 100%;
+  border: 1px solid rgba(145, 170, 183, 0.24);
+  border-radius: 10px;
+  background: rgba(4, 12, 18, 0.82);
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.rule-add-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rule-add-options select {
+  border: 1px solid rgba(145, 170, 183, 0.24);
+  border-radius: 8px;
+  background: rgba(4, 12, 18, 0.82);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.rule-inline-field {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rule-inline-field input {
+  width: 60px;
+  border: 1px solid rgba(145, 170, 183, 0.24);
+  border-radius: 6px;
+  background: rgba(4, 12, 18, 0.82);
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+#addRuleButton {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
 @media (max-width: 420px) {
   body {
     min-width: 340px;

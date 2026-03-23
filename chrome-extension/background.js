@@ -1,6 +1,6 @@
 import { sendEntries, checkHealth } from "./lib/api.js";
 import { count as getQueueCount, dequeueAll, enqueue } from "./lib/queue.js";
-import { DEFAULT_BLOCKLIST, isBlocked, isTrackableUrl, normalizeBlocklist, shouldTrackVisit } from "./lib/filter.js";
+import { DEFAULT_RULES, evaluateRules, isTrackableUrl, migrateBlocklistToRules } from "./lib/filter.js";
 
 const SETTINGS_KEY = "webHistorySettings";
 const RECENT_ENTRIES_KEY = "webHistoryRecentEntries";
@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS = {
   token: "",
   minDwellSeconds: 15,
   minContentChars: 200,
-  blocklist: DEFAULT_BLOCKLIST
+  rules: DEFAULT_RULES
 };
 
 function createEmptySessionState() {
@@ -89,7 +89,11 @@ function sanitizeSettings(raw = {}) {
     token: typeof raw.token === "string" ? raw.token.trim() : "",
     minDwellSeconds: Number.isFinite(minDwellSeconds) ? Math.min(600, Math.max(5, Math.round(minDwellSeconds))) : DEFAULT_SETTINGS.minDwellSeconds,
     minContentChars: Number.isFinite(minContentChars) ? Math.min(5000, Math.max(0, Math.round(minContentChars))) : DEFAULT_SETTINGS.minContentChars,
-    blocklist: normalizeBlocklist(Array.isArray(raw.blocklist) ? raw.blocklist : DEFAULT_BLOCKLIST)
+    rules: Array.isArray(raw.rules)
+      ? raw.rules
+      : Array.isArray(raw.blocklist)
+        ? migrateBlocklistToRules(raw.blocklist)
+        : DEFAULT_RULES
   };
 }
 
@@ -170,7 +174,9 @@ async function ensureAlarm() {
 }
 
 function shouldHandleUrl(url, settings) {
-  return settings.enabled && isTrackableUrl(url) && !isBlocked(url, settings.blocklist);
+  if (!settings.enabled || !isTrackableUrl(url)) return false;
+  const result = evaluateRules(url, settings.rules || [], settings);
+  return !result.blocked;
 }
 
 function createEngagementState() {
@@ -402,11 +408,16 @@ async function finalizeVisit(tabId, reason) {
     await recordRecentEntry(logEntry, "disabled");
     return null;
   }
-  if (!shouldHandleUrl(tabState.url, settings)) {
+  if (!isTrackableUrl(tabState.url)) {
+    return null;
+  }
+  const ruleResult = evaluateRules(tabState.url, settings.rules || [], settings);
+  if (ruleResult.blocked) {
     await recordRecentEntry(logEntry, "blocked");
     return null;
   }
-  if (!shouldTrackVisit(dwellSeconds, settings.minDwellSeconds)) {
+  const effectiveDwell = ruleResult.minDwell ?? settings.minDwellSeconds;
+  if (dwellSeconds < Math.max(0, effectiveDwell)) {
     await recordRecentEntry(logEntry, "short");
     return null;
   }
