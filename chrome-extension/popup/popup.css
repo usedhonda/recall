@@ -356,7 +356,10 @@ button.saved {
 }
 
 .log-row-skipped td {
-  opacity: 0.4;
+  opacity: 0.7;
+}
+
+.log-row-skipped .col-title {
   color: var(--muted);
 }
 

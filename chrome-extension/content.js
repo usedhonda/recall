@@ -146,7 +146,7 @@ function showTicker(text) {
   setTimeout(() => {
     shadow.querySelector(".ticker").style.opacity = "0";
     setTimeout(() => host.remove(), 500);
-  }, 2000);
+  }, 10000);
 }
 
 // --- Engagement tracking ---
