@@ -19,7 +19,7 @@
 
 body {
   margin: 0;
-  min-width: 380px;
+  min-width: 620px;
   background:
     radial-gradient(circle at top right, rgba(103, 245, 199, 0.14), transparent 34%),
     linear-gradient(180deg, #0a1820, #050b0f 78%);
