@@ -452,16 +452,60 @@ button.saved {
 
 /* Rules tab */
 .rule-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  padding: 0;
   border-bottom: 1px solid rgba(125, 189, 212, 0.08);
   font-size: 12px;
 }
 
-.rule-row:hover {
+.rule-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.rule-summary:hover {
   background: rgba(103, 245, 199, 0.04);
+}
+
+.rule-edit {
+  padding: 8px 8px 10px;
+  background: rgba(4, 12, 18, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rule-edit.hidden {
+  display: none;
+}
+
+.rule-edit-pattern {
+  width: 100%;
+  border: 1px solid rgba(145, 170, 183, 0.24);
+  border-radius: 8px;
+  background: rgba(4, 12, 18, 0.82);
+  color: var(--text);
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.rule-edit-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rule-edit-custom.hidden {
+  display: none;
+}
+
+.rule-edit-save {
+  padding: 5px 12px;
+  font-size: 11px;
 }
 
 .rule-pattern {

@@ -91,19 +91,38 @@ function renderRules() {
       if (rule.minContent != null) meta.push(`${rule.minContent}ch`);
     }
     const metaStr = meta.length > 0 ? meta.join(" · ") : "";
+    const dwellVal = rule.minDwell != null ? rule.minDwell : "";
+    const contentVal = rule.minContent != null ? rule.minContent : "";
     return `<div class="rule-row" data-index="${i}">
-      <button class="rule-btn rule-btn-up" data-dir="up" title="Move up" ${i === 0 ? "disabled" : ""}>▲</button>
-      <button class="rule-btn rule-btn-down" data-dir="down" title="Move down" ${i === currentRules.length - 1 ? "disabled" : ""}>▼</button>
-      <span class="rule-pattern" title="${escapeHtml(rule.pattern)}">${escapeHtml(rule.pattern)}</span>
-      <span class="rule-action ${actionClass}">${actionLabel}</span>
-      ${metaStr ? `<span class="rule-meta">${escapeHtml(metaStr)}</span>` : ""}
-      <button class="rule-btn rule-btn-delete" title="Delete">✕</button>
+      <div class="rule-summary">
+        <button class="rule-btn rule-btn-up" data-dir="up" title="Move up" ${i === 0 ? "disabled" : ""}>▲</button>
+        <button class="rule-btn rule-btn-down" data-dir="down" title="Move down" ${i === currentRules.length - 1 ? "disabled" : ""}>▼</button>
+        <span class="rule-pattern" title="${escapeHtml(rule.pattern)}">${escapeHtml(rule.pattern)}</span>
+        <span class="rule-action ${actionClass}">${actionLabel}</span>
+        ${metaStr ? `<span class="rule-meta">${escapeHtml(metaStr)}</span>` : ""}
+        <button class="rule-btn rule-btn-delete" title="Delete">✕</button>
+      </div>
+      <div class="rule-edit hidden">
+        <input class="rule-edit-pattern" type="text" value="${escapeHtml(rule.pattern)}" spellcheck="false">
+        <div class="rule-edit-options">
+          <select class="rule-edit-action">
+            <option value="block" ${isBlock ? "selected" : ""}>Block</option>
+            <option value="allow" ${!isBlock ? "selected" : ""}>Allow</option>
+          </select>
+          <div class="rule-edit-custom ${isBlock ? "hidden" : ""}">
+            <label class="rule-inline-field">Dwell <input class="rule-edit-dwell" type="number" min="0" max="600" value="${dwellVal}" placeholder="—"></label>
+            <label class="rule-inline-field">Chars <input class="rule-edit-content" type="number" min="0" max="5000" value="${contentVal}" placeholder="—"></label>
+          </div>
+          <button class="rule-edit-save" type="button">Save</button>
+        </div>
+      </div>
     </div>`;
   }).join("");
 
   // Bind events
   for (const btn of elements.rulesList.querySelectorAll(".rule-btn-up, .rule-btn-down")) {
     btn.addEventListener("click", (e) => {
+      e.stopPropagation();
       const row = e.currentTarget.closest(".rule-row");
       const idx = Number(row.dataset.index);
       const dir = e.currentTarget.dataset.dir;
@@ -116,9 +135,47 @@ function renderRules() {
   }
   for (const btn of elements.rulesList.querySelectorAll(".rule-btn-delete")) {
     btn.addEventListener("click", (e) => {
+      e.stopPropagation();
       const row = e.currentTarget.closest(".rule-row");
       const idx = Number(row.dataset.index);
       currentRules.splice(idx, 1);
+      renderRules();
+      void saveSettings();
+    });
+  }
+  // Click summary to toggle edit panel
+  for (const summary of elements.rulesList.querySelectorAll(".rule-summary")) {
+    summary.addEventListener("click", (e) => {
+      if (e.target.closest(".rule-btn")) return; // don't toggle on button clicks
+      const row = e.currentTarget.closest(".rule-row");
+      const editPanel = row.querySelector(".rule-edit");
+      editPanel.classList.toggle("hidden");
+    });
+  }
+  // Action select toggles custom fields
+  for (const sel of elements.rulesList.querySelectorAll(".rule-edit-action")) {
+    sel.addEventListener("change", (e) => {
+      const custom = e.currentTarget.closest(".rule-edit-options").querySelector(".rule-edit-custom");
+      custom.classList.toggle("hidden", e.currentTarget.value === "block");
+    });
+  }
+  // Save edit
+  for (const btn of elements.rulesList.querySelectorAll(".rule-edit-save")) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = e.currentTarget.closest(".rule-row");
+      const idx = Number(row.dataset.index);
+      const pattern = row.querySelector(".rule-edit-pattern").value.trim();
+      const action = row.querySelector(".rule-edit-action").value;
+      const dwell = row.querySelector(".rule-edit-dwell").value;
+      const content = row.querySelector(".rule-edit-content").value;
+      if (!pattern) return;
+      const updated = { pattern, action };
+      if (action === "allow") {
+        if (dwell !== "") updated.minDwell = Number(dwell);
+        if (content !== "") updated.minContent = Number(content);
+      }
+      currentRules[idx] = updated;
       renderRules();
       void saveSettings();
     });
