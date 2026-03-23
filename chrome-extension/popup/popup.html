@@ -8,138 +8,109 @@
   </head>
   <body>
     <main class="panel">
-      <header class="hero">
-        <p class="eyebrow">recall / OpenClaw</p>
-        <h1>Web History</h1>
+      <header class="header-bar">
+        <div class="header-left">
+          <p class="eyebrow">recall</p>
+          <span id="healthDot" class="conn-dot conn-unknown"></span>
+        </div>
+        <div class="header-right">
+          <label class="master-toggle" for="enabledToggle">
+            <input id="enabledToggle" type="checkbox">
+          </label>
+          <button id="gearButton" class="icon-btn" type="button" title="Settings">⚙</button>
+        </div>
       </header>
 
       <nav class="tab-bar">
-        <button class="tab active" data-tab="settings">Settings</button>
-        <button class="tab" data-tab="log">Log</button>
+        <button class="tab active" data-tab="activity">Activity</button>
         <button class="tab" data-tab="rules">Rules</button>
       </nav>
 
-      <div class="tab-content" id="tab-settings">
-        <section class="card status-card">
-          <label class="toggle-row" for="enabledToggle">
-            <span>
-              <strong>Capture Enabled</strong>
-              <small>Pause collection without clearing local state.</small>
-            </span>
-            <input id="enabledToggle" type="checkbox">
-          </label>
-          <div class="status-grid">
-            <div>
-              <span class="status-label">Queue</span>
-              <strong id="queueCount">0</strong>
-            </div>
-            <div>
-              <span class="status-label">Connection</span>
-              <strong id="healthStatus"><span class="conn-dot conn-unknown"></span> Checking…</strong>
-            </div>
-          </div>
-          <p id="statusMessage" class="status-message" data-tone="neutral">No diagnostics yet.</p>
-        </section>
-
-        <section class="card">
-          <div class="section-head">
-            <div>
-              <h2>Connection</h2>
-              <p>Point the extension at the OpenClaw gateway.</p>
-            </div>
-            <button id="scanQrButton" class="ghost-button" type="button">Scan QR</button>
-          </div>
-
-          <label class="field">
-            <span>Server URL</span>
-            <input id="serverUrlInput" type="url" placeholder="http://macmini:18789">
-          </label>
-
-          <label class="field">
-            <span>Bearer Token</span>
-            <input id="tokenInput" type="password" placeholder="gateway auth token">
-          </label>
-
-          <div class="button-row">
-            <button id="saveButton" type="button">Save</button>
-            <button id="testButton" class="ghost-button" type="button">Test</button>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Capture Rules</h2>
-          <label class="field">
-            <span>Minimum dwell time</span>
-            <div class="slider-row">
-              <input id="dwellSlider" type="range" min="5" max="300" step="5">
-              <strong id="dwellValue">15s</strong>
-            </div>
-          </label>
-
-          <label class="field">
-            <span>Min content for reaction (non-X)</span>
-            <div class="slider-row">
-              <input id="minContentSlider" type="range" min="0" max="1000" step="50">
-              <strong id="minContentValue">200</strong>
-            </div>
-            <small>Pages shorter than this won't trigger a reaction. X (Twitter) always triggers. 0 = disabled.</small>
-          </label>
-
-          <div class="button-row">
-            <button id="saveRulesButton" type="button">Save</button>
-          </div>
-        </section>
+      <!-- Activity tab -->
+      <div class="tab-content" id="tab-activity">
+        <div class="status-bar">
+          <span id="queueCount" class="status-chip">0 queued</span>
+          <span id="statusMessage" class="status-msg"></span>
+        </div>
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Page</th>
+              <th class="col-dwell">Dwell</th>
+              <th class="col-outcome">Outcome</th>
+            </tr>
+          </thead>
+          <tbody id="recentEntries"></tbody>
+        </table>
       </div>
 
+      <!-- Rules tab -->
       <div class="tab-content hidden" id="tab-rules">
-        <section class="card">
-          <h2>URL Rules</h2>
-          <p class="subtitle">First matching rule wins. Unmatched URLs use global defaults.</p>
-          <div id="rulesList"></div>
-          <div class="rule-add-form">
-            <input id="rulePatternInput" type="text" placeholder="domain or domain/path/* pattern" spellcheck="false">
-            <div class="rule-add-options">
-              <select id="ruleActionSelect">
-                <option value="block">Block</option>
-                <option value="allow">Allow (custom)</option>
-              </select>
-              <div id="ruleCustomFields" class="hidden">
-                <label class="rule-inline-field">Dwell <input id="ruleDwellInput" type="number" min="0" max="600" placeholder="—"></label>
-                <label class="rule-inline-field">Chars <input id="ruleContentInput" type="number" min="0" max="5000" placeholder="—"></label>
-              </div>
-              <button id="addRuleButton" type="button">Add</button>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <div class="tab-content hidden" id="tab-log">
-        <section class="card log-card">
-          <table class="log-table">
-            <thead>
-              <tr>
-                <th class="col-time">Time</th>
-                <th class="col-title">Page</th>
-                <th class="col-domain">Domain</th>
-                <th class="col-dwell">Dwell</th>
-                <th class="col-status">Sent</th>
-                <th class="col-reason">Reason</th>
-              </tr>
-            </thead>
-            <tbody id="recentEntries"></tbody>
-          </table>
-        </section>
+        <p class="rules-hint">First match wins. Drag to reorder.</p>
+        <div id="rulesList"></div>
+        <div class="rule-add-bar">
+          <input id="rulePatternInput" type="text" placeholder="domain or path pattern" spellcheck="false">
+          <button id="addRuleButton" type="button">+ Add</button>
+        </div>
       </div>
     </main>
 
+    <!-- Settings drawer -->
+    <div id="settingsDrawer" class="drawer hidden">
+      <div class="drawer-backdrop"></div>
+      <div class="drawer-panel">
+        <div class="drawer-header">
+          <h2>Settings</h2>
+          <button id="closeDrawerButton" class="icon-btn" type="button">✕</button>
+        </div>
+        <div class="drawer-body">
+          <section class="drawer-section">
+            <h3>Connection</h3>
+            <label class="field">
+              <span>Server URL</span>
+              <input id="serverUrlInput" type="url" placeholder="http://macmini:18789">
+            </label>
+            <label class="field">
+              <span>Bearer Token</span>
+              <input id="tokenInput" type="password" placeholder="gateway auth token">
+            </label>
+            <div class="button-row">
+              <button id="saveButton" type="button">Save</button>
+              <button id="testButton" class="ghost-button" type="button">Test</button>
+              <button id="scanQrButton" class="ghost-button" type="button">QR</button>
+            </div>
+          </section>
+          <section class="drawer-section">
+            <h3>Defaults</h3>
+            <label class="field">
+              <span>Min dwell time</span>
+              <div class="slider-row">
+                <input id="dwellSlider" type="range" min="5" max="300" step="5">
+                <strong id="dwellValue">15s</strong>
+              </div>
+            </label>
+            <label class="field">
+              <span>Min content chars</span>
+              <div class="slider-row">
+                <input id="minContentSlider" type="range" min="0" max="1000" step="50">
+                <strong id="minContentValue">200</strong>
+              </div>
+            </label>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- QR overlay -->
     <section id="qrOverlay" class="qr-overlay hidden" aria-hidden="true">
       <div class="qr-shell">
         <div class="qr-head">
-          <h2>Scan OpenClaw QR</h2>
+          <h2>Scan QR</h2>
           <button id="closeQrButton" class="ghost-button" type="button">Close</button>
         </div>
         <video id="qrVideo" autoplay playsinline muted></video>
-        <p id="qrMessage" class="qr-message">Point the camera at an `openclaw://connect?...` QR code.</p>
+        <p id="qrMessage" class="qr-message">Point the camera at an openclaw://connect QR code.</p>
       </div>
     </section>
 
