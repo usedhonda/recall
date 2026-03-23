@@ -65,6 +65,7 @@ final class AudioRecordingEngine {
     private var processingTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var resumeRetryTask: Task<Void, Never>?
+    private var isRestarting = false
 
     // MARK: - Per-Chunk Quality Metrics
 
@@ -849,6 +850,14 @@ final class AudioRecordingEngine {
     /// Restart engine. Does NOT touch watchdog — watchdog is immortal.
     /// Avoids audioEngine.reset() which destroys inputNode and creates 16kHz replacement.
     private func restartEngine() {
+        // Prevent re-entrant restarts (watchdog + route change racing)
+        guard !isRestarting else {
+            activity.log(.state, "restartEngine skipped — already restarting")
+            return
+        }
+        isRestarting = true
+        defer { isRestarting = false }
+
         // Cancel existing processing (but NOT watchdog)
         processingTask?.cancel()
         processingTask = nil
@@ -867,6 +876,8 @@ final class AudioRecordingEngine {
 
             activity.log(.state, "Restart: format \(Int(hwSampleRate))Hz ch=\(hwFormat.channelCount)")
 
+            // Defensive: remove tap again right before install (guard against stale tap)
+            inputNode.removeTap(onBus: 0)
             inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
                 self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
             }

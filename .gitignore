@@ -56,3 +56,6 @@ docs/ask/
 *.env.local
 
 AGENTS.md
+
+# Temp artifacts
+.tmp-*
