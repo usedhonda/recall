@@ -381,12 +381,16 @@ async function finalizeVisit(tabId, reason) {
   const { dwellSeconds, engagement } = computeEngagement(tabState);
   const contentState = sessionState.contentCache[key];
 
+  // Parse domain from URL for consistent logging
+  let logDomain = tabState.domain || "";
+  try { logDomain = new URL(tabState.url).hostname; } catch { /* keep fallback */ }
+
   // Build a minimal entry for logging even if skipped
   const logEntry = {
     id: `${tabId}-${Date.now()}`,
     url: tabState.url,
     title: tabState.title || "Untitled",
-    domain: tabState.domain || "",
+    domain: logDomain,
     visitedAt: tabState.activatedAtISO || new Date().toISOString(),
     dwellSeconds,
     contentPreview: contentPreview(contentState?.content),
@@ -412,7 +416,17 @@ async function finalizeVisit(tabId, reason) {
     return null;
   }
 
+  // Dedup: don't send same URL twice within 30 minutes
+  const lastSentKey = `lastSent:${entry.url}`;
+  const lastSentAt = sessionState[lastSentKey];
+  if (lastSentAt && (Date.now() - lastSentAt) < 30 * 60 * 1000) {
+    await recordRecentEntry(entry, "dedup");
+    return null;
+  }
+
   const status = await trySendOrQueue(entry, settings);
+  sessionState[lastSentKey] = Date.now();
+  markSessionDirty();
   await recordRecentEntry(entry, status);
 
   // Notify content script with ticker

@@ -349,7 +349,8 @@ button.saved {
 
 .recent-status.short,
 .recent-status.blocked,
-.recent-status.disabled {
+.recent-status.disabled,
+.recent-status.dedup {
   color: var(--muted);
   opacity: 0.6;
 }

@@ -127,7 +127,7 @@ function renderRecentEntries(entries = [], settings = {}) {
       const filter = filterStatus(entry, minContentChars);
       const filterClass = filter.pass ? "filter-pass" : "filter-skip";
       const filterLabel = filter.pass ? "ok" : "skip";
-      const isSkipped = ["short", "blocked", "disabled"].includes(entry.status);
+      const isSkipped = ["short", "blocked", "disabled", "dedup"].includes(entry.status);
       const rowClass = isSkipped ? "log-row log-row-skipped" : "log-row";
       const skipReason = isSkipped ? ` (${status})` : "";
 
