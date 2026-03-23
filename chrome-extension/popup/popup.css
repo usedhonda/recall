@@ -335,24 +335,16 @@ button.saved {
   letter-spacing: 0.08em;
 }
 
-.recent-status.sent {
+.status-sent {
   color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
 }
 
-.recent-status.queued {
-  color: var(--warning);
-}
-
-.recent-status.skipped {
-  color: var(--danger);
-}
-
-.recent-status.short,
-.recent-status.blocked,
-.recent-status.disabled,
-.recent-status.dedup {
+.status-skip {
   color: var(--muted);
-  opacity: 0.6;
+  opacity: 0.4;
 }
 
 .log-row-skipped td {
@@ -381,26 +373,6 @@ button.saved {
   opacity: 0.7;
 }
 
-.filter-tag {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  vertical-align: middle;
-}
-
-.filter-pass {
-  background: rgba(103, 245, 199, 0.14);
-  color: var(--accent);
-}
-
-.filter-skip {
-  background: rgba(255, 122, 122, 0.14);
-  color: var(--danger);
-}
 
 .block-domain-btn {
   margin-top: 6px;

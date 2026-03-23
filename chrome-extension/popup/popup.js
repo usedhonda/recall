@@ -207,17 +207,6 @@ function formatShortTime(value) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const X_DOMAINS = ["x.com", "twitter.com"];
-
-function filterStatus(entry, minContentChars) {
-  const domain = entry.domain || "";
-  if (X_DOMAINS.includes(domain)) return { pass: true, reason: "X (always)" };
-  const len = entry.contentLength ?? 0;
-  const threshold = minContentChars ?? 200;
-  if (threshold === 0) return { pass: true, reason: "filter off" };
-  if (len >= threshold) return { pass: true, reason: `${len}/${threshold} chars` };
-  return { pass: false, reason: `${len}/${threshold} chars` };
-}
 
 function renderRecentEntries(entries = [], settings = {}) {
   if (entries.length === 0) {
@@ -225,21 +214,17 @@ function renderRecentEntries(entries = [], settings = {}) {
     return;
   }
 
-  const minContentChars = settings.minContentChars ?? 200;
-
   elements.recentEntries.innerHTML = entries
     .map((entry) => {
-      const status = escapeHtml(entry.status || "queued");
+      const rawStatus = entry.status || "queued";
       const title = escapeHtml(entry.title || "Untitled");
       const domain = escapeHtml(entry.domain || "unknown");
       const dwell = escapeHtml(String(entry.dwellSeconds || 0));
       const time = escapeHtml(formatShortTime(entry.visitedAt));
-      const filter = filterStatus(entry, minContentChars);
-      const filterClass = filter.pass ? "filter-pass" : "filter-skip";
-      const filterLabel = filter.pass ? "ok" : "skip";
-      const isSkipped = ["short", "blocked", "disabled", "dedup"].includes(entry.status);
+      const isSent = rawStatus === "sent";
+      const isSkipped = ["short", "blocked", "disabled", "dedup"].includes(rawStatus);
       const rowClass = isSkipped ? "log-row log-row-skipped" : "log-row";
-      const skipReason = isSkipped ? ` (${status})` : "";
+      const skipReason = isSkipped ? ` (${escapeHtml(rawStatus)})` : "";
 
       // Detail row (expandable)
       let detailRow = "";
@@ -271,7 +256,7 @@ function renderRecentEntries(entries = [], settings = {}) {
           <td class="col-title" title="${title}">${title}${skipReason}</td>
           <td class="col-domain">${domain}</td>
           <td class="col-dwell">${dwell}s</td>
-          <td class="col-status"><span class="recent-status ${status}">${status}</span> <span class="filter-tag ${filterClass}">${filterLabel}</span></td>
+          <td class="col-status">${isSent ? '<span class="status-sent">SENT</span>' : '<span class="status-skip">—</span>'}</td>
         </tr>
         ${detailRow}
       `;
