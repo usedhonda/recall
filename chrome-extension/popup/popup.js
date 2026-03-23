@@ -210,7 +210,7 @@ function formatShortTime(value) {
 
 function renderRecentEntries(entries = [], settings = {}) {
   if (entries.length === 0) {
-    elements.recentEntries.innerHTML = '<tr><td colspan="5" class="log-empty">No captures yet.</td></tr>';
+    elements.recentEntries.innerHTML = '<tr><td colspan="6" class="log-empty">No captures yet.</td></tr>';
     return;
   }
 
@@ -224,7 +224,7 @@ function renderRecentEntries(entries = [], settings = {}) {
       const isSent = rawStatus === "sent";
       const isSkipped = ["short", "blocked", "disabled", "dedup"].includes(rawStatus);
       const rowClass = isSkipped ? "log-row log-row-skipped" : "log-row";
-      const skipReason = isSkipped ? ` (${escapeHtml(rawStatus)})` : "";
+      const reason = isSkipped ? escapeHtml(rawStatus) : "";
 
       // Detail row (expandable)
       let detailRow = "";
@@ -241,7 +241,7 @@ function renderRecentEntries(entries = [], settings = {}) {
       }
       if (detailParts.length > 0 || domain) {
         detailRow = `<tr class="log-detail hidden" data-detail-for="${escapeHtml(entry.id || "")}">
-          <td colspan="5">
+          <td colspan="6">
             <div class="log-detail-content">
               ${detailParts.length > 0 ? `<div class="recent-preview">${detailParts.join(" · ")}</div>` : ""}
               <button class="block-domain-btn" data-domain="${domain}" type="button">Block ${domain}</button>
@@ -253,10 +253,11 @@ function renderRecentEntries(entries = [], settings = {}) {
       return `
         <tr class="${rowClass}" data-entry-id="${escapeHtml(entry.id || "")}">
           <td class="col-time">${time}</td>
-          <td class="col-title" title="${title}">${title}${skipReason}</td>
+          <td class="col-title" title="${title}">${title}</td>
           <td class="col-domain">${domain}</td>
           <td class="col-dwell">${dwell}s</td>
           <td class="col-status">${isSent ? '<span class="status-sent">SENT</span>' : '<span class="status-skip">—</span>'}</td>
+          <td class="col-reason"><span class="reason-text">${reason}</span></td>
         </tr>
         ${detailRow}
       `;
