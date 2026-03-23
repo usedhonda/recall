@@ -26,6 +26,9 @@ struct RecordingView: View {
                         dataStreamsBar
                             .padding(.horizontal, 12)
 
+                        contextStreamsBar
+                            .padding(.horizontal, 12)
+
                         telemetryStatusBanner
 
                         heroStateSection
@@ -307,6 +310,64 @@ struct RecordingView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Context Streams Bar
+
+    @ViewBuilder
+    private var contextStreamsBar: some View {
+        HStack(spacing: 8) {
+            CyberpunkStreamToggle(
+                icon: motionIcon,
+                label: motionLabel,
+                isActive: telemetry.motionManager.isEnabled,
+                neonColor: RecallTheme.Colors.neonCyan
+            ) {
+                if telemetry.motionManager.isEnabled {
+                    telemetry.motionManager.stop()
+                    AppSettings.shared.motionEnabled = false
+                } else {
+                    telemetry.motionManager.start()
+                    AppSettings.shared.motionEnabled = true
+                }
+            }
+
+            CyberpunkStreamToggle(
+                icon: "music.note",
+                label: "Media",
+                isActive: telemetry.nowPlayingManager.isEnabled,
+                neonColor: RecallTheme.Colors.neonCyan
+            ) {
+                if telemetry.nowPlayingManager.isEnabled {
+                    telemetry.nowPlayingManager.stop()
+                    AppSettings.shared.nowPlayingEnabled = false
+                } else {
+                    telemetry.nowPlayingManager.start()
+                    AppSettings.shared.nowPlayingEnabled = true
+                }
+            }
+
+            // Empty slot for future expansion
+            Color.clear
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var motionIcon: String {
+        switch telemetry.motionManager.currentActivity {
+        case "walking": return "figure.walk"
+        case "running": return "figure.run"
+        case "automotive": return "car.fill"
+        case "cycling": return "bicycle"
+        case "stationary": return "moon.zzz.fill"
+        default: return "figure.walk"
+        }
+    }
+
+    private var motionLabel: String {
+        guard telemetry.motionManager.isEnabled else { return "Motion" }
+        let activity = telemetry.motionManager.currentActivity
+        return activity == "unknown" ? "Motion" : activity.capitalized
     }
 
     // MARK: - Telemetry Status Banner

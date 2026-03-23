@@ -57,6 +57,7 @@ targets:
         product: FluidAudio
       - sdk: HealthKit.framework
       - sdk: CoreLocation.framework
+      - sdk: CoreMotion.framework
       - sdk: MediaPlayer.framework
       - target: RecordingControl
         embed: true
@@ -75,6 +76,7 @@ targets:
         NSLocationAlwaysAndWhenInUseUsageDescription: "recall tracks your location in the background for continuous lifelogging."
         NSHealthShareUsageDescription: "recall reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry."
         NSHealthUpdateUsageDescription: "recall does not write any health data."
+        NSMotionUsageDescription: "recall uses motion data to detect your activity (walking, driving, stationary) for lifelogging context."
         UIBackgroundModes:
           - audio
           - location

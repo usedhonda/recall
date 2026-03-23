@@ -41,6 +41,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>recall uses the camera to scan QR codes for server configuration.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>recall reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry.</string>
 	<key>NSHealthUpdateUsageDescription</key>
@@ -53,13 +55,13 @@
 	<string>recall uses your location for lifelogging telemetry.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>recall continuously records audio for lifelogging. Only voice segments are saved.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>recall uses motion data to detect your activity (walking, driving, stationary) for lifelogging context.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 		<string>location</string>
 	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>recall uses the camera to scan QR codes for server configuration.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

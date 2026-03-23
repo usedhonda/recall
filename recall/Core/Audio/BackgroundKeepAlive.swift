@@ -45,19 +45,16 @@ final class BackgroundKeepAlive {
             return
         }
 
-        setupNowPlaying()
-        setupRemoteCommands()
-        UIApplication.shared.beginReceivingRemoteControlEvents()
+        // NowPlayingInfoCenter intentionally NOT set — vibeterm owns the lock screen.
+        // Background survival relies on audio background mode + AVAudioEngine tap.
     }
 
     func stop() {
         player?.stop()
         player = nil
 
+        // Clean up any lingering NowPlaying state (defensive)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        let center = MPRemoteCommandCenter.shared()
-        center.playCommand.removeTarget(nil)
-        center.pauseCommand.removeTarget(nil)
 
         logger.info("Keep-alive stopped")
         activity.log(.state, "Keep-alive stopped")
@@ -115,33 +112,6 @@ final class BackgroundKeepAlive {
         return wav
     }
 
-    // MARK: - NowPlaying
-
-    private func setupNowPlaying() {
-        var info = [String: Any]()
-        info[MPMediaItemPropertyTitle] = "recall Recording"
-        info[MPMediaItemPropertyArtist] = "recall"
-        info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0.0
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-    }
-
-    // MARK: - Remote Commands
-
-    private func setupRemoteCommands() {
-        let center = MPRemoteCommandCenter.shared()
-
-        // Minimal handlers — iOS requires these to show NowPlaying controls
-        center.playCommand.addTarget { [weak self] _ in
-            self?.player?.play()
-            return .success
-        }
-        center.pauseCommand.addTarget { [weak self] _ in
-            // Don't actually pause — we want to keep playing
-            self?.player?.play()
-            return .success
-        }
-    }
 }
 
 // MARK: - Data Helpers

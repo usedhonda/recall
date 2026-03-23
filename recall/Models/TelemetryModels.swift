@@ -5,6 +5,8 @@ import CoreLocation
 struct TelemetrySampleBatch: Encodable {
     let samples: [TelemetrySample]
     var health: HealthSummary?
+    var motion: MotionActivitySnapshot?
+    var nowPlaying: NowPlayingSnapshot?
 }
 
 /// Single location sample for telemetry upload

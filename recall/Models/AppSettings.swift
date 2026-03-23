@@ -16,7 +16,7 @@ final class AppSettings {
     }
 
     var silenceTimeout: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 15.0 }
+        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 5.0 }
         set { UserDefaults.standard.set(newValue, forKey: "silenceTimeout") }
     }
 
@@ -31,7 +31,7 @@ final class AppSettings {
     }
 
     var chunkDurationSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 120.0 }
+        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 60.0 }
         set { UserDefaults.standard.set(newValue, forKey: "chunkDurationSeconds") }
     }
 
@@ -161,6 +161,26 @@ final class AppSettings {
             return UserDefaults.standard.bool(forKey: "vibetermDeliveryEnabled")
         }
         set { UserDefaults.standard.set(newValue, forKey: "vibetermDeliveryEnabled") }
+    }
+
+    // MARK: - Context Data Settings
+
+    var motionEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "motionEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "motionEnabled") }
+    }
+
+    var nowPlayingEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "nowPlayingEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "nowPlayingEnabled") }
+    }
+
+    var webMinContentChars: Int {
+        get {
+            let val = UserDefaults.standard.integer(forKey: "webMinContentChars")
+            return UserDefaults.standard.object(forKey: "webMinContentChars") != nil ? val : 200
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "webMinContentChars") }
     }
 
     private init() {}
