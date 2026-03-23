@@ -244,12 +244,12 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Chi Triggers
+    // MARK: - Reaction Triggers
 
     @ViewBuilder
     private var chiTriggersSection: some View {
         VStack(spacing: 8) {
-            HUDSectionHeader(title: "Chi Triggers", color: RecallTheme.Colors.neonMagenta)
+            HUDSectionHeader(title: "Reaction Triggers", color: RecallTheme.Colors.neonMagenta)
             VStack(spacing: 12) {
                 hudToggle(label: "WEB REACTIONS", isOn: $viewModel.webReactionsEnabled)
                 hudToggle(label: "VOICE REACTIONS", isOn: $viewModel.voiceReactionsEnabled)
@@ -268,12 +268,12 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Chi Delivery
+    // MARK: - Reaction Delivery
 
     @ViewBuilder
     private var chiDeliverySection: some View {
         VStack(spacing: 8) {
-            HUDSectionHeader(title: "Chi Delivery", color: RecallTheme.Colors.neonMagenta)
+            HUDSectionHeader(title: "Reaction Delivery", color: RecallTheme.Colors.neonMagenta)
             VStack(spacing: 12) {
                 hudToggle(label: "LINE", isOn: $viewModel.lineDeliveryEnabled)
                 hudToggle(label: "VIBETERM", isOn: $viewModel.vibetermDeliveryEnabled)

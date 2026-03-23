@@ -1,7 +1,7 @@
 /**
  * Settings handler — GET/POST /api/recall-settings
  *
- * Allows recall iOS to read and update Chi reaction toggles.
+ * Allows recall iOS to read and update reaction toggles.
  */
 
 import { verifyAuth } from "./auth.js";

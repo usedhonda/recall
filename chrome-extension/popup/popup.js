@@ -99,7 +99,7 @@ function formatShortTime(value) {
 
 const X_DOMAINS = ["x.com", "twitter.com"];
 
-function chiFilterStatus(entry, minContentChars) {
+function filterStatus(entry, minContentChars) {
   const domain = entry.domain || "";
   if (X_DOMAINS.includes(domain)) return { pass: true, reason: "X (always)" };
   const len = entry.contentLength ?? 0;
@@ -124,9 +124,9 @@ function renderRecentEntries(entries = [], settings = {}) {
       const domain = escapeHtml(entry.domain || "unknown");
       const dwell = escapeHtml(String(entry.dwellSeconds || 0));
       const time = escapeHtml(formatShortTime(entry.visitedAt));
-      const chi = chiFilterStatus(entry, minContentChars);
-      const chiClass = chi.pass ? "chi-pass" : "chi-skip";
-      const chiLabel = chi.pass ? "ok" : "skip";
+      const filter = filterStatus(entry, minContentChars);
+      const filterClass = filter.pass ? "filter-pass" : "filter-skip";
+      const filterLabel = filter.pass ? "ok" : "skip";
 
       // Detail row (expandable)
       let detailRow = "";
@@ -158,7 +158,7 @@ function renderRecentEntries(entries = [], settings = {}) {
           <td class="col-title" title="${title}">${title}</td>
           <td class="col-domain">${domain}</td>
           <td class="col-dwell">${dwell}s</td>
-          <td class="col-status"><span class="recent-status ${status}">${status}</span> <span class="chi-tag ${chiClass}">${chiLabel}</span></td>
+          <td class="col-status"><span class="recent-status ${status}">${status}</span> <span class="filter-tag ${filterClass}">${filterLabel}</span></td>
         </tr>
         ${detailRow}
       `;

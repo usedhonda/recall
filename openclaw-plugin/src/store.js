@@ -73,7 +73,7 @@ export function storeSample(sample) {
 
   latestLocation = entry;
   lastLocationNewAt = entry.receivedAt;
-  globalThis.__vibetermLatestLocation = entry;
+  globalThis.__recallLatestLocation = entry;
   return true;
 }
 
@@ -106,7 +106,7 @@ export function storeHealth(summary) {
   };
   latestHealth = entry;
   lastHealthAt = entry.receivedAt;
-  globalThis.__vibetermLatestHealth = entry;
+  globalThis.__recallLatestHealth = entry;
   return true;
 }
 
@@ -124,7 +124,7 @@ export function getLatestHealth() {
  */
 export function storeMotion(motion) {
   latestMotion = { ...motion, receivedAt: new Date().toISOString() };
-  globalThis.__vibetermLatestMotion = latestMotion;
+  globalThis.__recallLatestMotion = latestMotion;
 }
 
 /**
@@ -141,7 +141,7 @@ export function getLatestMotion() {
  */
 export function storeNowPlaying(nowPlaying) {
   latestNowPlaying = { ...nowPlaying, receivedAt: new Date().toISOString() };
-  globalThis.__vibetermLatestNowPlaying = latestNowPlaying;
+  globalThis.__recallLatestNowPlaying = latestNowPlaying;
 }
 
 /**

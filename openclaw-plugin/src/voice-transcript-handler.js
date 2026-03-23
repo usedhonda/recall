@@ -2,11 +2,11 @@
  * Voice transcript handler — POST /api/voice-transcript
  *
  * Receives transcription results from VoiceLog, writes diary entries,
- * and optionally triggers Chi reaction via api.runtime.subagent.run().
+ * and optionally triggers a voice reaction via api.runtime.subagent.run().
  *
  * Firing policy: diary is always written, but chat message only fires
  * when the latest transcript has >= MIN_FIRE_CHARS of text.
- * A rolling buffer of recent transcripts provides context to Chi.
+ * A rolling buffer of recent transcripts provides context to the LLM.
  */
 
 import { promises as fs } from "fs";

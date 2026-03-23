@@ -3,7 +3,7 @@ import Observation
 
 /// Passively observes system now-playing info via MediaRemote.framework (private API).
 /// Read-only — never writes to NowPlayingInfoCenter or registers remote commands,
-/// so it does NOT interfere with vibeterm's Live Activity on the lock screen.
+/// so it does NOT interfere with companion apps' Live Activity on the lock screen.
 @Observable
 @MainActor
 final class NowPlayingManager {

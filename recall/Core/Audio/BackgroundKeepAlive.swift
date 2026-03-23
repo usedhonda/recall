@@ -45,7 +45,7 @@ final class BackgroundKeepAlive {
             return
         }
 
-        // NowPlayingInfoCenter intentionally NOT set — vibeterm owns the lock screen.
+        // NowPlayingInfoCenter intentionally NOT set — companion app owns the lock screen.
         // Background survival relies on audio background mode + AVAudioEngine tap.
     }
 

@@ -98,10 +98,55 @@ try {
       return false;
     }
 
+    if (message?.type === "show-ticker") {
+      showTicker(message.message || "Sent to OpenClaw");
+      return false;
+    }
+
     return undefined;
   });
 } catch {
   // extension context invalidated — content script orphaned
+}
+
+// --- Ticker notification ---
+
+function showTicker(text) {
+  const host = document.createElement("div");
+  host.id = "recall-ticker-host";
+  const shadow = host.attachShadow({ mode: "closed" });
+  shadow.innerHTML = `
+    <style>
+      :host { all: initial; }
+      .ticker {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 2147483647;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(103, 245, 199, 0.12);
+        backdrop-filter: blur(8px);
+        color: #67f5c7;
+        font: 600 12px/1 -apple-system, sans-serif;
+        letter-spacing: 0.04em;
+        opacity: 1;
+        transition: opacity 0.4s ease-out;
+        pointer-events: none;
+      }
+    </style>
+    <div class="ticker">${text.replace(/</g, "&lt;")}</div>
+  `;
+  // Remove any existing ticker
+  document.getElementById("recall-ticker-host")?.remove();
+  document.documentElement.appendChild(host);
+  setTimeout(() => {
+    shadow.querySelector(".ticker").style.opacity = "0";
+    setTimeout(() => host.remove(), 500);
+  }, 2000);
 }
 
 // --- Engagement tracking ---

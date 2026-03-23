@@ -286,7 +286,7 @@ button.saved {
 }
 
 .col-title {
-  max-width: 140px;
+  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -347,6 +347,13 @@ button.saved {
   color: var(--danger);
 }
 
+.recent-status.short,
+.recent-status.blocked,
+.recent-status.disabled {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
 .recent-preview {
   margin-top: 6px;
   padding: 6px 8px;
@@ -365,7 +372,7 @@ button.saved {
   opacity: 0.7;
 }
 
-.chi-tag {
+.filter-tag {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 6px;
@@ -376,12 +383,12 @@ button.saved {
   vertical-align: middle;
 }
 
-.chi-pass {
+.filter-pass {
   background: rgba(103, 245, 199, 0.14);
   color: var(--accent);
 }
 
-.chi-skip {
+.filter-skip {
   background: rgba(255, 122, 122, 0.14);
   color: var(--danger);
 }

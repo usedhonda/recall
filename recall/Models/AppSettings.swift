@@ -129,7 +129,7 @@ final class AppSettings {
         !telemetryServerURL.isEmpty && KeychainHelper.shared.hasToken
     }
 
-    // MARK: - Chi Reaction Settings
+    // MARK: - Reaction Settings
 
     var webReactionsEnabled: Bool {
         get {

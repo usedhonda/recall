@@ -6,7 +6,7 @@ const SETTINGS_KEY = "webHistorySettings";
 const RECENT_ENTRIES_KEY = "webHistoryRecentEntries";
 const SESSION_KEY = "webHistorySessionState";
 const ALARM_NAME = "recall-web-history-sync";
-const MAX_RECENT_ENTRIES = 10;
+const MAX_RECENT_ENTRIES = 100;
 const IDLE_THRESHOLD_SECONDS = 60;
 const MAX_ACTIVE_SECONDS = 1800;
 const SESSION_FLUSH_DELAY_MS = 2000;
@@ -155,7 +155,6 @@ async function recordRecentEntry(entry, status) {
     },
     ...recentEntries.filter((item) => {
       if (item?.id === entry.id) return false;
-      if (parsedUrl && item?.url === parsedUrl) return false;
       return true;
     })
   ].slice(0, MAX_RECENT_ENTRIES);
@@ -378,17 +377,36 @@ async function finalizeVisit(tabId, reason) {
   await flushSessionStateNow();
 
   const settings = await getSettings();
-  if (!settings.enabled || !shouldHandleUrl(tabState.url, settings)) {
-    return null;
-  }
-
   flushEngagementTimers(tabState);
   const { dwellSeconds, engagement } = computeEngagement(tabState);
+  const contentState = sessionState.contentCache[key];
+
+  // Build a minimal entry for logging even if skipped
+  const logEntry = {
+    id: `${tabId}-${Date.now()}`,
+    url: tabState.url,
+    title: tabState.title || "Untitled",
+    domain: tabState.domain || "",
+    visitedAt: tabState.activatedAtISO || new Date().toISOString(),
+    dwellSeconds,
+    contentPreview: contentPreview(contentState?.content),
+    contentLength: (contentState?.content || "").length,
+    engagement: engagement || null
+  };
+
+  if (!settings.enabled) {
+    await recordRecentEntry(logEntry, "disabled");
+    return null;
+  }
+  if (!shouldHandleUrl(tabState.url, settings)) {
+    await recordRecentEntry(logEntry, "blocked");
+    return null;
+  }
   if (!shouldTrackVisit(dwellSeconds, settings.minDwellSeconds)) {
+    await recordRecentEntry(logEntry, "short");
     return null;
   }
 
-  const contentState = sessionState.contentCache[key];
   const entry = buildEntry(tabState, contentState, dwellSeconds, engagement);
   if (!entry) {
     return null;
@@ -396,6 +414,12 @@ async function finalizeVisit(tabId, reason) {
 
   const status = await trySendOrQueue(entry, settings);
   await recordRecentEntry(entry, status);
+
+  // Notify content script with ticker
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "show-ticker", message: "Sent to OpenClaw" });
+  } catch { /* tab may be closed */ }
+
   return entry;
 }
 

@@ -202,7 +202,7 @@ final class SettingsViewModel {
         telemetry.nowPlayingManager.artist
     }
 
-    // MARK: - Chi Reactions
+    // MARK: - Reactions
 
     var webReactionsEnabled: Bool {
         get { settings.webReactionsEnabled }
