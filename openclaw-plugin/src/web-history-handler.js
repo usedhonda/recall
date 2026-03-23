@@ -230,6 +230,21 @@ export function createWebHistoryHandler(api) {
     const settings = await getReactionSettings();
     if (!settings.webReactionsEnabled) return;
 
+    // Skip non-X pages with thin content
+    const X_DOMAINS = ["x.com", "twitter.com"];
+    let isX = false;
+    try { isX = X_DOMAINS.includes(new URL(entry.url).hostname); } catch {}
+    if (!isX) {
+      const minChars = settings.webMinContentChars || 200;
+      if (minChars > 0) {
+        const contentLen = (entry.content || "").length;
+        if (contentLen < minChars) {
+          log?.info?.(`recall-web-history: content too short (${contentLen}/${minChars}), skipping reaction`);
+          return;
+        }
+      }
+    }
+
     const wantsLine = settings.lineDeliveryEnabled;
     const wantsVibeterm = settings.vibetermDeliveryEnabled;
     if (!wantsLine && !wantsVibeterm) return;

@@ -26,7 +26,7 @@ import { promises as fs } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { verifyAuth } from "./auth.js";
-import { getLastSuccessTimes, storeHealth, storeSample } from "./store.js";
+import { getLastSuccessTimes, storeHealth, storeMotion, storeNowPlaying, storeSample } from "./store.js";
 
 const NEXT_MIN_INTERVAL_SEC = 60;
 
@@ -38,6 +38,8 @@ const LOCATION_MIN_WRITE_DURATION_MS = 30 * 60 * 1000;
 const MEMORY_ROOT = join(homedir(), ".openclaw", "workspace", "memory");
 const CURRENT_LOCATION_PATH = join(MEMORY_ROOT, "current-location.json");
 const HEALTH_STATE_PATH = join(MEMORY_ROOT, "health-state.json");
+const MOTION_STATE_PATH = join(MEMORY_ROOT, "motion-state.json");
+const NOW_PLAYING_STATE_PATH = join(MEMORY_ROOT, "now-playing-state.json");
 
 let locationAggWindow = null;
 
@@ -290,6 +292,95 @@ async function persistHealthState(health, log) {
 }
 
 /**
+ * Persist motion state to disk.
+ */
+async function persistMotionState(motion, log) {
+  const now = new Date();
+  const state = {
+    ...motion,
+    updatedAt: now.toISOString(),
+    receivedAt: now.toISOString(),
+    source: "recall-telemetry",
+  };
+  try {
+    await fs.mkdir(MEMORY_ROOT, { recursive: true });
+    await fs.writeFile(MOTION_STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+  } catch (err) {
+    log?.warn?.(`recall-telemetry: failed to persist motion-state.json: ${err.message}`);
+  }
+}
+
+/**
+ * Persist now playing state to disk.
+ */
+async function persistNowPlayingState(nowPlaying, log) {
+  const now = new Date();
+  const state = {
+    ...nowPlaying,
+    updatedAt: now.toISOString(),
+    receivedAt: now.toISOString(),
+    source: "recall-telemetry",
+  };
+  try {
+    await fs.mkdir(MEMORY_ROOT, { recursive: true });
+    await fs.writeFile(NOW_PLAYING_STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+  } catch (err) {
+    log?.warn?.(`recall-telemetry: failed to persist now-playing-state.json: ${err.message}`);
+  }
+}
+
+// Motion/NowPlaying diary throttle state
+let lastMotionDiaryActivity = null;
+let lastNowPlayingDiaryTitle = null;
+
+/**
+ * Append motion activity change to today's diary.
+ * Only writes when activity changes (not every telemetry push).
+ */
+async function maybeWriteMotionDiary(motion, log) {
+  if (!motion.activity || motion.activity === lastMotionDiaryActivity) return;
+  lastMotionDiaryActivity = motion.activity;
+
+  const now = new Date();
+  const timeStr = formatJstTime(now);
+  const dateStr = formatJstDate(now);
+  const conf = motion.confidence || "?";
+  const line = `\u{1F6B6} ${timeStr} Motion: ${motion.activity} (${conf})\n`;
+
+  const diaryPath = join(MEMORY_ROOT, `${dateStr}.md`);
+  try {
+    await fs.mkdir(MEMORY_ROOT, { recursive: true });
+    await fs.appendFile(diaryPath, line, "utf-8");
+  } catch (err) {
+    log?.warn?.(`recall-telemetry: failed to write motion diary: ${err.message}`);
+  }
+}
+
+/**
+ * Append now playing change to today's diary.
+ * Only writes when the track changes.
+ */
+async function maybeWriteNowPlayingDiary(nowPlaying, log) {
+  const title = nowPlaying.title;
+  if (!title || title === lastNowPlayingDiaryTitle) return;
+  lastNowPlayingDiaryTitle = title;
+
+  const now = new Date();
+  const timeStr = formatJstTime(now);
+  const dateStr = formatJstDate(now);
+  const artist = nowPlaying.artist || "?";
+  const line = `\u{1F3B5} ${timeStr} Now Playing: ${title} — ${artist}\n`;
+
+  const diaryPath = join(MEMORY_ROOT, `${dateStr}.md`);
+  try {
+    await fs.mkdir(MEMORY_ROOT, { recursive: true });
+    await fs.appendFile(diaryPath, line, "utf-8");
+  } catch (err) {
+    log?.warn?.(`recall-telemetry: failed to write now playing diary: ${err.message}`);
+  }
+}
+
+/**
  * Read the full request body as a string.
  * @param {import("http").IncomingMessage} req
  * @returns {Promise<string>}
@@ -420,16 +511,40 @@ export function createTelemetryHandler(api) {
       persistHealthState(body.health, log).catch(() => {});
     }
 
+    // Process motion data if present
+    let motionReceived = false;
+    if (body.motion && typeof body.motion === "object") {
+      storeMotion(body.motion);
+      motionReceived = true;
+      persistMotionState(body.motion, log).catch(() => {});
+      maybeWriteMotionDiary(body.motion, log).catch(() => {});
+    }
+
+    // Process now playing data if present
+    let nowPlayingReceived = false;
+    if (body.nowPlaying && typeof body.nowPlaying === "object") {
+      storeNowPlaying(body.nowPlaying);
+      nowPlayingReceived = true;
+      persistNowPlayingState(body.nowPlaying, log).catch(() => {});
+      maybeWriteNowPlayingDiary(body.nowPlaying, log).catch(() => {});
+    }
+
     const { lastLocationNewAt, lastHealthAt } = getLastSuccessTimes();
+    const extras = [
+      healthReceived ? "health" : null,
+      motionReceived ? `motion(${body.motion?.activity})` : null,
+      nowPlayingReceived ? `media(${body.nowPlaying?.title?.slice(0, 20)})` : null,
+    ].filter(Boolean).join(", ");
     log?.info?.(
-      `recall-telemetry: httpAccepted=true locationNew=${received} healthReceived=${healthReceived}` +
+      `recall-telemetry: httpAccepted=true locationNew=${received}${extras ? ` ${extras}` : ""}` +
       ` lastLocationNewAt=${lastLocationNewAt ?? "-"} lastHealthAt=${lastHealthAt ?? "-"}`
     );
-    log?.info?.(`recall-telemetry: processed ${events.length} events, ${received} new${healthReceived ? ", health received" : ""}`);
 
     sendJson(res, {
       received,
       healthReceived,
+      motionReceived,
+      nowPlayingReceived,
       nextMinIntervalSec: NEXT_MIN_INTERVAL_SEC,
     });
   };

@@ -21,6 +21,7 @@ const DEFAULTS = {
   voiceReactionsEnabled: true,
   lineDeliveryEnabled: true,
   vibetermDeliveryEnabled: true,
+  webMinContentChars: 200,
 };
 
 export async function getReactionSettings() {
@@ -32,6 +33,7 @@ export async function getReactionSettings() {
       voiceReactionsEnabled: data.voiceReactionsEnabled ?? DEFAULTS.voiceReactionsEnabled,
       lineDeliveryEnabled: data.lineDeliveryEnabled ?? DEFAULTS.lineDeliveryEnabled,
       vibetermDeliveryEnabled: data.vibetermDeliveryEnabled ?? DEFAULTS.vibetermDeliveryEnabled,
+      webMinContentChars: data.webMinContentChars ?? DEFAULTS.webMinContentChars,
       updatedAt: data.updatedAt ?? null,
     };
   } catch {
@@ -46,6 +48,7 @@ export async function saveReactionSettings(settings) {
     voiceReactionsEnabled: settings.voiceReactionsEnabled ?? current.voiceReactionsEnabled,
     lineDeliveryEnabled: settings.lineDeliveryEnabled ?? current.lineDeliveryEnabled,
     vibetermDeliveryEnabled: settings.vibetermDeliveryEnabled ?? current.vibetermDeliveryEnabled,
+    webMinContentChars: settings.webMinContentChars ?? current.webMinContentChars,
     updatedAt: new Date().toISOString(),
   };
   const dir = join(homedir(), ".openclaw", "workspace", "memory");

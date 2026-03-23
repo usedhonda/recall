@@ -22,6 +22,13 @@ let latestLocation = null;
 
 /** @type {object | null} */
 let latestHealth = null;
+
+/** @type {object | null} */
+let latestMotion = null;
+
+/** @type {object | null} */
+let latestNowPlaying = null;
+
 let lastLocationNewAt = null;
 let lastHealthAt = null;
 
@@ -109,6 +116,40 @@ export function storeHealth(summary) {
  */
 export function getLatestHealth() {
   return latestHealth;
+}
+
+/**
+ * Store a motion activity snapshot.
+ * @param {object} motion - { activity, confidence, timestamp }
+ */
+export function storeMotion(motion) {
+  latestMotion = { ...motion, receivedAt: new Date().toISOString() };
+  globalThis.__vibetermLatestMotion = latestMotion;
+}
+
+/**
+ * Get the most recent motion activity.
+ * @returns {object | null}
+ */
+export function getLatestMotion() {
+  return latestMotion;
+}
+
+/**
+ * Store a now playing snapshot.
+ * @param {object} nowPlaying - { title, artist, album, timestamp }
+ */
+export function storeNowPlaying(nowPlaying) {
+  latestNowPlaying = { ...nowPlaying, receivedAt: new Date().toISOString() };
+  globalThis.__vibetermLatestNowPlaying = latestNowPlaying;
+}
+
+/**
+ * Get the most recent now playing info.
+ * @returns {object | null}
+ */
+export function getLatestNowPlaying() {
+  return latestNowPlaying;
 }
 
 /**
