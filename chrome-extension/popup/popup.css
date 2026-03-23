@@ -354,6 +354,11 @@ button.saved {
   opacity: 0.6;
 }
 
+.log-row-skipped td {
+  opacity: 0.4;
+  color: var(--muted);
+}
+
 .recent-preview {
   margin-top: 6px;
   padding: 6px 8px;

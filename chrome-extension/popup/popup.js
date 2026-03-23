@@ -127,6 +127,9 @@ function renderRecentEntries(entries = [], settings = {}) {
       const filter = filterStatus(entry, minContentChars);
       const filterClass = filter.pass ? "filter-pass" : "filter-skip";
       const filterLabel = filter.pass ? "ok" : "skip";
+      const isSkipped = ["short", "blocked", "disabled"].includes(entry.status);
+      const rowClass = isSkipped ? "log-row log-row-skipped" : "log-row";
+      const skipReason = isSkipped ? ` (${status})` : "";
 
       // Detail row (expandable)
       let detailRow = "";
@@ -153,9 +156,9 @@ function renderRecentEntries(entries = [], settings = {}) {
       }
 
       return `
-        <tr class="log-row" data-entry-id="${escapeHtml(entry.id || "")}">
+        <tr class="${rowClass}" data-entry-id="${escapeHtml(entry.id || "")}">
           <td class="col-time">${time}</td>
-          <td class="col-title" title="${title}">${title}</td>
+          <td class="col-title" title="${title}">${title}${skipReason}</td>
           <td class="col-domain">${domain}</td>
           <td class="col-dwell">${dwell}s</td>
           <td class="col-status"><span class="recent-status ${status}">${status}</span> <span class="filter-tag ${filterClass}">${filterLabel}</span></td>
