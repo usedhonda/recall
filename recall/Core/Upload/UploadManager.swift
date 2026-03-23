@@ -100,12 +100,20 @@ final class UploadManager {
             // Check connectivity
             guard ConnectivityMonitor.shared.canUploadAudio else {
                 let cm = ConnectivityMonitor.shared
-                if cm.isCellular {
-                    uploadProgress = "Queuing (cellular)..."
-                } else if !cm.isWiFi {
-                    uploadProgress = "Waiting for WiFi..."
+                let reason: String
+                if !cm.isConnected {
+                    reason = "offline"
+                } else if cm.isCellular && AppSettings.shared.wifiOnlyUpload {
+                    reason = "cellular (wifi-only)"
+                } else if cm.isExpensive {
+                    reason = "expensive network"
                 } else {
-                    uploadProgress = "Waiting for network..."
+                    reason = "network unavailable"
+                }
+                uploadProgress = "Waiting: \(reason)"
+                // Log once per minute when blocked
+                if Int(Date().timeIntervalSince1970) % 60 == 0 {
+                    activity.log(.upload, "Upload blocked: \(reason) pending=\(pendingCount)")
                 }
                 try? await Task.sleep(for: .seconds(5))
                 continue
@@ -233,9 +241,15 @@ final class UploadManager {
             try? modelContext.save()
 
             refreshCounts(modelContext: modelContext)
-            uploadProgress = "Failed: \(chunk.fileName)"
-            Self.logger.error("Upload failed for \(chunk.fileName): \(error.localizedDescription)")
-            activity.log(.error, "Upload failed: \(chunk.fileName) (#\(chunk.uploadAttempts)) \(error.localizedDescription)")
+            let reason = Self.classifyUploadError(error)
+            uploadProgress = "Failed: \(reason)"
+            Self.logger.error("Upload failed for \(chunk.fileName): \(reason) — \(error.localizedDescription)")
+            activity.log(.error, "Upload FAIL \(chunk.fileName) #\(chunk.uploadAttempts) [\(reason)] \(error.localizedDescription)")
+
+            // Log cumulative failure stats periodically
+            if chunk.uploadAttempts == 1 || chunk.uploadAttempts % 5 == 0 {
+                activity.log(.upload, "Upload stats: pending=\(pendingCount) failed=\(failedCount) attempt=#\(chunk.uploadAttempts) reason=\(reason)")
+            }
         }
     }
 
@@ -323,6 +337,36 @@ final class UploadManager {
             predicate: #Predicate<AudioChunk> { $0.id == id }
         )
         return try? modelContext.fetch(descriptor).first
+    }
+
+    // MARK: - Error Classification
+
+    private static func classifyUploadError(_ error: Error) -> String {
+        let nsError = error as NSError
+        switch nsError.code {
+        case NSURLErrorTimedOut:
+            return "timeout"
+        case NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost:
+            return "unreachable"
+        case NSURLErrorNetworkConnectionLost:
+            return "connection-lost"
+        case NSURLErrorNotConnectedToInternet:
+            return "offline"
+        case NSURLErrorDNSLookupFailed:
+            return "dns-fail"
+        case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted:
+            return "tls-error"
+        default:
+            if nsError.domain == NSURLErrorDomain {
+                return "network-\(nsError.code)"
+            }
+            // Check for HTTP status code errors
+            let desc = error.localizedDescription.lowercased()
+            if desc.contains("500") || desc.contains("502") || desc.contains("503") {
+                return "server-error"
+            }
+            return "unknown"
+        }
     }
 
     func refreshCounts(modelContext: ModelContext) {
