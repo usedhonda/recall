@@ -9,12 +9,14 @@ const ALARM_NAME = "recall-web-history-sync";
 const MAX_RECENT_ENTRIES = 10;
 const IDLE_THRESHOLD_SECONDS = 60;
 const MAX_ACTIVE_SECONDS = 1800;
+const SESSION_FLUSH_DELAY_MS = 2000;
 
 const DEFAULT_SETTINGS = {
   enabled: true,
   serverURL: "",
   token: "",
   minDwellSeconds: 15,
+  minContentChars: 200,
   blocklist: DEFAULT_BLOCKLIST
 };
 
@@ -30,17 +32,63 @@ let sessionState = createEmptySessionState();
 let hydratePromise = null;
 let initializePromise = null;
 
+// --- State serialization: all state mutations go through this chain ---
+let stateChain = Promise.resolve();
+
+function serializeState(fn) {
+  stateChain = stateChain.then(fn, fn);
+  return stateChain;
+}
+
+// --- Session persistence throttle ---
+let sessionDirty = false;
+let sessionFlushTimer = null;
+
+function markSessionDirty() {
+  sessionDirty = true;
+  if (!sessionFlushTimer) {
+    sessionFlushTimer = setTimeout(flushSessionState, SESSION_FLUSH_DELAY_MS);
+  }
+}
+
+async function flushSessionState() {
+  sessionFlushTimer = null;
+  if (!sessionDirty) return;
+  sessionDirty = false;
+  try {
+    await chrome.storage.session.set({ [SESSION_KEY]: sessionState });
+  } catch {
+    // Worker may be shutting down
+  }
+}
+
+// Force-flush for boundary events (finalize, tab switch, tab close)
+async function flushSessionStateNow() {
+  if (sessionFlushTimer) {
+    clearTimeout(sessionFlushTimer);
+    sessionFlushTimer = null;
+  }
+  sessionDirty = false;
+  try {
+    await chrome.storage.session.set({ [SESSION_KEY]: sessionState });
+  } catch {
+    // Worker may be shutting down
+  }
+}
+
 function tabKey(tabId) {
   return String(tabId);
 }
 
 function sanitizeSettings(raw = {}) {
   const minDwellSeconds = Number(raw.minDwellSeconds);
+  const minContentChars = Number(raw.minContentChars);
   return {
     enabled: raw.enabled !== false,
     serverURL: typeof raw.serverURL === "string" ? raw.serverURL.trim() : "",
     token: typeof raw.token === "string" ? raw.token.trim() : "",
     minDwellSeconds: Number.isFinite(minDwellSeconds) ? Math.min(600, Math.max(5, Math.round(minDwellSeconds))) : DEFAULT_SETTINGS.minDwellSeconds,
+    minContentChars: Number.isFinite(minContentChars) ? Math.min(5000, Math.max(0, Math.round(minContentChars))) : DEFAULT_SETTINGS.minContentChars,
     blocklist: normalizeBlocklist(Array.isArray(raw.blocklist) ? raw.blocklist : DEFAULT_BLOCKLIST)
   };
 }
@@ -65,10 +113,6 @@ async function ensureHydrated() {
   await hydratePromise;
 }
 
-async function persistSessionState() {
-  await chrome.storage.session.set({ [SESSION_KEY]: sessionState });
-}
-
 async function getSettings() {
   const stored = await chrome.storage.local.get({ [SETTINGS_KEY]: DEFAULT_SETTINGS });
   return sanitizeSettings(stored[SETTINGS_KEY]);
@@ -85,18 +129,35 @@ async function getRecentEntries() {
   return Array.isArray(stored[RECENT_ENTRIES_KEY]) ? stored[RECENT_ENTRIES_KEY] : [];
 }
 
+function contentPreview(content, limit = 200) {
+  if (!content || typeof content !== "string") return "";
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, limit)}...`;
+}
+
 async function recordRecentEntry(entry, status) {
   const recentEntries = await getRecentEntries();
+  let parsedUrl;
+  try { parsedUrl = new URL(entry.url || "").href; } catch { parsedUrl = null; }
   const nextEntries = [
     {
       id: entry.id,
+      url: entry.url,
       title: entry.title,
       domain: entry.domain,
       visitedAt: entry.visitedAt,
       dwellSeconds: entry.dwellSeconds,
+      contentPreview: contentPreview(entry.content),
+      contentLength: (entry.content || "").length,
+      engagement: entry.engagement || null,
       status
     },
-    ...recentEntries.filter((item) => item?.id !== entry.id)
+    ...recentEntries.filter((item) => {
+      if (item?.id === entry.id) return false;
+      if (parsedUrl && item?.url === parsedUrl) return false;
+      return true;
+    })
   ].slice(0, MAX_RECENT_ENTRIES);
 
   await chrome.storage.local.set({ [RECENT_ENTRIES_KEY]: nextEntries });
@@ -158,12 +219,15 @@ async function handleEngagementMessage(message, tabId) {
   const tabState = sessionState.tabStates[key];
   if (!tabState) return;
 
+  // Validate page identity — drop stale/mismatched engagement from orphaned content scripts
+  if (message.pageUrl && tabState.url && message.pageUrl !== tabState.url) return;
+  if (tabState.lastFinalizedAt && message.sentAt && message.sentAt < tabState.lastFinalizedAt) return;
+
   const now = Date.now();
 
   switch (message.type) {
     case "engagement:visibility": {
       if (message.hidden) {
-        // Page became hidden — pause timers
         if (tabState.visibleSince) {
           tabState.visibleMs = (tabState.visibleMs || 0) + (now - tabState.visibleSince);
           tabState.visibleSince = null;
@@ -174,7 +238,6 @@ async function handleEngagementMessage(message, tabId) {
         }
         tabState.isVisible = false;
       } else {
-        // Page became visible — resume timers
         tabState.visibleSince = now;
         if (!tabState.isIdle) {
           tabState.activeSince = now;
@@ -201,7 +264,7 @@ async function handleEngagementMessage(message, tabId) {
     }
   }
 
-  await persistSessionState();
+  markSessionDirty();
 }
 
 async function handleIdleStateChanged(newState) {
@@ -217,21 +280,19 @@ async function handleIdleStateChanged(newState) {
   const isIdle = newState !== "active";
 
   if (isIdle && !tabState.isIdle) {
-    // Became idle — pause active timer
     if (tabState.activeSince) {
       tabState.activeMs = (tabState.activeMs || 0) + (now - tabState.activeSince);
       tabState.activeSince = null;
     }
     tabState.isIdle = true;
   } else if (!isIdle && tabState.isIdle) {
-    // Became active — resume active timer (only if visible)
     tabState.isIdle = false;
     if (tabState.isVisible) {
       tabState.activeSince = now;
     }
   }
 
-  await persistSessionState();
+  markSessionDirty();
 }
 
 function buildEntry(tabState, contentState, dwellSeconds, engagement) {
@@ -314,7 +375,7 @@ async function finalizeVisit(tabId, reason) {
     lastFinalizedReason: reason,
     lastFinalizedAt: Date.now()
   };
-  await persistSessionState();
+  await flushSessionStateNow();
 
   const settings = await getSettings();
   if (!settings.enabled || !shouldHandleUrl(tabState.url, settings)) {
@@ -344,7 +405,7 @@ async function updateTabState(tabId, nextState) {
     ...(sessionState.tabStates[tabKey(tabId)] || {}),
     ...nextState
   };
-  await persistSessionState();
+  markSessionDirty();
 }
 
 async function clearTabArtifacts(tabId, { removeState = false } = {}) {
@@ -357,7 +418,7 @@ async function clearTabArtifacts(tabId, { removeState = false } = {}) {
   if (sessionState.activeTabId === tabId && removeState) {
     sessionState.activeTabId = null;
   }
-  await persistSessionState();
+  await flushSessionStateNow();
 }
 
 async function cacheContent(tabId, payload) {
@@ -369,16 +430,22 @@ async function cacheContent(tabId, payload) {
     meta: payload.meta || {},
     capturedAt: Date.now()
   };
-  await persistSessionState();
+  markSessionDirty();
 }
 
 async function requestContentCapture(tabId, expectedUrl) {
+  const key = tabKey(tabId);
   try {
     const payload = await chrome.tabs.sendMessage(tabId, {
       type: "extract-page-content",
       expectedUrl
     });
     if (!payload?.ok) {
+      if (sessionState.tabStates[key]) {
+        sessionState.tabStates[key].lastCaptureError = payload?.error || "extraction failed";
+        sessionState.tabStates[key].lastCaptureErrorAt = Date.now();
+        markSessionDirty();
+      }
       return;
     }
     if (expectedUrl && payload.url && payload.url !== expectedUrl) {
@@ -386,10 +453,15 @@ async function requestContentCapture(tabId, expectedUrl) {
     }
     await cacheContent(tabId, payload);
     await updateTabState(tabId, {
-      title: payload.title || sessionState.tabStates[tabKey(tabId)]?.title || ""
+      title: payload.title || sessionState.tabStates[key]?.title || "",
+      lastCaptureError: null
     });
-  } catch {
-    // Ignore restricted pages or tabs without content script injection.
+  } catch (err) {
+    // Store error for diagnostics instead of silent swallow
+    if (sessionState.tabStates[key]) {
+      sessionState.tabStates[key].lastCaptureError = err instanceof Error ? err.message : "content script unreachable";
+      markSessionDirty();
+    }
   }
 }
 
@@ -407,7 +479,7 @@ async function bootstrapActiveTab() {
     ...(existingTab?.visibleSince != null ? {} : createEngagementState())
   });
   sessionState.activeTabId = activeTab.id;
-  await persistSessionState();
+  await flushSessionStateNow();
 
   const settings = await getSettings();
   if (activeTab.status === "complete" && shouldHandleUrl(activeTab.url, settings)) {
@@ -443,7 +515,7 @@ async function handleTabActivated(activeInfo) {
     activatedAt: Date.now(),
     ...createEngagementState()
   });
-  await persistSessionState();
+  await flushSessionStateNow();
 
   const settings = await getSettings();
   if (tab?.status === "complete" && shouldHandleUrl(tab.url, settings)) {
@@ -486,7 +558,7 @@ async function handleTabUpdated(tabId, changeInfo, tab) {
 
   if (tab?.active) {
     sessionState.activeTabId = tabId;
-    await persistSessionState();
+    markSessionDirty();
   }
 
   const currentUrl = sessionState.tabStates[key]?.url;
@@ -511,7 +583,18 @@ async function handlePopupMessage(message) {
       const settings = await getSettings();
       const recentEntries = await getRecentEntries();
       const queueCount = await getQueueCount();
-      return { ok: true, settings, recentEntries, queueCount };
+      // Expose active tab capture diagnostics
+      let diagnostics = null;
+      if (Number.isInteger(sessionState.activeTabId)) {
+        const activeState = sessionState.tabStates[tabKey(sessionState.activeTabId)];
+        if (activeState?.lastCaptureError) {
+          diagnostics = {
+            lastCaptureError: activeState.lastCaptureError,
+            lastCaptureErrorAt: activeState.lastCaptureErrorAt || null
+          };
+        }
+      }
+      return { ok: true, settings, recentEntries, queueCount, diagnostics };
     }
     case "popup:save-settings": {
       const current = await getSettings();
@@ -558,16 +641,17 @@ chrome.runtime.onStartup.addListener(() => {
   void ensureInitialized();
 });
 
+// All tab lifecycle events are serialized through stateChain
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  void handleTabActivated(activeInfo);
+  void serializeState(() => handleTabActivated(activeInfo));
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  void handleTabRemoved(tabId);
+  void serializeState(() => handleTabRemoved(tabId));
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  void handleTabUpdated(tabId, changeInfo, tab);
+  void serializeState(() => handleTabUpdated(tabId, changeInfo, tab));
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -578,12 +662,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.idle.setDetectionInterval(IDLE_THRESHOLD_SECONDS);
 chrome.idle.onStateChanged.addListener((newState) => {
-  void handleIdleStateChanged(newState);
+  void serializeState(() => handleIdleStateChanged(newState));
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (typeof message?.type === "string" && message.type.startsWith("engagement:") && sender.tab?.id) {
-    void handleEngagementMessage(message, sender.tab.id)
+    void serializeState(() => handleEngagementMessage(message, sender.tab.id))
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;

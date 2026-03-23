@@ -79,6 +79,7 @@ function extractPagePayload() {
 
 try {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!isContextValid()) return false;
     if (message?.type === "extract-page-content") {
       // Reset scroll tracking on new content extraction (SPA navigation)
       maxScrollPct = 0;
@@ -108,7 +109,11 @@ try {
 function sendEngagement(payload) {
   if (!isContextValid()) return;
   try {
-    chrome.runtime.sendMessage(payload).catch(() => {});
+    chrome.runtime.sendMessage({
+      ...payload,
+      pageUrl: window.location.href,
+      sentAt: Date.now()
+    }).catch(() => {});
   } catch {
     contextAlive = false;
   }

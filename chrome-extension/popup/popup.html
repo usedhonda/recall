@@ -11,80 +11,107 @@
       <header class="hero">
         <p class="eyebrow">recall / OpenClaw</p>
         <h1>Web History</h1>
-        <p class="subtitle">Capture active tabs, ship them in real time, and fall back to a local queue when the route goes dark.</p>
       </header>
 
-      <section class="card status-card">
-        <label class="toggle-row" for="enabledToggle">
-          <span>
-            <strong>Capture Enabled</strong>
-            <small>Pause collection without clearing local state.</small>
-          </span>
-          <input id="enabledToggle" type="checkbox">
-        </label>
-        <div class="status-grid">
-          <div>
-            <span class="status-label">Queue</span>
-            <strong id="queueCount">0</strong>
+      <nav class="tab-bar">
+        <button class="tab active" data-tab="settings">Settings</button>
+        <button class="tab" data-tab="log">Log</button>
+      </nav>
+
+      <div class="tab-content" id="tab-settings">
+        <section class="card status-card">
+          <label class="toggle-row" for="enabledToggle">
+            <span>
+              <strong>Capture Enabled</strong>
+              <small>Pause collection without clearing local state.</small>
+            </span>
+            <input id="enabledToggle" type="checkbox">
+          </label>
+          <div class="status-grid">
+            <div>
+              <span class="status-label">Queue</span>
+              <strong id="queueCount">0</strong>
+            </div>
+            <div>
+              <span class="status-label">Connection</span>
+              <strong id="healthStatus"><span class="conn-dot conn-unknown"></span> Checking…</strong>
+            </div>
           </div>
-          <div>
-            <span class="status-label">Connection</span>
-            <strong id="healthStatus">Unknown</strong>
+          <p id="statusMessage" class="status-message" data-tone="neutral">No diagnostics yet.</p>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>Connection</h2>
+              <p>Point the extension at the OpenClaw gateway.</p>
+            </div>
+            <button id="scanQrButton" class="ghost-button" type="button">Scan QR</button>
           </div>
-        </div>
-        <p id="statusMessage" class="status-message">No diagnostics yet.</p>
-      </section>
 
-      <section class="card">
-        <div class="section-head">
-          <div>
-            <h2>Connection</h2>
-            <p>Point the extension at the OpenClaw gateway.</p>
+          <label class="field">
+            <span>Server URL</span>
+            <input id="serverUrlInput" type="url" placeholder="http://macmini:18789">
+          </label>
+
+          <label class="field">
+            <span>Bearer Token</span>
+            <input id="tokenInput" type="password" placeholder="gateway auth token">
+          </label>
+
+          <div class="button-row">
+            <button id="saveButton" type="button">Save</button>
+            <button id="testButton" class="ghost-button" type="button">Test</button>
           </div>
-          <button id="scanQrButton" class="ghost-button" type="button">Scan QR</button>
-        </div>
+        </section>
 
-        <label class="field">
-          <span>Server URL</span>
-          <input id="serverUrlInput" type="url" placeholder="http://macmini:18789">
-        </label>
+        <section class="card">
+          <h2>Capture Rules</h2>
+          <label class="field">
+            <span>Minimum dwell time</span>
+            <div class="slider-row">
+              <input id="dwellSlider" type="range" min="5" max="300" step="5">
+              <strong id="dwellValue">15s</strong>
+            </div>
+          </label>
 
-        <label class="field">
-          <span>Bearer Token</span>
-          <input id="tokenInput" type="password" placeholder="gateway auth token">
-        </label>
+          <label class="field">
+            <span>Min content for Chi reaction (non-X)</span>
+            <div class="slider-row">
+              <input id="minContentSlider" type="range" min="0" max="1000" step="50">
+              <strong id="minContentValue">200</strong>
+            </div>
+            <small>Pages shorter than this won't trigger Chi. X (Twitter) always triggers. 0 = disabled.</small>
+          </label>
 
-        <div class="button-row">
-          <button id="saveButton" type="button">Save</button>
-          <button id="testButton" class="ghost-button" type="button">Test</button>
-        </div>
-      </section>
+          <label class="field">
+            <span>Blocked domains / patterns</span>
+            <textarea id="blocklistInput" rows="8" spellcheck="false" placeholder="mail.google.com&#10;*.bank.com"></textarea>
+            <small>One entry per line. Exact hostnames and `*` wildcards are supported.</small>
+          </label>
 
-      <section class="card">
-        <h2>Capture Rules</h2>
-        <label class="field">
-          <span>Minimum dwell time</span>
-          <div class="slider-row">
-            <input id="dwellSlider" type="range" min="5" max="300" step="5">
-            <strong id="dwellValue">15s</strong>
+          <div class="button-row">
+            <button id="saveRulesButton" type="button">Save</button>
           </div>
-        </label>
+        </section>
+      </div>
 
-        <label class="field">
-          <span>Blocked domains / patterns</span>
-          <textarea id="blocklistInput" rows="8" spellcheck="false" placeholder="mail.google.com&#10;*.bank.com"></textarea>
-          <small>One entry per line. Exact hostnames and `*` wildcards are supported.</small>
-        </label>
-
-        <div class="button-row">
-          <button id="saveRulesButton" type="button">Save</button>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Recent Captures</h2>
-        <ul id="recentEntries" class="recent-list"></ul>
-      </section>
+      <div class="tab-content hidden" id="tab-log">
+        <section class="card log-card">
+          <table class="log-table">
+            <thead>
+              <tr>
+                <th class="col-time">Time</th>
+                <th class="col-title">Page</th>
+                <th class="col-domain">Domain</th>
+                <th class="col-dwell">Dwell</th>
+                <th class="col-status">Status</th>
+              </tr>
+            </thead>
+            <tbody id="recentEntries"></tbody>
+          </table>
+        </section>
+      </div>
     </main>
 
     <section id="qrOverlay" class="qr-overlay hidden" aria-hidden="true">
