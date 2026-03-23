@@ -158,6 +158,50 @@ final class SettingsViewModel {
         set { settings.locationWifiOnly = newValue }
     }
 
+    // MARK: - Context Data
+
+    var motionEnabled: Bool {
+        get { telemetry.motionManager.isEnabled }
+        set {
+            if newValue {
+                telemetry.motionManager.start()
+                settings.motionEnabled = true
+            } else {
+                telemetry.motionManager.stop()
+                settings.motionEnabled = false
+            }
+        }
+    }
+
+    var motionAvailable: Bool {
+        telemetry.motionManager.isAvailable
+    }
+
+    var currentMotionActivity: String {
+        telemetry.motionManager.currentActivity
+    }
+
+    var nowPlayingEnabled: Bool {
+        get { telemetry.nowPlayingManager.isEnabled }
+        set {
+            if newValue {
+                telemetry.nowPlayingManager.start()
+                settings.nowPlayingEnabled = true
+            } else {
+                telemetry.nowPlayingManager.stop()
+                settings.nowPlayingEnabled = false
+            }
+        }
+    }
+
+    var nowPlayingTitle: String? {
+        telemetry.nowPlayingManager.title
+    }
+
+    var nowPlayingArtist: String? {
+        telemetry.nowPlayingManager.artist
+    }
+
     // MARK: - Chi Reactions
 
     var webReactionsEnabled: Bool {
@@ -188,6 +232,14 @@ final class SettingsViewModel {
         get { settings.vibetermDeliveryEnabled }
         set {
             settings.vibetermDeliveryEnabled = newValue
+            Task { await telemetry.syncReactionSettings() }
+        }
+    }
+
+    var webMinContentChars: Int {
+        get { settings.webMinContentChars }
+        set {
+            settings.webMinContentChars = newValue
             Task { await telemetry.syncReactionSettings() }
         }
     }

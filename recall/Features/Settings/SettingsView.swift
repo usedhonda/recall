@@ -253,6 +253,16 @@ struct SettingsView: View {
             VStack(spacing: 12) {
                 hudToggle(label: "WEB REACTIONS", isOn: $viewModel.webReactionsEnabled)
                 hudToggle(label: "VOICE REACTIONS", isOn: $viewModel.voiceReactionsEnabled)
+                hudSlider(
+                    label: "MIN CONTENT (NON-X)",
+                    value: "\(viewModel.webMinContentChars)",
+                    binding: Binding(
+                        get: { Double(viewModel.webMinContentChars) },
+                        set: { viewModel.webMinContentChars = Int($0) }
+                    ),
+                    range: 0...1000,
+                    step: 50
+                )
             }
             .hudCard()
         }
