@@ -152,8 +152,8 @@ async function recordRecentEntry(entry, status) {
       domain: entry.domain,
       visitedAt: entry.visitedAt,
       dwellSeconds: entry.dwellSeconds,
-      contentPreview: contentPreview(entry.content),
-      contentLength: (entry.content || "").length,
+      contentPreview: entry.contentPreview || contentPreview(entry.content),
+      contentLength: entry.contentLength ?? (entry.content || "").length,
       engagement: entry.engagement || null,
       status
     },
@@ -422,6 +422,16 @@ async function finalizeVisit(tabId, reason) {
     return null;
   }
 
+  // Article check (opt-in via rule.articleOnly)
+  const rule = ruleResult.rule;
+  if (rule?.articleOnly && contentState?.contentMetrics) {
+    const m = contentState.contentMetrics;
+    if (m.linkDensity > 0.4 || (m.paragraphCount < 3 && !m.hasArticleTag)) {
+      await recordRecentEntry(logEntry, "not article");
+      return null;
+    }
+  }
+
   const entry = buildEntry(tabState, contentState, dwellSeconds, engagement);
   if (!entry) {
     return null;
@@ -476,6 +486,7 @@ async function cacheContent(tabId, payload) {
     url: payload.url,
     title: payload.title,
     content: payload.content,
+    contentMetrics: payload.contentMetrics || null,
     meta: payload.meta || {},
     capturedAt: Date.now()
   };

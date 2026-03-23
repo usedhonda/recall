@@ -58,6 +58,31 @@ function extractMeta(name, attribute = "name") {
   return element?.content?.trim() || "";
 }
 
+function computeContentMetrics(rootClone) {
+  const allText = normalizeText(rootClone.innerText || "");
+  const allLinks = rootClone.querySelectorAll("a");
+  let linkTextLen = 0;
+  for (const a of allLinks) linkTextLen += (a.innerText || "").length;
+  const linkDensity = allText.length > 0 ? linkTextLen / allText.length : 0;
+
+  const paragraphs = rootClone.querySelectorAll("p");
+  const paraLengths = [];
+  for (const p of paragraphs) {
+    const len = normalizeText(p.innerText || "").length;
+    if (len > 10) paraLengths.push(len);
+  }
+  const avgParagraphLength = paraLengths.length > 0
+    ? Math.round(paraLengths.reduce((a, b) => a + b, 0) / paraLengths.length)
+    : 0;
+
+  return {
+    paragraphCount: paraLengths.length,
+    avgParagraphLength,
+    linkDensity: Math.round(linkDensity * 100) / 100,
+    hasArticleTag: !!document.querySelector("article")
+  };
+}
+
 function extractPagePayload() {
   const root = pickRootNode();
   const clone = root.cloneNode(true);
@@ -69,6 +94,7 @@ function extractPagePayload() {
     url: window.location.href,
     title: normalizeText(document.title),
     content,
+    contentMetrics: computeContentMetrics(clone),
     meta: {
       description: extractMeta("description"),
       ogTitle: extractMeta("og:title", "property"),
