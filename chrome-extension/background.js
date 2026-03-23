@@ -419,7 +419,7 @@ async function finalizeVisit(tabId, reason) {
   // Dedup: don't send same URL twice within 30 minutes
   const lastSentKey = `lastSent:${entry.url}`;
   const lastSentAt = sessionState[lastSentKey];
-  if (lastSentAt && (Date.now() - lastSentAt) < 30 * 60 * 1000) {
+  if (lastSentAt && (Date.now() - lastSentAt) < 6 * 60 * 60 * 1000) {
     await recordRecentEntry(entry, "dedup");
     return null;
   }
