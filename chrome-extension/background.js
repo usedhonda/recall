@@ -98,11 +98,22 @@ function sanitizeSettings(raw = {}) {
 }
 
 function sanitizeSessionState(raw = {}) {
-  return {
+  const state = {
     activeTabId: Number.isInteger(raw.activeTabId) ? raw.activeTabId : null,
     tabStates: raw.tabStates && typeof raw.tabStates === "object" ? raw.tabStates : {},
     contentCache: raw.contentCache && typeof raw.contentCache === "object" ? raw.contentCache : {}
   };
+  // Restore lastSent:* dedup keys, pruning expired ones (>6h)
+  const now = Date.now();
+  const DEDUP_TTL = 6 * 60 * 60 * 1000;
+  for (const key of Object.keys(raw)) {
+    if (key.startsWith("lastSent:") && typeof raw[key] === "number") {
+      if (now - raw[key] < DEDUP_TTL) {
+        state[key] = raw[key];
+      }
+    }
+  }
+  return state;
 }
 
 async function ensureHydrated() {
@@ -140,10 +151,16 @@ function contentPreview(content, limit = 200) {
   return `${normalized.slice(0, limit)}...`;
 }
 
-async function recordRecentEntry(entry, status) {
+// Single-writer chain for Activity log — prevents read-modify-write races
+let recentEntriesChain = Promise.resolve();
+
+function recordRecentEntry(entry, status) {
+  recentEntriesChain = recentEntriesChain.then(() => _writeRecentEntry(entry, status), () => _writeRecentEntry(entry, status));
+  return recentEntriesChain;
+}
+
+async function _writeRecentEntry(entry, status) {
   const recentEntries = await getRecentEntries();
-  let parsedUrl;
-  try { parsedUrl = new URL(entry.url || "").href; } catch { parsedUrl = null; }
   const nextEntries = [
     {
       id: entry.id,
@@ -327,7 +344,8 @@ async function trySendOrQueue(entry, settings) {
   try {
     await sendEntries(settings.serverURL, settings.token, [entry]);
     return "sent";
-  } catch {
+  } catch (err) {
+    console.warn(`[recall] send failed, queued: ${err instanceof Error ? err.message : String(err)}`);
     await enqueue(entry);
     return "queued";
   }
@@ -350,6 +368,8 @@ async function flushQueue() {
     try {
       await sendEntries(settings.serverURL, settings.token, [pendingEntries[index]]);
       sent += 1;
+      // Update Activity status from "queued" to "sent"
+      await recordRecentEntry(pendingEntries[index], "sent");
     } catch {
       for (const entry of pendingEntries.slice(index)) {
         await enqueue(entry);
@@ -437,7 +457,7 @@ async function finalizeVisit(tabId, reason) {
     return null;
   }
 
-  // Dedup: don't send same URL twice within 30 minutes
+  // Dedup: don't send same URL twice within 6 hours
   const lastSentKey = `lastSent:${entry.url}`;
   const lastSentAt = sessionState[lastSentKey];
   if (lastSentAt && (Date.now() - lastSentAt) < 6 * 60 * 60 * 1000) {
@@ -448,12 +468,17 @@ async function finalizeVisit(tabId, reason) {
   const status = await trySendOrQueue(entry, settings);
   sessionState[lastSentKey] = Date.now();
   markSessionDirty();
+
+  // Single write with final status — no intermediate "sending" state
+  // that gets stuck if Service Worker dies mid-update
   await recordRecentEntry(entry, status);
 
   // Notify content script with ticker
-  try {
-    await chrome.tabs.sendMessage(tabId, { type: "show-ticker", message: "Sent to OpenClaw" });
-  } catch { /* tab may be closed */ }
+  if (status === "sent") {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: "show-ticker", message: "Sent to recall" });
+    } catch { /* tab may be closed */ }
+  }
 
   return entry;
 }
@@ -716,7 +741,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
-    void flushQueue();
+    void flushQueue().then((result) => {
+      if (result.attempted > 0) {
+        console.log(`[recall] flushQueue: attempted=${result.attempted} sent=${result.sent} requeued=${result.requeued}`);
+      }
+    });
   }
 });
 
@@ -730,6 +759,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void serializeState(() => handleEngagementMessage(message, sender.tab.id))
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  // Content script asks for site-specific config (e.g. trackTweets)
+  if (message?.type === "content:get-site-config" && message.url) {
+    void (async () => {
+      try {
+        const settings = await getSettings();
+        const result = evaluateRules(message.url, settings.rules || [], settings);
+        sendResponse({ ok: true, trackTweets: !!result.trackTweets, blocked: !!result.blocked });
+      } catch {
+        sendResponse({ ok: false });
+      }
+    })();
     return true;
   }
 

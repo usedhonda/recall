@@ -96,7 +96,19 @@ function applySettings(settings) {
   renderRules();
 }
 
-async function saveSettings(triggerButton) {
+function showRulesToast(message) {
+  const container = document.getElementById("tab-rules");
+  if (!container) return;
+  const existing = container.querySelector(".rules-toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.className = "rules-toast";
+  toast.textContent = message;
+  container.prepend(toast);
+  toast.addEventListener("animationend", () => toast.remove());
+}
+
+async function saveSettings(triggerButton, { showToast = false } = {}) {
   const settings = readForm();
   const response = await sendMessage({ type: "popup:save-settings", settings });
   if (!response?.ok) {
@@ -105,6 +117,7 @@ async function saveSettings(triggerButton) {
   }
   applySettings(response.settings);
   await refreshState();
+  if (showToast) showRulesToast("Saved");
   if (triggerButton) {
     const orig = triggerButton.textContent;
     triggerButton.textContent = "Saved!";
@@ -226,20 +239,20 @@ function renderRules() {
     const dwellVal = rule.minDwell != null ? rule.minDwell : "";
     const contentVal = rule.minContent != null ? rule.minContent : "";
     const articleOnly = rule.articleOnly ? "checked" : "";
+    const trackTweets = rule.trackTweets ? "checked" : "";
 
-    return `<div class="rule-card" data-index="${i}">
+    return `<div class="rule-card" data-index="${i}" draggable="false">
       <div class="rule-card-row1">
-        <span class="rule-handle">☰</span>
+        <span class="rule-handle" title="Drag to reorder">☰</span>
         <input class="rule-pattern-input" type="text" value="${escapeHtml(rule.pattern)}" spellcheck="false">
         <button class="rule-action-chip ${chipClass}" type="button">${chipLabel}</button>
-        <button class="rule-move-btn" data-dir="up" title="Up" ${i === 0 ? "disabled" : ""}>▲</button>
-        <button class="rule-move-btn" data-dir="down" title="Down" ${i === currentRules.length - 1 ? "disabled" : ""}>▼</button>
         <button class="rule-delete-btn" title="Delete">✕</button>
       </div>
       <div class="rule-card-row2 ${isBlock ? "hidden" : ""}">
+        <label class="rule-option-field"><input type="checkbox" class="rule-article" ${articleOnly}> article only</label>
+        <label class="rule-option-field"><input type="checkbox" class="rule-tweets" ${trackTweets}> track posts</label>
         <span class="rule-option-field">dwell <input type="number" class="rule-dwell" min="0" max="600" value="${dwellVal}" placeholder="—">s</span>
         <span class="rule-option-field">chars <input type="number" class="rule-content" min="0" max="5000" value="${contentVal}" placeholder="—"></span>
-        <label class="rule-option-field"><input type="checkbox" class="rule-article" ${articleOnly}> article only</label>
       </div>
     </div>`;
   }).join("");
@@ -247,7 +260,70 @@ function renderRules() {
   bindRuleEvents();
 }
 
+let dragSrcIndex = null;
+
 function bindRuleEvents() {
+  // Drag & drop via handle — hover lights up whole card
+  for (const handle of el.rulesList.querySelectorAll(".rule-handle")) {
+    handle.addEventListener("mouseenter", () => {
+      handle.closest(".rule-card").classList.add("rule-grab-ready");
+    });
+    handle.addEventListener("mouseleave", () => {
+      const card = handle.closest(".rule-card");
+      if (!card.draggable) card.classList.remove("rule-grab-ready");
+    });
+    handle.addEventListener("mousedown", () => {
+      const card = handle.closest(".rule-card");
+      card.draggable = true;
+    });
+    handle.addEventListener("mouseup", () => {
+      const card = handle.closest(".rule-card");
+      card.draggable = false;
+    });
+  }
+
+  for (const card of el.rulesList.querySelectorAll(".rule-card")) {
+    card.addEventListener("dragstart", (e) => {
+      dragSrcIndex = Number(card.dataset.index);
+      card.classList.add("rule-dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+
+    card.addEventListener("dragend", () => {
+      card.classList.remove("rule-dragging", "rule-grab-ready");
+      card.draggable = false;
+      dragSrcIndex = null;
+      for (const c of el.rulesList.querySelectorAll(".rule-card")) {
+        c.classList.remove("rule-drag-over");
+      }
+    });
+
+    card.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const overIdx = Number(card.dataset.index);
+      for (const c of el.rulesList.querySelectorAll(".rule-card")) {
+        c.classList.remove("rule-drag-over");
+      }
+      if (overIdx !== dragSrcIndex) card.classList.add("rule-drag-over");
+    });
+
+    card.addEventListener("dragleave", () => {
+      card.classList.remove("rule-drag-over");
+    });
+
+    card.addEventListener("drop", (e) => {
+      e.preventDefault();
+      card.classList.remove("rule-drag-over");
+      const dropIdx = Number(card.dataset.index);
+      if (dragSrcIndex == null || dragSrcIndex === dropIdx) return;
+      const [moved] = currentRules.splice(dragSrcIndex, 1);
+      currentRules.splice(dropIdx, 0, moved);
+      renderRules();
+      void saveSettings(null, { showToast: true });
+    });
+  }
+
   // Action chip toggle
   for (const chip of el.rulesList.querySelectorAll(".rule-action-chip")) {
     chip.addEventListener("click", () => {
@@ -259,23 +335,10 @@ function bindRuleEvents() {
         delete rule.minDwell;
         delete rule.minContent;
         delete rule.articleOnly;
+        delete rule.trackTweets;
       }
       renderRules();
-      void saveSettings();
-    });
-  }
-
-  // Move
-  for (const btn of el.rulesList.querySelectorAll(".rule-move-btn")) {
-    btn.addEventListener("click", () => {
-      const card = btn.closest(".rule-card");
-      const idx = Number(card.dataset.index);
-      const dir = btn.dataset.dir;
-      const swap = dir === "up" ? idx - 1 : idx + 1;
-      if (swap < 0 || swap >= currentRules.length) return;
-      [currentRules[idx], currentRules[swap]] = [currentRules[swap], currentRules[idx]];
-      renderRules();
-      void saveSettings();
+      void saveSettings(null, { showToast: true });
     });
   }
 
@@ -286,7 +349,7 @@ function bindRuleEvents() {
       const idx = Number(card.dataset.index);
       currentRules.splice(idx, 1);
       renderRules();
-      void saveSettings();
+      void saveSettings(null, { showToast: true });
     });
   }
 
@@ -299,7 +362,7 @@ function bindRuleEvents() {
     });
   }
 
-  for (const cb of el.rulesList.querySelectorAll(".rule-article")) {
+  for (const cb of el.rulesList.querySelectorAll(".rule-article, .rule-tweets")) {
     cb.addEventListener("change", () => {
       const card = cb.closest(".rule-card");
       const idx = Number(card.dataset.index);
@@ -317,15 +380,18 @@ function syncRuleFromCard(card, idx) {
     const dwell = card.querySelector(".rule-dwell").value;
     const content = card.querySelector(".rule-content").value;
     const articleOnly = card.querySelector(".rule-article").checked;
+    const trackTweets = card.querySelector(".rule-tweets").checked;
     rule.minDwell = dwell !== "" ? Number(dwell) : undefined;
     rule.minContent = content !== "" ? Number(content) : undefined;
     rule.articleOnly = articleOnly || undefined;
+    rule.trackTweets = trackTweets || undefined;
     // Clean undefined
     if (rule.minDwell == null) delete rule.minDwell;
     if (rule.minContent == null) delete rule.minContent;
     if (!rule.articleOnly) delete rule.articleOnly;
+    if (!rule.trackTweets) delete rule.trackTweets;
   }
-  void saveSettings();
+  void saveSettings(null, { showToast: true });
 }
 
 // --- Drawer ---
@@ -424,11 +490,19 @@ el.addRuleButton.addEventListener("click", () => {
   currentRules.push({ pattern, action: "block" });
   el.rulePatternInput.value = "";
   renderRules();
-  void saveSettings();
+  void saveSettings(null, { showToast: true });
 });
 window.addEventListener("unload", stopQrScan);
 
 // --- Init ---
+
+// Live-update Activity when background writes new entries
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes["webHistoryRecentEntries"]) {
+    const entries = changes["webHistoryRecentEntries"].newValue || [];
+    renderActivity(entries);
+  }
+});
 
 void (async () => {
   await refreshState();

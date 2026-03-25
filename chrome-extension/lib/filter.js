@@ -5,6 +5,8 @@ export const DEFAULT_RULES = [
   { pattern: "x.com/home", action: "block" },
   { pattern: "x.com/search", action: "block" },
   { pattern: "x.com/i/*", action: "block" },
+  { pattern: "x.com", action: "allow", trackTweets: true },
+  { pattern: "twitter.com", action: "allow", trackTweets: true },
   { pattern: "www.youtube.com/shorts/*", action: "block" },
   { pattern: "mail.google.com", action: "block" },
   { pattern: "outlook.live.com", action: "block" },
@@ -34,8 +36,8 @@ function wildcardToRegExp(pattern) {
 }
 
 function matchPattern(pattern, target) {
-  const p = pattern.trim().toLowerCase();
-  const t = target.toLowerCase();
+  const p = pattern.trim().toLowerCase().replace(/\/+$/, "");
+  const t = target.toLowerCase().replace(/\/+$/, "");
   if (p.includes("*")) {
     return wildcardToRegExp(p).test(t);
   }
@@ -70,6 +72,7 @@ export function evaluateRules(url, rules, globalSettings) {
         blocked: false,
         minDwell: rule.minDwell ?? globalSettings.minDwellSeconds,
         minContent: rule.minContent ?? globalSettings.minContentChars,
+        trackTweets: !!rule.trackTweets,
         rule
       };
     }

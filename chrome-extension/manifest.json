@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "recall Web History",
   "version": "0.2.0",
-  "description": "Capture active browsing history and sync it to OpenClaw.",
+  "description": "Capture active browsing history and sync it to recall.",
   "permissions": ["tabs", "activeTab", "storage", "alarms", "contextMenus", "idle"],
   "host_permissions": ["<all_urls>"],
   "background": {

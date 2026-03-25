@@ -35,11 +35,78 @@ const REMOVE_SELECTORS = [
   "canvas",
   "video",
   "audio",
-  "iframe"
+  "iframe",
+  // Anti-injection: remove hidden elements that could carry invisible text
+  '[aria-hidden="true"]',
+  "[hidden]",
+  '[style*="display:none"]',
+  '[style*="display: none"]',
+  '[style*="visibility:hidden"]',
+  '[style*="visibility: hidden"]',
+  '[style*="opacity:0"]',
+  '[style*="opacity: 0"]',
+  '[style*="font-size:0"]',
+  '[style*="font-size: 0"]',
+  '[style*="height:0"]',
+  '[style*="height: 0"]',
+  '[style*="width:0"]',
+  '[style*="width: 0"]',
+  '[style*="overflow:hidden"][style*="height:1px"]'
 ].join(",");
 
+// Zero-width and invisible characters used to smuggle injection text
+const INVISIBLE_CHARS = /[\u200B\u200C\u200D\u200E\u200F\u2060\u2061\u2062\u2063\u2064\uFEFF\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u2000-\u200A\u202A-\u202E\u2066-\u2069\uFFA0\uFFF9-\uFFFB]/g;
+
+// Injection patterns targeting LLM prompt manipulation
+// Includes real-world patterns from incident 2026-03-24
+const INJECTION_PATTERNS = [
+  // Classic prompt injection markers
+  /\[system\]/gi,
+  /\[instruction\]/gi,
+  /\[INST\]/gi,
+  /<<SYS>>/gi,
+  /<\/SYS>/gi,
+  /ignore\s+(all\s+)?previous\s+instructions?/gi,
+  /ignore\s+(all\s+)?above\s+instructions?/gi,
+  /disregard\s+(all\s+)?previous/gi,
+  /you\s+are\s+now\s+/gi,
+  /act\s+as\s+(a\s+|an\s+)?/gi,
+  /new\s+instructions?:/gi,
+  /system\s*prompt:/gi,
+  /\bdo\s+not\s+follow\s+(any\s+)?previous/gi,
+  /override\s+(all\s+)?instructions/gi,
+  /forget\s+(all\s+)?(previous\s+)?instructions/gi,
+  // Tool call spoofing (real incident pattern)
+  /assistant\s+to=functions/gi,
+  /to=functions\.exec/gi,
+  /\bcode=json\b/gi,
+  // Command injection payloads
+  /\{"command"\s*:/gi,
+  /\{"command"\s*:\s*"(python3?|bash|sh|node|ruby|perl)/gi,
+  // Internal protocol keyword spoofing
+  /\btoolCallId\b/g,
+  /\btextSignature\b/g,
+  /\bthinkingSignature\b/g,
+  /\bpartialJson\b/g,
+  // Script-mixing attack: non-Latin/non-CJK scripts used to confuse LLM parsing
+  // Kannada, Armenian, Georgian, Ethiopic, Tibetan mixed with Latin
+  /[\u0C80-\u0CFF]{3,}.*(?:assistant|function|exec|command)/gi,
+  /[\u0530-\u058F]{3,}.*(?:assistant|function|exec|command)/gi,
+  /[\u10A0-\u10FF]{3,}.*(?:assistant|function|exec|command)/gi,
+];
+
+function stripInjectionPatterns(text) {
+  let result = text;
+  for (const pattern of INJECTION_PATTERNS) {
+    result = result.replace(pattern, "[FILTERED]");
+  }
+  return result;
+}
+
 function normalizeText(text) {
-  return (text || "").replace(/\s+/g, " ").trim();
+  let normalized = (text || "").replace(INVISIBLE_CHARS, "").replace(/\s+/g, " ").trim();
+  normalized = stripInjectionPatterns(normalized);
+  return normalized;
 }
 
 function pickRootNode() {
@@ -83,18 +150,36 @@ function computeContentMetrics(rootClone) {
   };
 }
 
+function detectInjectionAttempt(rawText) {
+  for (const pattern of INJECTION_PATTERNS) {
+    pattern.lastIndex = 0;
+    if (pattern.test(rawText)) return true;
+  }
+  // Check for high density of invisible characters (smuggling indicator)
+  const invisibleCount = (rawText.match(INVISIBLE_CHARS) || []).length;
+  if (invisibleCount > 20) return true;
+  return false;
+}
+
 function extractPagePayload() {
   const root = pickRootNode();
   const clone = root.cloneNode(true);
   clone.querySelectorAll(REMOVE_SELECTORS).forEach((node) => node.remove());
 
-  const content = normalizeText(clone.innerText || root.innerText || document.body?.innerText || "").slice(0, MAX_CONTENT_LENGTH);
+  const rawText = clone.innerText || root.innerText || document.body?.innerText || "";
+  const injectionDetected = detectInjectionAttempt(rawText);
+  const content = normalizeText(rawText).slice(0, MAX_CONTENT_LENGTH);
+  const metrics = computeContentMetrics(clone);
+  if (injectionDetected) {
+    metrics.injectionDetected = true;
+  }
+
   return {
     ok: true,
     url: window.location.href,
     title: normalizeText(document.title),
     content,
-    contentMetrics: computeContentMetrics(clone),
+    contentMetrics: metrics,
     meta: {
       description: extractMeta("description"),
       ogTitle: extractMeta("og:title", "property"),
@@ -125,7 +210,7 @@ try {
     }
 
     if (message?.type === "show-ticker") {
-      showTicker(message.message || "Sent to OpenClaw");
+      showTicker(message.message || "Sent to recall");
       return false;
     }
 
@@ -232,12 +317,9 @@ cleanupCallbacks.push(() => {
   if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = null; }
 });
 
-// --- X (twitter.com / x.com) individual tweet tracking ---
+// --- Post/tweet tracking (opt-in via rule trackTweets) ---
 
-const X_DOMAINS = ["x.com", "twitter.com"];
-const isXDomain = X_DOMAINS.includes(location.hostname);
-
-if (isXDomain) {
+function initTweetTracking() {
   const TWEET_SELECTOR = 'article[data-testid="tweet"]';
   const TWEET_DWELL_MS = 2000;
 
@@ -327,4 +409,18 @@ if (isXDomain) {
     mutationObserver.disconnect();
     clearInterval(tweetInterval);
   });
+}
+
+// Ask background if trackTweets is enabled for this domain
+try {
+  chrome.runtime.sendMessage(
+    { type: "content:get-site-config", url: location.href },
+    (response) => {
+      if (response?.ok && response.trackTweets) {
+        initTweetTracking();
+      }
+    }
+  );
+} catch {
+  // extension context invalidated
 }

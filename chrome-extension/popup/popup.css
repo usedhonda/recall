@@ -182,15 +182,17 @@ button, input, textarea, select { font: inherit; }
 }
 
 .log-page-title {
-  max-width: 300px;
+  max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
 }
 
 .log-page-domain {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
+  margin-top: 1px;
 }
 
 .log-detail td { padding: 0 12px 6px; }
@@ -230,7 +232,29 @@ button, input, textarea, select { font: inherit; }
 }
 
 /* Rules tab */
-#tab-rules { padding: 8px 12px; }
+#tab-rules { padding: 8px 12px; position: relative; }
+
+.rules-toast {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  text-align: center;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(103, 245, 199, 0.1);
+  border-bottom: 1px solid rgba(103, 245, 199, 0.2);
+  z-index: 10;
+  animation: toast-fade 1.6s ease forwards;
+}
+
+@keyframes toast-fade {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
 
 .rules-hint {
   margin: 0 0 8px;
@@ -253,18 +277,44 @@ button, input, textarea, select { font: inherit; }
 }
 
 .rule-handle {
-  color: var(--muted);
+  color: rgba(145, 170, 183, 0.3);
   cursor: grab;
-  font-size: 12px;
-  padding: 0 2px;
+  font-size: 14px;
+  padding: 2px 4px;
   user-select: none;
+  transition: color 0.15s;
+}
+
+.rule-card:hover .rule-handle {
+  color: var(--accent);
+}
+
+.rule-card.rule-grab-ready {
+  border-color: var(--accent);
+  background: rgba(103, 245, 199, 0.06);
+  box-shadow: 0 0 12px rgba(103, 245, 199, 0.12);
+  cursor: grab;
+}
+
+.rule-card.rule-grab-ready .rule-handle {
+  color: var(--accent);
+}
+
+.rule-card.rule-dragging {
+  opacity: 0.3;
+  border-color: var(--accent);
+}
+
+.rule-card.rule-drag-over {
+  border-top: 2px solid var(--accent);
+  margin-top: -1px;
 }
 
 .rule-pattern-input {
   flex: 1;
   min-width: 0;
-  background: none;
-  border: 1px solid transparent;
+  background: rgba(4, 12, 18, 0.4);
+  border: 1px solid var(--panel-border);
   border-radius: 6px;
   color: var(--text);
   font-family: monospace;
@@ -273,8 +323,8 @@ button, input, textarea, select { font: inherit; }
 }
 
 .rule-pattern-input:focus {
-  border-color: var(--panel-border);
-  background: rgba(4, 12, 18, 0.5);
+  border-color: var(--accent);
+  background: rgba(4, 12, 18, 0.6);
   outline: none;
 }
 
@@ -292,7 +342,7 @@ button, input, textarea, select { font: inherit; }
 .rule-action-chip.block { background: var(--danger-dim); color: var(--danger); }
 .rule-action-chip.allow { background: var(--accent-dim); color: var(--accent); }
 
-.rule-move-btn, .rule-delete-btn {
+.rule-delete-btn {
   background: none;
   border: 0;
   color: var(--muted);
@@ -302,9 +352,7 @@ button, input, textarea, select { font: inherit; }
   border-radius: 4px;
 }
 
-.rule-move-btn:hover { color: var(--text); background: rgba(145, 170, 183, 0.1); }
 .rule-delete-btn:hover { color: var(--danger); background: var(--danger-dim); }
-.rule-move-btn:disabled { opacity: 0.2; cursor: default; }
 
 .rule-card-row2 {
   display: flex;
