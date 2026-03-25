@@ -144,11 +144,10 @@ final class UploadManager {
                 continue
             }
 
-            // Skip low-confidence VAD chunks — STT would produce nothing useful
-            let minProb = AppSettings.shared.vadUploadMinProb
-            if chunk.vadAvgProb > 0 && chunk.vadAvgProb < minProb {
-                Self.logger.info("Skipping low-VAD chunk: \(chunk.fileName) (vadAvgProb=\(chunk.vadAvgProb, format: .fixed(precision: 2)) < \(minProb, format: .fixed(precision: 2)))")
-                activity.log(.upload, "Skipped low-VAD chunk \(chunk.fileName) (VAD=\(String(format: "%.2f", chunk.vadAvgProb)))")
+            // Skip noise-only chunks: no sustained voice detected
+            if chunk.maxContinuousVoiceMs < 200 && chunk.voiceFrameRatio < 0.05 {
+                Self.logger.info("Skipping noise chunk: \(chunk.fileName) (mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(chunk.voiceFrameRatio, format: .fixed(precision: 2)))")
+                activity.log(.upload, "Skipped noise chunk \(chunk.fileName) (mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(String(format: "%.2f", chunk.voiceFrameRatio)))")
                 chunk.uploadStatus = .uploaded
                 chunk.uploadedAt = Date()
                 try? modelContext.save()
@@ -209,6 +208,11 @@ final class UploadManager {
         if chunk.avgRMS > 0 { metadata["avg_rms"] = String(format: "%.6f", chunk.avgRMS) }
         if chunk.vadAvgProb > 0 { metadata["vad_avg_prob"] = String(format: "%.4f", chunk.vadAvgProb) }
         if chunk.noiseFloorRMS > 0 { metadata["noise_floor_rms"] = String(format: "%.6f", chunk.noiseFloorRMS) }
+
+        // Server optimization hints
+        metadata["is_speech"] = "true" // iOS VAD confirmed speech — server can skip VAD
+        metadata["chunk_start_utc"] = formatter.string(from: chunk.startedAt) // absolute timestamp for offset
+        metadata["language"] = "ja" // language hint — server can skip detection
 
         // Location metadata (attach current position to audio chunk)
         if let location = TelemetryService.shared.locationManager.currentLocation {

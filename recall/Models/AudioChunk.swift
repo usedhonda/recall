@@ -20,6 +20,10 @@ final class AudioChunk {
     var vadAvgProb: Float
     var noiseFloorRMS: Float
 
+    // Voice island metrics for upload filtering
+    var maxContinuousVoiceMs: Int = 0
+    var voiceFrameRatio: Float = 0
+
     var uploadStatus: UploadStatus {
         get { UploadStatus(rawValue: uploadStatusRaw) ?? .pending }
         set { uploadStatusRaw = newValue.rawValue }
@@ -33,7 +37,9 @@ final class AudioChunk {
         fileSize: Int64 = 0,
         avgRMS: Float = 0,
         vadAvgProb: Float = 0,
-        noiseFloorRMS: Float = 0
+        noiseFloorRMS: Float = 0,
+        maxContinuousVoiceMs: Int = 0,
+        voiceFrameRatio: Float = 0
     ) {
         self.id = UUID()
         self.filePath = filePath
@@ -47,6 +53,8 @@ final class AudioChunk {
         self.avgRMS = avgRMS
         self.vadAvgProb = vadAvgProb
         self.noiseFloorRMS = noiseFloorRMS
+        self.maxContinuousVoiceMs = maxContinuousVoiceMs
+        self.voiceFrameRatio = voiceFrameRatio
     }
 
     enum UploadStatus: String, Codable {

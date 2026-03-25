@@ -16,7 +16,7 @@ final class AppSettings {
     }
 
     var silenceTimeout: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 5.0 }
+        get { UserDefaults.standard.double(forKey: "silenceTimeout").nonZero ?? 1.5 }
         set { UserDefaults.standard.set(newValue, forKey: "silenceTimeout") }
     }
 
@@ -31,7 +31,7 @@ final class AppSettings {
     }
 
     var chunkDurationSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 60.0 }
+        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 30.0 }
         set { UserDefaults.standard.set(newValue, forKey: "chunkDurationSeconds") }
     }
 
@@ -41,7 +41,7 @@ final class AppSettings {
     }
 
     var vadUploadMinProb: Float {
-        get { Float(UserDefaults.standard.double(forKey: "vadUploadMinProb")).nonZero ?? 0.1 }
+        get { Float(UserDefaults.standard.double(forKey: "vadUploadMinProb")).nonZero ?? 0.05 }
         set { UserDefaults.standard.set(Double(newValue), forKey: "vadUploadMinProb") }
     }
 

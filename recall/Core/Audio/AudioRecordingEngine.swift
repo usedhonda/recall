@@ -74,6 +74,15 @@ final class AudioRecordingEngine {
     private var chunkVADSum: Float = 0
     private var chunkVADCount: Int = 0
 
+    // MARK: - Voice Island Metrics (for upload filtering)
+
+    private var voiceIslandCurrentRun: Int = 0
+    private var voiceIslandMaxRun: Int = 0
+    private var voiceIslandFrameCount: Int = 0
+    private var voiceIslandTotalFrames: Int = 0
+    private var voiceIslandGapCount: Int = 0 // consecutive non-voice frames (for gap fill)
+    private let voiceIslandGapFillMax: Int = 3 // fill gaps up to 300ms
+
     // MARK: - Zombie Engine Detection
 
     private var zombieSilenceCount: Int = 0
@@ -414,6 +423,26 @@ final class AudioRecordingEngine {
             if state == .recording {
                 chunkVADSum += result.probability
                 chunkVADCount += 1
+
+                // Voice island tracking (binary: prob >= 0.5 = voice)
+                voiceIslandTotalFrames += 1
+                let isVoiceFrame = result.probability >= 0.5
+                if isVoiceFrame {
+                    voiceIslandCurrentRun += 1
+                    voiceIslandFrameCount += 1
+                    voiceIslandGapCount = 0
+                    voiceIslandMaxRun = max(voiceIslandMaxRun, voiceIslandCurrentRun)
+                } else {
+                    voiceIslandGapCount += 1
+                    if voiceIslandCurrentRun > 0 && voiceIslandGapCount <= voiceIslandGapFillMax {
+                        // Gap fill: treat short silence as continuation
+                        voiceIslandCurrentRun += 1
+                        voiceIslandMaxRun = max(voiceIslandMaxRun, voiceIslandCurrentRun)
+                    } else {
+                        voiceIslandCurrentRun = 0
+                        voiceIslandGapCount = 0
+                    }
+                }
             }
 
             let vadPass = result.probability >= settings.vadThreshold || result.event == .speechStart
@@ -629,13 +658,22 @@ final class AudioRecordingEngine {
 
         let avgRMSVal = chunkRMSCount > 0 ? chunkRMSSum / Float(chunkRMSCount) : 0
         let vadAvgVal = chunkVADCount > 0 ? chunkVADSum / Float(chunkVADCount) : 0
+        let maxVoiceMs = voiceIslandMaxRun * 100 // each frame is 100ms
+        let vfr = voiceIslandTotalFrames > 0 ? Float(voiceIslandFrameCount) / Float(voiceIslandTotalFrames) : 0
 
-        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS)
+        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS, maxContinuousVoiceMs: maxVoiceMs, voiceFrameRatio: vfr)
         chunksRecorded += 1
+
+        // Reset voice island state
+        voiceIslandCurrentRun = 0
+        voiceIslandMaxRun = 0
+        voiceIslandFrameCount = 0
+        voiceIslandTotalFrames = 0
+        voiceIslandGapCount = 0
 
         let sizeKB = result.fileSize / 1024
         logger.info("Chunk finalized: \(url.lastPathComponent), duration: \(result.duration, format: .fixed(precision: 1))s")
-        activity.log(.chunk, "Finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB rms=\(String(format: "%.4f", avgRMSVal)) vad=\(String(format: "%.2f", vadAvgVal))")
+        activity.log(.chunk, "Finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB rms=\(String(format: "%.4f", avgRMSVal)) vad=\(String(format: "%.2f", vadAvgVal)) mcv=\(maxVoiceMs)ms vfr=\(String(format: "%.2f", vfr))")
     }
 
     /// Force-finalize the pending buffer as a standalone chunk (short but better than losing data).
@@ -714,7 +752,7 @@ final class AudioRecordingEngine {
 
     // MARK: - SwiftData Persistence
 
-    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64, avgRMS: Float = 0, vadAvgProb: Float = 0, noiseFloorRMS: Float = 0) async {
+    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64, avgRMS: Float = 0, vadAvgProb: Float = 0, noiseFloorRMS: Float = 0, maxContinuousVoiceMs: Int = 0, voiceFrameRatio: Float = 0) async {
         guard let modelContainer else {
             logger.error("ModelContainer not set, cannot save chunk record")
             return
@@ -729,7 +767,9 @@ final class AudioRecordingEngine {
             fileSize: fileSize,
             avgRMS: avgRMS,
             vadAvgProb: vadAvgProb,
-            noiseFloorRMS: noiseFloorRMS
+            noiseFloorRMS: noiseFloorRMS,
+            maxContinuousVoiceMs: maxContinuousVoiceMs,
+            voiceFrameRatio: voiceFrameRatio
         )
         context.insert(chunk)
 
