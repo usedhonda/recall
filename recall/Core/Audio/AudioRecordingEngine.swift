@@ -80,6 +80,11 @@ final class AudioRecordingEngine {
     private var engineStartTime: Date = .distantPast
     private var userStopped: Bool = false
 
+    // MARK: - Consecutive Voice Frame Guard
+
+    private var consecutiveVoiceFrames: Int = 0
+    private let requiredConsecutiveFrames: Int = 3 // 300ms at 100ms intervals
+
     // MARK: - Adaptive Noise Floor
 
     private var noiseFloorRMS: Float = 0.002
@@ -394,6 +399,7 @@ final class AudioRecordingEngine {
         }
 
         if rms < effectiveThreshold {
+            consecutiveVoiceFrames = 0
             await handleSilence()
             return
         }
@@ -410,9 +416,21 @@ final class AudioRecordingEngine {
                 chunkVADCount += 1
             }
 
-            if result.probability >= settings.vadThreshold || result.event == .speechStart {
-                await handleVoiceDetected()
+            let vadPass = result.probability >= settings.vadThreshold || result.event == .speechStart
+
+            if vadPass {
+                if state == .listening {
+                    consecutiveVoiceFrames += 1
+                    if consecutiveVoiceFrames >= requiredConsecutiveFrames {
+                        await handleVoiceDetected()
+                    }
+                    // else: keep counting, don't start yet
+                } else {
+                    // Already recording — treat as voice
+                    await handleVoiceDetected()
+                }
             } else {
+                consecutiveVoiceFrames = 0
                 await handleSilence()
             }
         } catch {
@@ -425,6 +443,7 @@ final class AudioRecordingEngine {
 
     private func handleVoiceDetected() async {
         silenceStart = nil
+        consecutiveVoiceFrames = 0
 
         switch state {
         case .listening:

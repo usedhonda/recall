@@ -40,6 +40,11 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "minChunkDurationSeconds") }
     }
 
+    var vadUploadMinProb: Float {
+        get { Float(UserDefaults.standard.double(forKey: "vadUploadMinProb")).nonZero ?? 0.1 }
+        set { UserDefaults.standard.set(Double(newValue), forKey: "vadUploadMinProb") }
+    }
+
     var uploadServerURL: String {
         get { UserDefaults.standard.string(forKey: "uploadServerURL") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "uploadServerURL") }
@@ -97,7 +102,16 @@ final class AppSettings {
     // MARK: - Telemetry Settings
 
     var telemetryServerURL: String {
-        get { UserDefaults.standard.string(forKey: "telemetryServerURL") ?? "" }
+        get {
+            let url = UserDefaults.standard.string(forKey: "telemetryServerURL") ?? ""
+            // Auto-migrate: telemetry endpoint is on Gateway :18789, not ClawGate :8765
+            if url.contains(":8765") {
+                let fixed = url.replacingOccurrences(of: ":8765", with: ":18789")
+                UserDefaults.standard.set(fixed, forKey: "telemetryServerURL")
+                return fixed
+            }
+            return url
+        }
         set { UserDefaults.standard.set(newValue, forKey: "telemetryServerURL") }
     }
 

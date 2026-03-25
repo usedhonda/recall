@@ -136,10 +136,22 @@ final class UploadManager {
             if chunk.duration < 1.0 {
                 Self.logger.info("Skipping short chunk: \(chunk.fileName) (\(chunk.duration, format: .fixed(precision: 1))s < 1.0s)")
                 activity.log(.upload, "Skipped short chunk \(chunk.fileName) (\(String(format: "%.1f", chunk.duration))s)")
-                chunk.uploadStatus = .uploaded // Mark as done to skip permanently
+                chunk.uploadStatus = .uploaded
                 chunk.uploadedAt = Date()
                 try? modelContext.save()
-                // Delete the short file
+                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+                refreshCounts(modelContext: modelContext)
+                continue
+            }
+
+            // Skip low-confidence VAD chunks — STT would produce nothing useful
+            let minProb = AppSettings.shared.vadUploadMinProb
+            if chunk.vadAvgProb > 0 && chunk.vadAvgProb < minProb {
+                Self.logger.info("Skipping low-VAD chunk: \(chunk.fileName) (vadAvgProb=\(chunk.vadAvgProb, format: .fixed(precision: 2)) < \(minProb, format: .fixed(precision: 2)))")
+                activity.log(.upload, "Skipped low-VAD chunk \(chunk.fileName) (VAD=\(String(format: "%.2f", chunk.vadAvgProb)))")
+                chunk.uploadStatus = .uploaded
+                chunk.uploadedAt = Date()
+                try? modelContext.save()
                 try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
                 refreshCounts(modelContext: modelContext)
                 continue
