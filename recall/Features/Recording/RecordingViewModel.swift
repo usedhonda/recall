@@ -21,6 +21,7 @@ final class RecordingViewModel {
     var errorMessage: String?
 
     private let maxStartRetries = 3
+    private var retryTask: Task<Void, Never>?
 
     func start(modelContainer: ModelContainer) async {
         for attempt in 1...maxStartRetries {
@@ -51,6 +52,39 @@ final class RecordingViewModel {
                     try? await Task.sleep(for: .seconds(2))
                 } else {
                     errorMessage = error.localizedDescription
+                    // Keep retrying in background every 10s
+                    scheduleBackgroundRetry(modelContainer: modelContainer)
+                }
+            }
+        }
+    }
+
+    private func scheduleBackgroundRetry(modelContainer: ModelContainer) {
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            var attempt = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                guard let self, !Task.isCancelled else { return }
+                guard self.engine?.state == .idle else { return } // recovered
+                attempt += 1
+                ActivityLogger.shared.log(.state, "Background retry #\(attempt)")
+                self.engine?.stop()
+                self.engine = nil
+                self.engine = AudioRecordingEngine()
+                self.engine?.setModelContainer(modelContainer)
+                do {
+                    try await self.engine?.start()
+                    self.errorMessage = nil
+                    ActivityLogger.shared.log(.state, "Background retry #\(attempt) SUCCESS")
+                    if !UploadManager.shared.isUploading {
+                        let context = ModelContext(modelContainer)
+                        UploadManager.shared.startProcessing(modelContext: context)
+                    }
+                    self.syncSharedState()
+                    return
+                } catch {
+                    ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: \(error.localizedDescription)")
                 }
             }
         }

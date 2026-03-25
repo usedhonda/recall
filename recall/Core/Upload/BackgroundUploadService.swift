@@ -121,7 +121,7 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
 
         // Build multipart body
         var form = MultipartFormData()
-        form.addFile(name: "file", fileName: fileName, mimeType: "audio/mp4", data: fileData)
+        form.addFile(name: "file", fileName: fileName, mimeType: "audio/opus", data: fileData)
         form.addField(name: "metadata", value: metadataString)
 
         var request = URLRequest(url: serverURL)
@@ -166,7 +166,7 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
         }
 
         var form = MultipartFormData()
-        form.addFile(name: "file", fileName: fileName, mimeType: "audio/mp4", data: fileData)
+        form.addFile(name: "file", fileName: fileName, mimeType: "audio/opus", data: fileData)
         form.addField(name: "metadata", value: metadataString)
 
         var request = URLRequest(url: serverURL)

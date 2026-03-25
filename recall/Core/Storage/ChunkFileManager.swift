@@ -16,7 +16,7 @@ actor ChunkFileManager {
     func generateChunkURL(startedAt: Date) -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
-        let name = formatter.string(from: startedAt) + ".m4a"
+        let name = formatter.string(from: startedAt) + ".caf"
         return chunksDirectory.appendingPathComponent(name)
     }
 
