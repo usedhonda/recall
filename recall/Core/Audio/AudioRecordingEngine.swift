@@ -424,9 +424,9 @@ final class AudioRecordingEngine {
                 chunkVADSum += result.probability
                 chunkVADCount += 1
 
-                // Voice island tracking (binary: prob >= 0.5 = voice)
+                // Voice island tracking (binary: prob >= vadThreshold = voice)
                 voiceIslandTotalFrames += 1
-                let isVoiceFrame = result.probability >= 0.5
+                let isVoiceFrame = result.probability >= settings.vadThreshold
                 if isVoiceFrame {
                     voiceIslandCurrentRun += 1
                     voiceIslandFrameCount += 1
