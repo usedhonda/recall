@@ -5,11 +5,51 @@ import { DEFAULT_RULES, evaluateRules, isTrackableUrl, migrateBlocklistToRules }
 const SETTINGS_KEY = "webHistorySettings";
 const RECENT_ENTRIES_KEY = "webHistoryRecentEntries";
 const SESSION_KEY = "webHistorySessionState";
+const DEDUP_KEY = "webHistoryDedupMap";
 const ALARM_NAME = "recall-web-history-sync";
 const MAX_RECENT_ENTRIES = 100;
 const IDLE_THRESHOLD_SECONDS = 60;
 const MAX_ACTIVE_SECONDS = 1800;
 const SESSION_FLUSH_DELAY_MS = 2000;
+const DEDUP_TTL = 6 * 60 * 60 * 1000;
+
+// --- URL normalization for dedup ---
+
+const DEDUP_REMOVE_PARAMS = ["utm_source", "utm_medium", "utm_campaign",
+  "utm_content", "utm_term", "ref", "gclid", "fbclid", "si", "s", "t"];
+
+function normalizeUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    url.hash = "";
+    for (const p of DEDUP_REMOVE_PARAMS) url.searchParams.delete(p);
+    return url.href.replace(/\/+$/, "");
+  } catch {
+    return urlString;
+  }
+}
+
+// --- Dedup via chrome.storage.local (survives Worker restarts) ---
+
+async function isDuplicate(url) {
+  const key = normalizeUrl(url);
+  const stored = await chrome.storage.local.get(DEDUP_KEY);
+  const map = stored[DEDUP_KEY] || {};
+  return !!(map[key] && (Date.now() - map[key]) < DEDUP_TTL);
+}
+
+async function markSent(url) {
+  const key = normalizeUrl(url);
+  const stored = await chrome.storage.local.get(DEDUP_KEY);
+  const map = stored[DEDUP_KEY] || {};
+  const now = Date.now();
+  // Prune expired entries
+  for (const [k, v] of Object.entries(map)) {
+    if (now - v > DEDUP_TTL) delete map[k];
+  }
+  map[key] = now;
+  await chrome.storage.local.set({ [DEDUP_KEY]: map });
+}
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -98,22 +138,11 @@ function sanitizeSettings(raw = {}) {
 }
 
 function sanitizeSessionState(raw = {}) {
-  const state = {
+  return {
     activeTabId: Number.isInteger(raw.activeTabId) ? raw.activeTabId : null,
     tabStates: raw.tabStates && typeof raw.tabStates === "object" ? raw.tabStates : {},
     contentCache: raw.contentCache && typeof raw.contentCache === "object" ? raw.contentCache : {}
   };
-  // Restore lastSent:* dedup keys, pruning expired ones (>6h)
-  const now = Date.now();
-  const DEDUP_TTL = 6 * 60 * 60 * 1000;
-  for (const key of Object.keys(raw)) {
-    if (key.startsWith("lastSent:") && typeof raw[key] === "number") {
-      if (now - raw[key] < DEDUP_TTL) {
-        state[key] = raw[key];
-      }
-    }
-  }
-  return state;
 }
 
 async function ensureHydrated() {
@@ -457,17 +486,14 @@ async function finalizeVisit(tabId, reason) {
     return null;
   }
 
-  // Dedup: don't send same URL twice within 6 hours
-  const lastSentKey = `lastSent:${entry.url}`;
-  const lastSentAt = sessionState[lastSentKey];
-  if (lastSentAt && (Date.now() - lastSentAt) < 6 * 60 * 60 * 1000) {
+  // Dedup: don't send same URL twice within 6 hours (stored in chrome.storage.local)
+  if (await isDuplicate(entry.url)) {
     await recordRecentEntry(entry, "dedup");
     return null;
   }
 
   const status = await trySendOrQueue(entry, settings);
-  sessionState[lastSentKey] = Date.now();
-  markSessionDirty();
+  await markSent(entry.url);
 
   // Single write with final status — no intermediate "sending" state
   // that gets stuck if Service Worker dies mid-update
