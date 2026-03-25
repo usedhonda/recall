@@ -125,6 +125,9 @@ final class UploadManager {
             // Reset uploads stuck in .uploading with stale lastUploadAttempt
             resetStaleUploads(modelContext: modelContext)
 
+            // Auto-retry failed chunks every 60s
+            autoRetryFailed(modelContext: modelContext)
+
             // Fetch next pending chunk
             guard let chunk = fetchNextPending(modelContext: modelContext) else {
                 uploadProgress = pendingCount == 0 ? "All uploads complete" : ""
@@ -286,6 +289,28 @@ final class UploadManager {
         try? modelContext.save()
         Self.logger.info("Reset \(stale.count) stale uploads -> pending")
         activity.log(.upload, "Reset \(stale.count) stale -> pending")
+    }
+
+    private var lastAutoRetry: Date = .distantPast
+
+    /// Auto-retry failed chunks every 60s (reset to pending for re-upload).
+    private func autoRetryFailed(modelContext: ModelContext) {
+        guard Date().timeIntervalSince(lastAutoRetry) >= 60 else { return }
+        lastAutoRetry = Date()
+
+        let failed = AudioChunk.UploadStatus.failed.rawValue
+        let predicate = #Predicate<AudioChunk> { $0.uploadStatusRaw == failed }
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
+
+        guard let failedChunks = try? modelContext.fetch(descriptor), !failedChunks.isEmpty else { return }
+        for chunk in failedChunks {
+            chunk.uploadStatus = .pending
+            chunk.uploadAttempts = 0
+            chunk.lastUploadAttempt = nil
+        }
+        try? modelContext.save()
+        Self.logger.info("Auto-retrying \(failedChunks.count) failed chunks")
+        activity.log(.upload, "Auto-retry \(failedChunks.count) failed -> pending")
     }
 
     private func reconcileUploadState(modelContext: ModelContext) async {
