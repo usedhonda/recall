@@ -13,8 +13,6 @@ struct SettingsView: View {
                     chiTriggersSection
                     chiDeliverySection
                     networkSection
-                    vadSection
-                    recordingSection
                     storageSection
                     healthSection
                     locationSection
