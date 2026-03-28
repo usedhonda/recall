@@ -22,6 +22,7 @@ final class RecordingViewModel {
 
     private let maxStartRetries = 3
     private var retryTask: Task<Void, Never>?
+    private var healthCheckTask: Task<Void, Never>?
 
     func start(modelContainer: ModelContainer) async {
         for attempt in 1...maxStartRetries {
@@ -41,6 +42,7 @@ final class RecordingViewModel {
                 }
 
                 syncSharedState()
+                startHealthMonitor(modelContainer: modelContainer)
                 return
             } catch {
                 logger.error("Engine start attempt \(attempt)/\(self.maxStartRetries) failed: \(error)")
@@ -82,6 +84,7 @@ final class RecordingViewModel {
                         UploadManager.shared.startProcessing(modelContext: context)
                     }
                     self.syncSharedState()
+                    self.startHealthMonitor(modelContainer: modelContainer)
                     return
                 } catch {
                     ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: \(error.localizedDescription)")
@@ -90,7 +93,37 @@ final class RecordingViewModel {
         }
     }
 
+    /// Upper-level health monitor — independent of engine's internal watchdog.
+    /// Detects engine death that the watchdog couldn't recover from and recreates the engine entirely.
+    private func startHealthMonitor(modelContainer: ModelContainer) {
+        healthCheckTask?.cancel()
+        healthCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard let self, !Task.isCancelled else { return }
+
+                guard let engine = self.engine else {
+                    ActivityLogger.shared.log(.error, "HealthMonitor: engine is nil — recreating")
+                    await self.start(modelContainer: modelContainer)
+                    return
+                }
+
+                if engine.state == .idle && !engine.userStopped {
+                    ActivityLogger.shared.log(.error, "HealthMonitor: engine idle (not user-stopped) — full recreate")
+                    self.engine?.stop()
+                    self.engine = nil
+                    await self.start(modelContainer: modelContainer)
+                    return
+                }
+            }
+        }
+    }
+
     func stop() {
+        healthCheckTask?.cancel()
+        healthCheckTask = nil
+        retryTask?.cancel()
+        retryTask = nil
         engine?.stop()
         UploadManager.shared.stopProcessing()
         logger.info("Recording stopped")

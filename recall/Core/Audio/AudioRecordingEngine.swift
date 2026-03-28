@@ -87,7 +87,12 @@ final class AudioRecordingEngine {
 
     private var zombieSilenceCount: Int = 0
     private var engineStartTime: Date = .distantPast
-    private var userStopped: Bool = false
+    private(set) var userStopped: Bool = false
+
+    // MARK: - Restart Failure Tracking
+
+    private var consecutiveRestartFailures: Int = 0
+    private let maxRestartBeforeRecreate: Int = 5
 
     // MARK: - Consecutive Voice Frame Guard
 
@@ -949,6 +954,7 @@ final class AudioRecordingEngine {
             startProcessingLoop()
             BackgroundKeepAlive.shared.resumePlayback()
 
+            consecutiveRestartFailures = 0
             activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
         } catch {
             // If stop+start fails, try with full reset as last resort
@@ -971,11 +977,16 @@ final class AudioRecordingEngine {
                 zombieSilenceCount = 0
                 startProcessingLoop()
                 BackgroundKeepAlive.shared.resumePlayback()
+                consecutiveRestartFailures = 0
                 activity.log(.state, "Engine restarted (hard) — Listening (\(Int(hwSampleRate))Hz)")
             } catch {
+                consecutiveRestartFailures += 1
                 logger.error("Failed to restart engine: \(error.localizedDescription)")
-                activity.log(.error, "Engine restart failed: \(error.localizedDescription)")
+                activity.log(.error, "Engine restart failed (\(consecutiveRestartFailures)/\(maxRestartBeforeRecreate)): \(error.localizedDescription)")
                 state = .idle
+                if consecutiveRestartFailures >= maxRestartBeforeRecreate {
+                    activity.log(.error, "Engine restart failed \(consecutiveRestartFailures)x — needs full recreate by HealthMonitor")
+                }
             }
         }
     }

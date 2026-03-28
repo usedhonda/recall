@@ -28,9 +28,6 @@ struct RecallApp: App {
                     RecordingStateManager.shared.isRecording = true
                     await recordingViewModel.start(modelContainer: sharedModelContainer)
 
-                    // Migrate legacy Tailscale hostnames
-                    Self.migrateTailscaleURLs()
-
                     // Auto-start upload queue on app launch
                     let context = ModelContext(sharedModelContainer)
                     UploadManager.shared.reconcileStuckUploads(modelContext: context)
@@ -70,49 +67,6 @@ struct RecallApp: App {
                 }
         }
         .modelContainer(sharedModelContainer)
-    }
-
-    /// Migrate any Tailscale IP-based URLs to .ts.net hostname.
-    /// ATS blocks plain HTTP to IP addresses, but allows .ts.net via NSExceptionDomains.
-    private static func migrateTailscaleURLs() {
-        let settings = AppSettings.shared
-        let urlKeys = ["uploadServerURL", "telemetryServerURL"]
-
-        // Phase 1: Hostname rename (yuzurumac-mini → yuzurumac-mini-1)
-        let hostnameRenames = [
-            "yuzurumac-mini.tailfeb2b0.ts.net": "yuzurumac-mini-1.tailfeb2b0.ts.net",
-            "macbook-pro-3.tailfeb2b0.ts.net": "yuzurumac-mini-1.tailfeb2b0.ts.net",
-        ]
-        for key in urlKeys {
-            guard var value = UserDefaults.standard.string(forKey: key), !value.isEmpty else { continue }
-            for (oldHost, newHost) in hostnameRenames {
-                if value.contains(oldHost) {
-                    let migrated = value.replacingOccurrences(of: oldHost, with: newHost)
-                    UserDefaults.standard.set(migrated, forKey: key)
-                    ActivityLogger.shared.log(.network, "Migrated hostname: \(value) -> \(migrated)")
-                    value = migrated
-                }
-            }
-        }
-
-        // Phase 2: IP → .ts.net migration (existing logic)
-        guard let tsURL = URL(string: settings.telemetryServerURL),
-              let tsHost = tsURL.host, tsHost.hasSuffix(".ts.net") else {
-            return
-        }
-
-        for key in urlKeys {
-            guard let value = UserDefaults.standard.string(forKey: key), !value.isEmpty,
-                  !value.contains("ts.net") else { continue }
-            guard let url = URL(string: value),
-                  let host = url.host, host.starts(with: "100.") else { continue }
-            let port = url.port.map { ":\($0)" } ?? ""
-            let path = url.path
-            let scheme = url.scheme ?? "http"
-            let migrated = "\(scheme)://\(tsHost)\(port)\(path)"
-            UserDefaults.standard.set(migrated, forKey: key)
-            ActivityLogger.shared.log(.network, "Migrated URL: \(value) -> \(migrated)")
-        }
     }
 
     @MainActor
