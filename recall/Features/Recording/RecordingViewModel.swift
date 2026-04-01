@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Observation
 import SwiftData
@@ -20,6 +21,42 @@ final class RecordingViewModel {
     var currentChunkDuration: TimeInterval { engine?.currentChunkDuration ?? 0 }
     var errorMessage: String?
 
+    // MARK: - Mic Input Selection
+
+    var availableInputs: [AVAudioSessionPortDescription] {
+        AudioSessionManager.shared.availableInputs
+    }
+
+    var currentInputName: String {
+        AudioSessionManager.shared.currentInput?.portName ?? "None"
+    }
+
+    var currentInputPortType: AVAudioSession.Port? {
+        AudioSessionManager.shared.currentInput?.portType
+    }
+
+    func selectInput(_ port: AVAudioSessionPortDescription?) {
+        do {
+            try AudioSessionManager.shared.setPreferredInput(port)
+            AppSettings.shared.preferredInputPortUID = port?.uid
+        } catch {
+            logger.error("Failed to set preferred input: \(error)")
+            ActivityLogger.shared.log(.error, "Mic select failed: \(error.localizedDescription)")
+        }
+    }
+
+    func restorePreferredInput() {
+        guard let savedUID = AppSettings.shared.preferredInputPortUID else { return }
+        let match = availableInputs.first { $0.uid == savedUID }
+        if let match {
+            do {
+                try AudioSessionManager.shared.setPreferredInput(match)
+            } catch {
+                logger.error("Failed to restore preferred input: \(error)")
+            }
+        }
+    }
+
     private let maxStartRetries = 3
     private var retryTask: Task<Void, Never>?
     private var healthCheckTask: Task<Void, Never>?
@@ -34,6 +71,7 @@ final class RecordingViewModel {
                 try await engine?.start()
                 errorMessage = nil
                 logger.info("Recording started")
+                restorePreferredInput()
 
                 // Resume upload queue if not already running
                 if !UploadManager.shared.isUploading {

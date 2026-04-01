@@ -23,14 +23,13 @@ final class AudioSessionManager {
     }
 
     func configure() throws {
-        // Use built-in mic for ambient recording — avoid BluetoothHFP which routes
-        // audio input to connected devices (e.g. smart rings) at 16kHz with idle silence.
-        // allowBluetoothA2DP: let Bluetooth headphones work for output (A2DP = output only,
-        // does not affect mic input). Without this, Bluetooth headphones are blocked.
+        // allowBluetooth: enables HFP (Hands-Free Profile) so Bluetooth headset mics
+        // appear in availableInputs and can be selected by the user.
+        // allowBluetoothA2DP: enables A2DP output (headphone speakers).
         try session.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
+            options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowBluetooth]
         )
 
         // iOS 17+: Don't treat Bluetooth disconnect as interruption
@@ -57,6 +56,23 @@ final class AudioSessionManager {
 
     var isOtherAudioPlaying: Bool {
         session.isOtherAudioPlaying
+    }
+
+    // MARK: - Input Selection
+
+    var availableInputs: [AVAudioSessionPortDescription] {
+        session.availableInputs ?? []
+    }
+
+    var currentInput: AVAudioSessionPortDescription? {
+        session.currentRoute.inputs.first
+    }
+
+    func setPreferredInput(_ port: AVAudioSessionPortDescription?) throws {
+        try session.setPreferredInput(port)
+        let name = port?.portName ?? "System Default"
+        logger.info("Preferred input set to: \(name)")
+        ActivityLogger.shared.log(.state, "Mic input: \(name)")
     }
 
     // MARK: - Route Change Handling

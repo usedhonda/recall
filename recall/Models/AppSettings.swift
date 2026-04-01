@@ -55,6 +55,11 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "debugLogHost") }
     }
 
+    var preferredInputPortUID: String? {
+        get { UserDefaults.standard.string(forKey: "preferredInputPortUID") }
+        set { UserDefaults.standard.set(newValue, forKey: "preferredInputPortUID") }
+    }
+
     var deviceId: String {
         get {
             if let id = UserDefaults.standard.string(forKey: "deviceId"), !id.isEmpty {

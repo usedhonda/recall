@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import SwiftData
 
@@ -347,9 +348,7 @@ struct RecordingView: View {
                 }
             }
 
-            // Empty slot for future expansion
-            Color.clear
-                .frame(maxWidth: .infinity)
+            micSelectorSlot
         }
     }
 
@@ -368,6 +367,75 @@ struct RecordingView: View {
         guard telemetry.motionManager.isEnabled else { return "Motion" }
         let activity = telemetry.motionManager.currentActivity
         return activity == "unknown" ? "Motion" : activity.capitalized
+    }
+
+    // MARK: - Mic Selector
+
+    @ViewBuilder
+    private var micSelectorSlot: some View {
+        let inputs = viewModel.availableInputs
+        let currentName = viewModel.currentInputName
+
+        Menu {
+            ForEach(inputs, id: \.uid) { port in
+                Button {
+                    viewModel.selectInput(port)
+                } label: {
+                    Label(
+                        port.portName,
+                        systemImage: micIcon(for: port.portType)
+                    )
+                    if port.portName == currentName {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: micIcon(for: viewModel.currentInputPortType))
+                    .font(.title3)
+                Text(shortMicName(currentName).uppercased())
+                    .font(RecallTheme.Fonts.hudMicro)
+                    .lineLimit(1)
+                Text("MIC")
+                    .font(RecallTheme.Fonts.hudMicro)
+                    .fontWeight(.bold)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(RecallTheme.Colors.neonCyan.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(RecallTheme.Colors.neonCyan.opacity(0.4), lineWidth: 1)
+            )
+            .foregroundStyle(RecallTheme.Colors.neonCyan)
+        }
+    }
+
+    private func micIcon(for portType: AVAudioSession.Port?) -> String {
+        switch portType {
+        case .bluetoothHFP, .bluetoothA2DP, .bluetoothLE:
+            return "headphones"
+        case .headsetMic, .headphones:
+            return "headphones"
+        case .usbAudio:
+            return "cable.connector"
+        default:
+            return "mic.fill"
+        }
+    }
+
+    private func shortMicName(_ name: String) -> String {
+        if name.count <= 8 { return name }
+        // Abbreviate long names
+        let words = name.split(separator: " ")
+        if words.count >= 2 {
+            return String(words[0].prefix(6))
+        }
+        return String(name.prefix(8))
     }
 
     // MARK: - Telemetry Status Banner
