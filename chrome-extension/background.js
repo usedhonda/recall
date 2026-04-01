@@ -12,6 +12,7 @@ const IDLE_THRESHOLD_SECONDS = 60;
 const MAX_ACTIVE_SECONDS = 1800;
 const SESSION_FLUSH_DELAY_MS = 2000;
 const DEDUP_TTL = 6 * 60 * 60 * 1000;
+const MAX_QUEUE_AGE_MS = 2 * 60 * 60 * 1000; // 2h — drop queued entries older than this
 
 // --- URL normalization for dedup ---
 
@@ -30,25 +31,36 @@ function normalizeUrl(urlString) {
 }
 
 // --- Dedup via chrome.storage.local (survives Worker restarts) ---
+// Single-writer chain prevents concurrent isDuplicate/markSent races
+
+let dedupChain = Promise.resolve();
+
+function withDedupLock(fn) {
+  dedupChain = dedupChain.then(fn, fn);
+  return dedupChain;
+}
 
 async function isDuplicate(url) {
-  const key = normalizeUrl(url);
-  const stored = await chrome.storage.local.get(DEDUP_KEY);
-  const map = stored[DEDUP_KEY] || {};
-  return !!(map[key] && (Date.now() - map[key]) < DEDUP_TTL);
+  return withDedupLock(async () => {
+    const key = normalizeUrl(url);
+    const stored = await chrome.storage.local.get(DEDUP_KEY);
+    const map = stored[DEDUP_KEY] || {};
+    return !!(map[key] && (Date.now() - map[key]) < DEDUP_TTL);
+  });
 }
 
 async function markSent(url) {
-  const key = normalizeUrl(url);
-  const stored = await chrome.storage.local.get(DEDUP_KEY);
-  const map = stored[DEDUP_KEY] || {};
-  const now = Date.now();
-  // Prune expired entries
-  for (const [k, v] of Object.entries(map)) {
-    if (now - v > DEDUP_TTL) delete map[k];
-  }
-  map[key] = now;
-  await chrome.storage.local.set({ [DEDUP_KEY]: map });
+  return withDedupLock(async () => {
+    const key = normalizeUrl(url);
+    const stored = await chrome.storage.local.get(DEDUP_KEY);
+    const map = stored[DEDUP_KEY] || {};
+    const now = Date.now();
+    for (const [k, v] of Object.entries(map)) {
+      if (now - v > DEDUP_TTL) delete map[k];
+    }
+    map[key] = now;
+    await chrome.storage.local.set({ [DEDUP_KEY]: map });
+  });
 }
 
 const DEFAULT_SETTINGS = {
@@ -380,15 +392,35 @@ async function trySendOrQueue(entry, settings) {
   }
 }
 
+let uploadChain = Promise.resolve();
+
 async function flushQueue() {
+  return uploadChain = uploadChain.then(_flushQueueImpl, _flushQueueImpl);
+}
+
+async function _flushQueueImpl() {
   const settings = await getSettings();
   if (!settings.serverURL || !settings.token) {
     return { attempted: 0, sent: 0, requeued: 0 };
   }
 
-  const pendingEntries = await dequeueAll();
-  if (pendingEntries.length === 0) {
+  const allEntries = await dequeueAll();
+  if (allEntries.length === 0) {
     return { attempted: 0, sent: 0, requeued: 0 };
+  }
+
+  // Drop entries older than MAX_QUEUE_AGE_MS
+  const now = Date.now();
+  const pendingEntries = allEntries.filter(entry => {
+    const ts = entry.visitedAt ? new Date(entry.visitedAt).getTime() : 0;
+    if (now - ts > MAX_QUEUE_AGE_MS) {
+      console.log(`[recall] dropped stale queued entry (${Math.round((now - ts) / 60000)}min old): ${entry.url}`);
+      return false;
+    }
+    return true;
+  });
+  if (pendingEntries.length === 0) {
+    return { attempted: allEntries.length, sent: 0, requeued: 0 };
   }
 
   let sent = 0;
@@ -446,7 +478,7 @@ async function finalizeVisit(tabId, reason) {
     url: tabState.url,
     title: tabState.title || "Untitled",
     domain: logDomain,
-    visitedAt: tabState.activatedAtISO || new Date().toISOString(),
+    visitedAt: new Date(tabState.activatedAt || Date.now()).toISOString(),
     dwellSeconds,
     contentPreview: contentPreview(contentState?.content),
     contentLength: (contentState?.content || "").length,
@@ -493,7 +525,9 @@ async function finalizeVisit(tabId, reason) {
   }
 
   const status = await trySendOrQueue(entry, settings);
-  await markSent(entry.url);
+  if (status === "sent") {
+    await markSent(entry.url);
+  }
 
   // Single write with final status — no intermediate "sending" state
   // that gets stuck if Service Worker dies mid-update
@@ -581,13 +615,22 @@ async function bootstrapActiveTab() {
   const [activeTab] = tabs;
   if (!activeTab?.id) return;
 
-  const existingTab = sessionState.tabStates[tabKey(activeTab.id)];
-  const activatedAt = existingTab?.activatedAt || Date.now();
+  // Purge stale tabStates/contentCache for tabs that no longer exist
+  const liveTabs = await chrome.tabs.query({});
+  const liveIds = new Set(liveTabs.map(t => tabKey(t.id)));
+  for (const key of Object.keys(sessionState.tabStates)) {
+    if (!liveIds.has(key)) {
+      delete sessionState.tabStates[key];
+      delete sessionState.contentCache[key];
+    }
+  }
+
+  // Fresh start — never inherit stale activatedAt from previous session
   await updateTabState(activeTab.id, {
-    url: activeTab.url || existingTab?.url || "",
-    title: activeTab.title || existingTab?.title || "",
-    activatedAt,
-    ...(existingTab?.visibleSince != null ? {} : createEngagementState())
+    url: activeTab.url || "",
+    title: activeTab.title || "",
+    activatedAt: Date.now(),
+    ...createEngagementState()
   });
   sessionState.activeTabId = activeTab.id;
   await flushSessionStateNow();
