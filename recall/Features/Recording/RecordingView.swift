@@ -377,6 +377,17 @@ struct RecordingView: View {
         let currentName = viewModel.currentInputName
 
         Menu {
+            Button {
+                viewModel.selectInput(nil)
+            } label: {
+                Label("Auto (Default)", systemImage: "mic.badge.xmark")
+                if AppSettings.shared.preferredInputPortUID == nil {
+                    Image(systemName: "checkmark")
+                }
+            }
+
+            Divider()
+
             ForEach(inputs, id: \.uid) { port in
                 Button {
                     viewModel.selectInput(port)
@@ -385,7 +396,7 @@ struct RecordingView: View {
                         port.portName,
                         systemImage: micIcon(for: port.portType)
                     )
-                    if port.portName == currentName {
+                    if port.uid == AppSettings.shared.preferredInputPortUID {
                         Image(systemName: "checkmark")
                     }
                 }

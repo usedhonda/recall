@@ -23,13 +23,14 @@ final class AudioSessionManager {
     }
 
     func configure() throws {
-        // allowBluetooth: enables HFP (Hands-Free Profile) so Bluetooth headset mics
-        // appear in availableInputs and can be selected by the user.
-        // allowBluetoothA2DP: enables A2DP output (headphone speakers).
+        // allowBluetoothA2DP only — keeps BT headphones in stereo output mode.
+        // .allowBluetooth (HFP) is NOT included: it forces iOS into mono mode
+        // even with setPreferredInput pointing to built-in mic.
+        // BT mic selection requires a separate approach (see RecordingViewModel).
         try session.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowBluetooth]
+            options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
         )
 
         // iOS 17+: Don't treat Bluetooth disconnect as interruption
@@ -72,7 +73,9 @@ final class AudioSessionManager {
         try session.setPreferredInput(port)
         let name = port?.portName ?? "System Default"
         logger.info("Preferred input set to: \(name)")
-        ActivityLogger.shared.log(.state, "Mic input: \(name)")
+        Task { @MainActor in
+            ActivityLogger.shared.log(.state, "Mic input: \(name)")
+        }
     }
 
     // MARK: - Route Change Handling

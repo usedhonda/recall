@@ -11,7 +11,7 @@ options:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    from: "0.7.9"
+    exactVersion: "0.12.6"
 
 settings:
   base:

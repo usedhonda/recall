@@ -57,6 +57,43 @@ final class RecordingViewModel {
         }
     }
 
+    // MARK: - Music Auto-Switch (BT mic ↔ built-in)
+
+    private var musicSwitchTask: Task<Void, Never>?
+
+    private func startMusicAutoSwitch() {
+        musicSwitchTask?.cancel()
+        musicSwitchTask = Task { [weak self] in
+            let nowPlaying = TelemetryService.shared.nowPlayingManager
+            var wasPlaying = nowPlaying.isPlaying
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled else { return }
+                let isPlaying = nowPlaying.isPlaying
+                guard isPlaying != wasPlaying else { continue }
+                wasPlaying = isPlaying
+
+                // Only auto-switch if user has a BT mic selected
+                guard let savedUID = AppSettings.shared.preferredInputPortUID,
+                      self.isBluetooth(uid: savedUID) else { continue }
+
+                if isPlaying {
+                    // Music started → switch to built-in mic (iOS keeps A2DP for output)
+                    try? AudioSessionManager.shared.setPreferredInput(nil)
+                    ActivityLogger.shared.log(.state, "Auto-switch: music → built-in mic")
+                } else {
+                    // Music stopped → restore BT mic
+                    self.restorePreferredInput()
+                    ActivityLogger.shared.log(.state, "Auto-switch: music stopped → BT mic restored")
+                }
+            }
+        }
+    }
+
+    private func isBluetooth(uid: String) -> Bool {
+        availableInputs.first { $0.uid == uid }?.portType == .bluetoothHFP
+    }
+
     private let maxStartRetries = 3
     private var retryTask: Task<Void, Never>?
     private var healthCheckTask: Task<Void, Never>?
@@ -81,6 +118,7 @@ final class RecordingViewModel {
 
                 syncSharedState()
                 startHealthMonitor(modelContainer: modelContainer)
+                startMusicAutoSwitch()
                 return
             } catch {
                 logger.error("Engine start attempt \(attempt)/\(self.maxStartRetries) failed: \(error)")
@@ -123,6 +161,7 @@ final class RecordingViewModel {
                     }
                     self.syncSharedState()
                     self.startHealthMonitor(modelContainer: modelContainer)
+                    self.startMusicAutoSwitch()
                     return
                 } catch {
                     ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: \(error.localizedDescription)")
@@ -158,6 +197,8 @@ final class RecordingViewModel {
     }
 
     func stop() {
+        musicSwitchTask?.cancel()
+        musicSwitchTask = nil
         healthCheckTask?.cancel()
         healthCheckTask = nil
         retryTask?.cancel()
