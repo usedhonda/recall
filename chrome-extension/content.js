@@ -194,6 +194,13 @@ try {
     if (message?.type === "extract-page-content") {
       // Reset scroll tracking on new content extraction (SPA navigation)
       maxScrollPct = 0;
+      // Reset dwell timer for new page/SPA navigation
+      dwellFired = false;
+      cancelDwellTimer();
+      if (typeof message.minDwellMs === "number") {
+        dwellMs = message.minDwellMs;
+      }
+      if (!document.hidden) armDwellTimer();
       try {
         sendResponse(extractPagePayload());
       } catch (error) {
@@ -275,10 +282,40 @@ function sendEngagement(payload) {
   }
 }
 
-// Visibility tracking
+// --- Dwell threshold timer ---
+// Fires once per page load after minDwellMs of visible time.
+// Background sends minDwellMs via extract-page-content message.
+
+let dwellTimer = null;
+let dwellFired = false;
+let dwellMs = 15000; // default, overridden by background
+
+function armDwellTimer() {
+  if (dwellFired || dwellTimer) return;
+  dwellTimer = setTimeout(() => {
+    dwellTimer = null;
+    dwellFired = true;
+    sendEngagement({ type: "engagement:dwell-threshold" });
+  }, dwellMs);
+}
+
+function cancelDwellTimer() {
+  if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
+}
+cleanupCallbacks.push(() => cancelDwellTimer());
+
+// Arm on initial load if visible
+if (!document.hidden) armDwellTimer();
+
+// Visibility tracking (also arms/cancels dwell timer)
 function onVisibilityChange() {
   if (!isContextValid()) return;
   sendEngagement({ type: "engagement:visibility", hidden: document.hidden });
+  if (document.hidden) {
+    cancelDwellTimer();
+  } else {
+    armDwellTimer();
+  }
 }
 document.addEventListener("visibilitychange", onVisibilityChange);
 cleanupCallbacks.push(() => document.removeEventListener("visibilitychange", onVisibilityChange));

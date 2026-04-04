@@ -325,6 +325,16 @@ async function handleEngagementMessage(message, tabId) {
       }
       break;
     }
+    case "engagement:dwell-threshold": {
+      if (!tabState.sentAt) {
+        tabState.sendPending = true;
+        // If content is already cached, emit now; otherwise wait for capture
+        if (sessionState.contentCache[key]) {
+          await emitCurrentVisit(tabId, "threshold");
+        }
+      }
+      break;
+    }
   }
 
   markSessionDirty();
@@ -379,6 +389,54 @@ function buildEntry(tabState, contentState, dwellSeconds, engagement) {
     meta: contentState?.meta || {},
     engagement
   };
+}
+
+// --- Proactive send: emit current visit when threshold is reached ---
+
+async function emitCurrentVisit(tabId, reason) {
+  await ensureHydrated();
+  const key = tabKey(tabId);
+  const tabState = sessionState.tabStates[key];
+  if (!tabState?.url || !tabState?.activatedAt) return null;
+  if (tabState.sentAt) return null; // already sent this visit
+
+  const settings = await getSettings();
+  if (!settings.enabled) return null;
+  if (!isTrackableUrl(tabState.url)) return null;
+
+  const ruleResult = evaluateRules(tabState.url, settings.rules || [], settings);
+  if (ruleResult.blocked) return null;
+
+  flushEngagementTimers(tabState);
+  const { dwellSeconds, engagement } = computeEngagement(tabState);
+  const effectiveDwell = ruleResult.minDwell ?? settings.minDwellSeconds;
+  if (dwellSeconds < Math.max(0, effectiveDwell)) return null;
+
+  const contentState = sessionState.contentCache[key];
+  const entry = buildEntry(tabState, contentState, dwellSeconds, engagement);
+  if (!entry) return null;
+
+  if (await isDuplicate(entry.url)) {
+    await recordRecentEntry(entry, "dedup");
+    return null;
+  }
+
+  const status = await trySendOrQueue(entry, settings);
+  if (status === "sent") {
+    await markSent(entry.url);
+  }
+  await recordRecentEntry(entry, status);
+
+  // Mark sent in tabState so finalizeVisit won't re-send
+  tabState.sentAt = Date.now();
+  tabState.sentEntryId = entry.id;
+  markSessionDirty();
+
+  if (status === "sent") {
+    try { await chrome.tabs.sendMessage(tabId, { type: "show-ticker", message: "Sent to recall" }); } catch {}
+  }
+  console.log(`[recall] emitCurrentVisit (${reason}): ${entry.url} → ${status}`);
+  return entry;
 }
 
 async function trySendOrQueue(entry, settings) {
@@ -452,6 +510,20 @@ async function finalizeVisit(tabId, reason) {
   const key = tabKey(tabId);
   const tabState = sessionState.tabStates[key];
   if (!tabState?.url || !tabState?.activatedAt) {
+    return null;
+  }
+
+  // If already sent via proactive emit, skip re-send — cleanup only
+  if (tabState.sentAt) {
+    sessionState.tabStates[key] = {
+      ...tabState,
+      activatedAt: null,
+      sentAt: null,
+      sendPending: false,
+      lastFinalizedReason: reason,
+      lastFinalizedAt: Date.now()
+    };
+    await flushSessionStateNow();
     return null;
   }
 
@@ -580,10 +652,12 @@ async function cacheContent(tabId, payload) {
 
 async function requestContentCapture(tabId, expectedUrl) {
   const key = tabKey(tabId);
+  const settings = await getSettings();
   try {
     const payload = await chrome.tabs.sendMessage(tabId, {
       type: "extract-page-content",
-      expectedUrl
+      expectedUrl,
+      minDwellMs: (settings.minDwellSeconds || 15) * 1000
     });
     if (!payload?.ok) {
       if (sessionState.tabStates[key]) {
@@ -601,8 +675,13 @@ async function requestContentCapture(tabId, expectedUrl) {
       title: payload.title || sessionState.tabStates[key]?.title || "",
       lastCaptureError: null
     });
+
+    // If dwell threshold already fired while waiting for content, emit now
+    const tabState = sessionState.tabStates[key];
+    if (tabState?.sendPending && !tabState?.sentAt) {
+      await emitCurrentVisit(tabId, "threshold+content");
+    }
   } catch (err) {
-    // Store error for diagnostics instead of silent swallow
     if (sessionState.tabStates[key]) {
       sessionState.tabStates[key].lastCaptureError = err instanceof Error ? err.message : "content script unreachable";
       markSessionDirty();
@@ -667,6 +746,8 @@ async function handleTabActivated(activeInfo) {
     url: tab?.url || sessionState.tabStates[tabKey(activeInfo.tabId)]?.url || "",
     title: tab?.title || sessionState.tabStates[tabKey(activeInfo.tabId)]?.title || "",
     activatedAt: Date.now(),
+    sentAt: null,
+    sendPending: false,
     ...createEngagementState()
   });
   await flushSessionStateNow();
@@ -699,6 +780,8 @@ async function handleTabUpdated(tabId, changeInfo, tab) {
     await updateTabState(tabId, {
       url: changeInfo.url,
       title: tab?.title || changeInfo.title || "",
+      sentAt: null,
+      sendPending: false,
       activatedAt: tab?.active ? Date.now() : null,
       ...(tab?.active ? createEngagementState() : {})
     });
