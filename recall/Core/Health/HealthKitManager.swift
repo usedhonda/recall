@@ -330,8 +330,10 @@ final class HealthKitManager {
         async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: twentyFourHoursAgo, to: end)
         async let bodyTempResult = queryLatestSample(.bodyTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
         async let wristTempResult = queryLatestSample(.appleSleepingWristTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
-        // Sleep — look back to previous evening (sleep spans midnight)
-        let sleepLookback = calendar.date(byAdding: .hour, value: -14, to: end) ?? twentyFourHoursAgo
+        // Sleep — look back 24 hours to capture full sleep sessions.
+        // Smart rings may write sleep samples with early startDates (naps, early bedtime).
+        // 14h was too short and caused partial sleep data (e.g. 1.9h instead of full night).
+        let sleepLookback = twentyFourHoursAgo
         async let sleepResult = querySleep(from: sleepLookback, to: end)
         async let workoutsResult = queryWorkouts(from: todayStart, to: end)
 
@@ -460,7 +462,10 @@ final class HealthKitManager {
 
     private func querySleep(from start: Date, to end: Date) async -> SleepSummary? {
         guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return nil }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        // Use .strictEndDate to capture sleep sessions that END within the window.
+        // Smart rings may write sleep samples with startDate before the 14h lookback
+        // (e.g. early evening nap at 18:00), and .strictStartDate would miss them.
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
 
         return await withCheckedContinuation { continuation in
