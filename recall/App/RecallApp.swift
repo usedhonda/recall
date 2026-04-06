@@ -42,6 +42,11 @@ struct RecallApp: App {
                         AppSettings.shared.rmsThreshold = 0.002
                     }
 
+                    // Reset min chunk duration to 2s (was 5s, too aggressive for short speech)
+                    if AppSettings.shared.minChunkDurationSeconds > 2.0 {
+                        AppSettings.shared.minChunkDurationSeconds = 2.0
+                    }
+
                     // Force telemetry interval to 15s for max frequency
                     if AppSettings.shared.telemetrySendInterval > 15 {
                         AppSettings.shared.telemetrySendInterval = 15

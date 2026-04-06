@@ -36,7 +36,7 @@ final class AppSettings {
     }
 
     var minChunkDurationSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "minChunkDurationSeconds").nonZero ?? 5.0 }
+        get { UserDefaults.standard.double(forKey: "minChunkDurationSeconds").nonZero ?? 2.0 }
         set { UserDefaults.standard.set(newValue, forKey: "minChunkDurationSeconds") }
     }
 
@@ -55,9 +55,9 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "debugLogHost") }
     }
 
-    var preferredInputPortUID: String? {
-        get { UserDefaults.standard.string(forKey: "preferredInputPortUID") }
-        set { UserDefaults.standard.set(newValue, forKey: "preferredInputPortUID") }
+    var preferredMicMode: String {
+        get { UserDefaults.standard.string(forKey: "preferredMicMode") ?? MicMode.builtIn.rawValue }
+        set { UserDefaults.standard.set(newValue, forKey: "preferredMicMode") }
     }
 
     var deviceId: String {
