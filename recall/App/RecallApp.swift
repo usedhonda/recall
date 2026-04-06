@@ -37,6 +37,9 @@ struct RecallApp: App {
                     // Start connectivity monitoring
                     ConnectivityMonitor.shared.start()
 
+                    // Start server health monitoring (probes upload server reachability)
+                    ServerHealthMonitor.shared.start()
+
                     // Reset RMS threshold if too high for pocket/distant speech pickup
                     if AppSettings.shared.rmsThreshold > 0.005 {
                         AppSettings.shared.rmsThreshold = 0.002

@@ -14,6 +14,7 @@ final class ConnectivityMonitor {
 
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.recall.connectivity", qos: .utility)
+    private var lastNetworkInterfaceNames: Set<String> = []
 
     private init() {}
 
@@ -42,6 +43,18 @@ final class ConnectivityMonitor {
                     let net = wifi ? "WiFi" : cellular ? "Cellular" : connected ? "Other" : "None"
                     ActivityLogger.shared.log(.network, "Network: \(net)\(suffix)")
                 }
+
+                // Detect network interface changes (important for Tailscale VPN)
+                let currentInterfaces = Set(path.availableInterfaces.map(\.name))
+                if connected,
+                   !self.lastNetworkInterfaceNames.isEmpty,
+                   currentInterfaces != self.lastNetworkInterfaceNames {
+                    let from = self.lastNetworkInterfaceNames.sorted().joined(separator: ",")
+                    let to = currentInterfaces.sorted().joined(separator: ",")
+                    ActivityLogger.shared.log(.network, "Interface changed: [\(from)] -> [\(to)]")
+                    ServerHealthMonitor.shared.probeNow(reason: .networkChange)
+                }
+                self.lastNetworkInterfaceNames = currentInterfaces
             }
         }
         monitor.start(queue: queue)

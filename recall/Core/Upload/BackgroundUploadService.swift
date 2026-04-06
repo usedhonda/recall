@@ -12,7 +12,7 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
     private static let reconcileGraceSeconds: TimeInterval = 15
 
     private let foregroundSession: URLSession = {
-        let config = URLSessionConfiguration.default
+        let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 300
         return URLSession(configuration: config)

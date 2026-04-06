@@ -285,6 +285,7 @@ final class UploadManager {
             Self.logger.info("Chunk uploaded: \(chunk.fileName) -> \(recordingId)")
             activity.log(.upload, "Uploaded \(chunk.fileName) -> \(recordingId)")
             consecutiveFailures = 0
+            ServerHealthMonitor.shared.recordUploadSuccess()
         } catch {
             consecutiveFailures += 1
             chunk.uploadStatus = .failed
@@ -297,6 +298,7 @@ final class UploadManager {
             uploadProgress = "Failed: \(reason)"
             Self.logger.error("Upload failed for \(chunk.fileName): \(reason) — \(error.localizedDescription)")
             activity.log(.error, "Upload FAIL \(chunk.fileName) #\(chunk.uploadAttempts) [\(reason)] \(error.localizedDescription)")
+            ServerHealthMonitor.shared.recordUploadFailure(reason)
 
             // Log cumulative failure stats periodically
             if chunk.uploadAttempts == 1 || chunk.uploadAttempts % 5 == 0 {

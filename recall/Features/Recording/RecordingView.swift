@@ -31,6 +31,7 @@ struct RecordingView: View {
                             .padding(.horizontal, 12)
 
                         telemetryStatusBanner
+                        uploadHealthBanner
 
                         heroStateSection
                             .padding(.vertical, 8)
@@ -477,6 +478,80 @@ struct RecordingView: View {
             return 5 // trigger banner immediately
         }
         return now.timeIntervalSince(lastSuccess) / 60
+    }
+
+    // MARK: - Upload Health Banner
+
+    @ViewBuilder
+    private var uploadHealthBanner: some View {
+        let connectivity = ConnectivityMonitor.shared
+        let health = ServerHealthMonitor.shared
+        let upload = UploadManager.shared
+
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+            let now = context.date
+            let message = uploadHealthMessage(
+                isConnected: connectivity.isConnected,
+                isReachable: health.isServerReachable,
+                lastUploadSuccess: health.lastUploadSuccessAt,
+                pendingCount: upload.pendingCount,
+                now: now
+            )
+            if let (text, severity) = message {
+                let color = severity == .critical
+                    ? RecallTheme.Colors.neonRed
+                    : RecallTheme.Colors.neonAmber
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                    Text(text)
+                        .font(RecallTheme.Fonts.hudMicro)
+                }
+                .foregroundStyle(color)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(color.opacity(0.1))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(color.opacity(0.3), lineWidth: 1)
+                )
+                .padding(.horizontal, 12)
+            }
+        }
+    }
+
+    private enum BannerSeverity { case warning, critical }
+
+    private func uploadHealthMessage(
+        isConnected: Bool,
+        isReachable: Bool,
+        lastUploadSuccess: Date?,
+        pendingCount: Int,
+        now: Date
+    ) -> (String, BannerSeverity)? {
+        if !isConnected {
+            return ("OFFLINE", .critical)
+        }
+        if !isReachable {
+            let monitor = ServerHealthMonitor.shared
+            let minutes = monitor.lastSuccessAt.map {
+                Int(now.timeIntervalSince($0) / 60)
+            } ?? 0
+            let severity: BannerSeverity = minutes >= 30 ? .critical : .warning
+            return ("UPLOAD SERVER UNREACHABLE \(minutes)m", severity)
+        }
+        if let lastSuccess = lastUploadSuccess, pendingCount > 0 {
+            let staleMinutes = Int(now.timeIntervalSince(lastSuccess) / 60)
+            if staleMinutes >= 5 {
+                let severity: BannerSeverity = staleMinutes >= 30 ? .critical : .warning
+                return ("UPLOAD STALLED \(staleMinutes)m — \(pendingCount) pending", severity)
+            }
+        }
+        return nil
     }
 
     // MARK: - Helpers
