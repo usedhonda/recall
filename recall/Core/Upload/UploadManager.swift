@@ -125,6 +125,9 @@ final class UploadManager {
             // Reset uploads stuck in .uploading with stale lastUploadAttempt
             resetStaleUploads(modelContext: modelContext)
 
+            // Drop chunks older than 10 minutes — stale audio has no value
+            dropStaleChunks(modelContext: modelContext)
+
             // Auto-retry failed chunks every 60s
             autoRetryFailed(modelContext: modelContext)
 
@@ -291,9 +294,40 @@ final class UploadManager {
         activity.log(.upload, "Reset \(stale.count) stale -> pending")
     }
 
+    // MARK: - Stale Chunk Cleanup
+
+    private static let maxChunkAgeSeconds: TimeInterval = 600 // 10 minutes
+    private var lastStaleCheck: Date = .distantPast
+
+    private func dropStaleChunks(modelContext: ModelContext) {
+        // Check every 30s
+        guard Date().timeIntervalSince(lastStaleCheck) >= 30 else { return }
+        lastStaleCheck = Date()
+
+        let cutoff = Date().addingTimeInterval(-Self.maxChunkAgeSeconds)
+        let pending = AudioChunk.UploadStatus.pending.rawValue
+        let failed = AudioChunk.UploadStatus.failed.rawValue
+        let predicate = #Predicate<AudioChunk> {
+            ($0.uploadStatusRaw == pending || $0.uploadStatusRaw == failed)
+            && $0.startedAt < cutoff
+        }
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
+        guard let stale = try? modelContext.fetch(descriptor), !stale.isEmpty else { return }
+
+        for chunk in stale {
+            chunk.uploadStatus = .uploaded // mark done to prevent retry
+            Task { try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath) }
+        }
+        try? modelContext.save()
+        activity.log(.upload, "Dropped \(stale.count) stale chunks (>10min old)")
+    }
+
+    // MARK: - Auto-Retry
+
     private var lastAutoRetry: Date = .distantPast
 
-    /// Auto-retry failed chunks every 60s (reset to pending for re-upload).
+    private static let maxUploadAttempts = 10
+
     private func autoRetryFailed(modelContext: ModelContext) {
         guard Date().timeIntervalSince(lastAutoRetry) >= 60 else { return }
         lastAutoRetry = Date()
@@ -303,14 +337,26 @@ final class UploadManager {
         let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
 
         guard let failedChunks = try? modelContext.fetch(descriptor), !failedChunks.isEmpty else { return }
+        var retried = 0
+        var dropped = 0
         for chunk in failedChunks {
-            chunk.uploadStatus = .pending
-            chunk.uploadAttempts = 0
-            chunk.lastUploadAttempt = nil
+            if chunk.uploadAttempts >= Self.maxUploadAttempts {
+                // Permanently skip — too many failures
+                chunk.uploadStatus = .uploaded // mark as "done" to stop retrying
+                activity.log(.upload, "Dropped after \(chunk.uploadAttempts) attempts: \(chunk.fileName)")
+                dropped += 1
+            } else {
+                chunk.uploadStatus = .pending
+                chunk.lastUploadAttempt = nil
+                retried += 1
+            }
         }
         try? modelContext.save()
-        Self.logger.info("Auto-retrying \(failedChunks.count) failed chunks")
-        activity.log(.upload, "Auto-retry \(failedChunks.count) failed -> pending")
+        if retried > 0 {
+            activity.log(.upload, "Auto-retry \(retried) failed -> pending (dropped \(dropped))")
+        } else if dropped > 0 {
+            activity.log(.upload, "Dropped \(dropped) permanently failed chunks")
+        }
     }
 
     private func reconcileUploadState(modelContext: ModelContext) async {
