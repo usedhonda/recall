@@ -373,42 +373,20 @@ struct RecordingView: View {
 
     @ViewBuilder
     private var micSelectorSlot: some View {
-        let inputs = viewModel.availableInputs
-        let currentName = viewModel.currentInputName
+        let isBT = viewModel.currentMicMode == .bluetoothHFP
 
-        Menu {
-            Button {
-                viewModel.selectInput(nil)
-            } label: {
-                Label("Auto (Default)", systemImage: "mic.badge.xmark")
-                if AppSettings.shared.preferredInputPortUID == nil {
-                    Image(systemName: "checkmark")
-                }
-            }
-
-            Divider()
-
-            ForEach(inputs, id: \.uid) { port in
-                Button {
-                    viewModel.selectInput(port)
-                } label: {
-                    Label(
-                        port.portName,
-                        systemImage: micIcon(for: port.portType)
-                    )
-                    if port.uid == AppSettings.shared.preferredInputPortUID {
-                        Image(systemName: "checkmark")
-                    }
-                }
+        Button {
+            Task {
+                await viewModel.switchMicMode(isBT ? .builtIn : .bluetoothHFP)
             }
         } label: {
             VStack(spacing: 4) {
-                Image(systemName: micIcon(for: viewModel.currentInputPortType))
+                Image(systemName: isBT ? "headphones" : "mic.fill")
                     .font(.title3)
-                Text(shortMicName(currentName).uppercased())
+                Text(isBT ? "BT" : "iPhone")
                     .font(RecallTheme.Fonts.hudMicro)
                     .lineLimit(1)
-                Text("MIC")
+                Text(isBT ? "MONO" : "STEREO")
                     .font(RecallTheme.Fonts.hudMicro)
                     .fontWeight(.bold)
             }
@@ -416,14 +394,18 @@ struct RecordingView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(RecallTheme.Colors.neonCyan.opacity(0.12))
+                    .fill(isBT ? RecallTheme.Colors.neonMagenta.opacity(0.12) : RecallTheme.Colors.neonCyan.opacity(0.12))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(RecallTheme.Colors.neonCyan.opacity(0.4), lineWidth: 1)
+                    .stroke(
+                        isBT ? RecallTheme.Colors.neonMagenta.opacity(0.4) : RecallTheme.Colors.neonCyan.opacity(0.4),
+                        lineWidth: 1
+                    )
             )
-            .foregroundStyle(RecallTheme.Colors.neonCyan)
+            .foregroundStyle(isBT ? RecallTheme.Colors.neonMagenta : RecallTheme.Colors.neonCyan)
         }
+        .buttonStyle(.plain)
     }
 
     private func micIcon(for portType: AVAudioSession.Port?) -> String {

@@ -11,6 +11,7 @@ final class RecordingViewModel {
     private let logger = Logger(subsystem: "com.recall", category: "RecordingVM")
 
     var engine: AudioRecordingEngine?
+    private var lastModelContainer: ModelContainer?
     var isRecording: Bool { engine?.state == .recording }
     var isListening: Bool { engine?.state == .listening }
     var isActive: Bool { engine?.state != .idle }
@@ -21,39 +22,68 @@ final class RecordingViewModel {
     var currentChunkDuration: TimeInterval { engine?.currentChunkDuration ?? 0 }
     var errorMessage: String?
 
-    // MARK: - Mic Input Selection
+    // MARK: - Mic Mode
 
-    var availableInputs: [AVAudioSessionPortDescription] {
-        AudioSessionManager.shared.availableInputs
+    var currentMicMode: MicMode {
+        AudioSessionManager.shared.desiredMicMode
     }
 
-    var currentInputName: String {
-        AudioSessionManager.shared.currentInput?.portName ?? "None"
-    }
+    func switchMicMode(_ mode: MicMode) async {
+        let mgr = AudioSessionManager.shared
+        mgr.setDesiredMicMode(mode)
 
-    var currentInputPortType: AVAudioSession.Port? {
-        AudioSessionManager.shared.currentInput?.portType
-    }
-
-    func selectInput(_ port: AVAudioSessionPortDescription?) {
         do {
-            try AudioSessionManager.shared.setPreferredInput(port)
-            AppSettings.shared.preferredInputPortUID = port?.uid
+            // a. Reconfigure session with new mode
+            try mgr.configure()
+
+            // b. Select target input explicitly
+            switch mode {
+            case .builtIn:
+                let builtIn = mgr.availableInputs.first { $0.portType == .builtInMic }
+                try mgr.setPreferredInput(builtIn)
+
+            case .bluetoothHFP:
+                // BT HFP port may not appear immediately — retry
+                var btPort: AVAudioSessionPortDescription?
+                for _ in 0..<10 {
+                    btPort = mgr.availableInputs.first { $0.portType == .bluetoothHFP }
+                    if btPort != nil { break }
+                    try await Task.sleep(for: .milliseconds(200))
+                }
+                if let btPort {
+                    try mgr.setPreferredInput(btPort)
+                } else {
+                    // BT mic not found — fall back to built-in
+                    mgr.setDesiredMicMode(.builtIn)
+                    try mgr.configure()
+                    let builtIn = mgr.availableInputs.first { $0.portType == .builtInMic }
+                    try mgr.setPreferredInput(builtIn)
+                    ActivityLogger.shared.log(.error, "BT mic not found — using built-in")
+                }
+            }
+
+            // c. Persist
+            AppSettings.shared.preferredMicMode = mode.rawValue
+
+            // d. Recreate engine to pick up new route
+            if let container = lastModelContainer {
+                engine?.stop()
+                engine = nil
+                engine = AudioRecordingEngine()
+                engine?.setModelContainer(container)
+                try await engine?.start()
+            }
+
         } catch {
-            logger.error("Failed to set preferred input: \(error)")
-            ActivityLogger.shared.log(.error, "Mic select failed: \(error.localizedDescription)")
+            logger.error("switchMicMode failed: \(error)")
+            ActivityLogger.shared.log(.error, "Mic switch failed: \(error.localizedDescription)")
         }
     }
 
-    func restorePreferredInput() {
-        guard let savedUID = AppSettings.shared.preferredInputPortUID else { return }
-        let match = availableInputs.first { $0.uid == savedUID }
-        if let match {
-            do {
-                try AudioSessionManager.shared.setPreferredInput(match)
-            } catch {
-                logger.error("Failed to restore preferred input: \(error)")
-            }
+    func restorePreferredMicMode() async {
+        let saved = MicMode(rawValue: AppSettings.shared.preferredMicMode) ?? .builtIn
+        if saved != .builtIn {
+            await switchMicMode(saved)
         }
     }
 
@@ -73,25 +103,25 @@ final class RecordingViewModel {
                 guard isPlaying != wasPlaying else { continue }
                 wasPlaying = isPlaying
 
-                // Only auto-switch if user has a BT mic selected
-                guard let savedUID = AppSettings.shared.preferredInputPortUID,
-                      self.isBluetooth(uid: savedUID) else { continue }
+                let savedMode = MicMode(rawValue: AppSettings.shared.preferredMicMode) ?? .builtIn
+                guard savedMode == .bluetoothHFP else { continue }
 
                 if isPlaying {
-                    // Music started → switch to built-in mic (iOS keeps A2DP for output)
-                    try? AudioSessionManager.shared.setPreferredInput(nil)
-                    ActivityLogger.shared.log(.state, "Auto-switch: music → built-in mic")
+                    // Music started → temporarily switch to built-in (stereo)
+                    let mgr = AudioSessionManager.shared
+                    mgr.setDesiredMicMode(.builtIn)
+                    try? mgr.configure()
+                    let builtIn = mgr.availableInputs.first { $0.portType == .builtInMic }
+                    try? mgr.setPreferredInput(builtIn)
+                    self.engine?.restartEngine()
+                    ActivityLogger.shared.log(.state, "Auto-switch: music → stereo + built-in mic")
                 } else {
                     // Music stopped → restore BT mic
-                    self.restorePreferredInput()
+                    await self.switchMicMode(.bluetoothHFP)
                     ActivityLogger.shared.log(.state, "Auto-switch: music stopped → BT mic restored")
                 }
             }
         }
-    }
-
-    private func isBluetooth(uid: String) -> Bool {
-        availableInputs.first { $0.uid == uid }?.portType == .bluetoothHFP
     }
 
     private let maxStartRetries = 3
@@ -99,6 +129,7 @@ final class RecordingViewModel {
     private var healthCheckTask: Task<Void, Never>?
 
     func start(modelContainer: ModelContainer) async {
+        lastModelContainer = modelContainer
         for attempt in 1...maxStartRetries {
             do {
                 if engine == nil {
@@ -108,7 +139,7 @@ final class RecordingViewModel {
                 try await engine?.start()
                 errorMessage = nil
                 logger.info("Recording started")
-                restorePreferredInput()
+                await restorePreferredMicMode()
 
                 // Resume upload queue if not already running
                 if !UploadManager.shared.isUploading {

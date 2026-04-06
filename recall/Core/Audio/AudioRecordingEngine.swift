@@ -913,7 +913,7 @@ final class AudioRecordingEngine {
 
     /// Restart engine. Does NOT touch watchdog — watchdog is immortal.
     /// Avoids audioEngine.reset() which destroys inputNode and creates 16kHz replacement.
-    private func restartEngine() {
+    func restartEngine() {
         // Prevent re-entrant restarts (watchdog + route change racing)
         guard !isRestarting else {
             activity.log(.state, "restartEngine skipped — already restarting")

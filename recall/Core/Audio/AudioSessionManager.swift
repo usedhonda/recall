@@ -1,11 +1,18 @@
 import AVFoundation
 import OSLog
 
+enum MicMode: String {
+    case builtIn
+    case bluetoothHFP
+}
+
 final class AudioSessionManager {
     static let shared = AudioSessionManager()
 
     private let logger = Logger(subsystem: "com.example.recall", category: "AudioSession")
     private let session = AVAudioSession.sharedInstance()
+
+    private(set) var desiredMicMode: MicMode = .builtIn
 
     private init() {
         NotificationCenter.default.addObserver(
@@ -22,24 +29,30 @@ final class AudioSessionManager {
         )
     }
 
+    func setDesiredMicMode(_ mode: MicMode) {
+        desiredMicMode = mode
+    }
+
     func configure() throws {
-        // allowBluetoothA2DP only — keeps BT headphones in stereo output mode.
-        // .allowBluetooth (HFP) is NOT included: it forces iOS into mono mode
-        // even with setPreferredInput pointing to built-in mic.
-        // BT mic selection requires a separate approach (see RecordingViewModel).
+        var options: AVAudioSession.CategoryOptions = [
+            .mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP
+        ]
+        if desiredMicMode == .bluetoothHFP {
+            options.insert(.allowBluetooth)
+        }
         try session.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
+            options: options
         )
 
-        // iOS 17+: Don't treat Bluetooth disconnect as interruption
         if #available(iOS 17.0, *) {
             try session.setPrefersInterruptionOnRouteDisconnect(false)
         }
 
         try session.setActive(true, options: [])
-        logger.info("Audio session configured and activated (mixWithOthers, no route-disconnect interruption)")
+        let mode = desiredMicMode == .bluetoothHFP ? "HFP+A2DP" : "A2DP only"
+        logger.info("Audio session configured (\(mode))")
     }
 
     func deactivate() {
