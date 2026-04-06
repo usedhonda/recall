@@ -20,6 +20,8 @@ final class UploadManager {
 
     private static let logger = Logger(subsystem: "com.recall", category: "UploadManager")
     private static let maxBackoffSeconds: TimeInterval = 300
+    private var consecutiveFailures = 0
+    private var lastHealthLog: Date = .distantPast
 
     private let uploadService = BackgroundUploadService.shared
     private let activity = ActivityLogger.shared
@@ -29,8 +31,9 @@ final class UploadManager {
         shouldContinue = true
         isUploading = true
         uploadService.initializeBackgroundSession()
+        let serverURL = AppSettings.shared.uploadServerURL
         Self.logger.info("Upload processing started")
-        activity.log(.upload, "Upload queue started")
+        activity.log(.upload, "Upload queue started (server: \(serverURL.isEmpty ? "NOT SET" : serverURL))")
 
         processingTask = Task { [weak self] in
             await self?.reconcileUploadState(modelContext: modelContext)
@@ -131,6 +134,21 @@ final class UploadManager {
             // Auto-retry failed chunks every 60s
             autoRetryFailed(modelContext: modelContext)
 
+            // Global backoff: pause when server is unreachable
+            if consecutiveFailures >= 3 {
+                let pauseSec = consecutiveFailures >= 5 ? 60 : 30
+                activity.log(.upload, "Server unreachable (\(consecutiveFailures) failures), pausing \(pauseSec)s")
+                try? await Task.sleep(for: .seconds(pauseSec))
+                consecutiveFailures = 0 // reset after pause to allow retry
+                continue
+            }
+
+            // Periodic queue health summary (every 5 min)
+            if Date().timeIntervalSince(lastHealthLog) >= 300 {
+                lastHealthLog = Date()
+                activity.log(.upload, "Queue health: pending=\(pendingCount) failed=\(failedCount) uploaded=\(uploadedCount)")
+            }
+
             // Fetch next pending chunk
             guard let chunk = fetchNextPending(modelContext: modelContext) else {
                 uploadProgress = pendingCount == 0 ? "All uploads complete" : ""
@@ -201,6 +219,16 @@ final class UploadManager {
             return
         }
 
+        // Skip zero-byte files (corrupted encoder output)
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunk.filePath)[.size] as? Int) ?? 0
+        if fileSize == 0 {
+            activity.log(.upload, "Skipped 0-byte chunk \(chunk.fileName)")
+            chunk.uploadStatus = .uploaded
+            try? modelContext.save()
+            try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+            return
+        }
+
         // Build metadata
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
@@ -256,7 +284,9 @@ final class UploadManager {
             uploadProgress = "Uploaded \(chunk.fileName)"
             Self.logger.info("Chunk uploaded: \(chunk.fileName) -> \(recordingId)")
             activity.log(.upload, "Uploaded \(chunk.fileName) -> \(recordingId)")
+            consecutiveFailures = 0
         } catch {
+            consecutiveFailures += 1
             chunk.uploadStatus = .failed
             chunk.uploadAttempts += 1
             chunk.lastUploadAttempt = Date()

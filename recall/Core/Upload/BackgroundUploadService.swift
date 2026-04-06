@@ -142,6 +142,9 @@ final class BackgroundUploadService: NSObject, @unchecked Sendable {
         guard (200...299).contains(httpResponse.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? "no body"
             Self.logger.error("Upload failed: HTTP \(httpResponse.statusCode) - \(body)")
+            Task { @MainActor in
+                ActivityLogger.shared.log(.error, "Upload HTTP \(httpResponse.statusCode): \(body.prefix(200))")
+            }
             throw UploadError.serverError(statusCode: httpResponse.statusCode, message: body)
         }
 
