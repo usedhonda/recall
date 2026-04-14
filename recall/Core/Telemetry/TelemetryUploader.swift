@@ -135,6 +135,9 @@ final class TelemetryUploader: NSObject {
             }
         }
 
+        let dump = summary.nonNilKeysSummary()
+        ActivityLogger.shared.log(.telemetry, "Telemetry POST (bg): health=[\(dump)]")
+
         do {
             try await uploadImmediate(
                 samples: [],

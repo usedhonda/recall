@@ -179,21 +179,25 @@ final class TelemetryService {
         encoder.dateEncodingStrategy = .iso8601
 
         do {
-            request.httpBody = try encoder.encode(batch)
+            let body = try encoder.encode(batch)
+            request.httpBody = body
+            let dump = summary.nonNilKeysSummary()
+            ActivityLogger.shared.log(.telemetry, "Telemetry POST (fg): body=\(body.count)B health=[\(dump)]")
+
             let (data, response) = try await urlSession.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .error("invalid response")
             }
 
-            let body = String(data: data, encoding: .utf8) ?? ""
+            let respBody = String(data: data, encoding: .utf8) ?? ""
 
             guard (200...299).contains(httpResponse.statusCode) else {
-                return .error("HTTP \(httpResponse.statusCode): \(body)")
+                return .error("HTTP \(httpResponse.statusCode): \(respBody)")
             }
 
             ActivityLogger.shared.log(.telemetry, "Health data sent: HTTP \(httpResponse.statusCode)")
-            return .sent(status: httpResponse.statusCode, body: body)
+            return .sent(status: httpResponse.statusCode, body: respBody)
         } catch {
             return .error(error.localizedDescription)
         }

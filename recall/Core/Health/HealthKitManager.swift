@@ -54,6 +54,10 @@ final class HealthKitManager {
     private var timer: Timer?
     private var observerQueries: [HKObserverQuery] = []
     private var isRestoring = false
+
+    // Observer wake tracking — key = HK identifier raw value (e.g. "HKQuantityTypeIdentifierHeartRate")
+    private var observerWakeCounts: [String: Int] = [:]
+    private var observerWakeLogTimer: Timer?
     private var sendInterval: TimeInterval {
         AppSettings.shared.telemetrySendInterval  // same as Location (default 60s)
     }
@@ -119,6 +123,9 @@ final class HealthKitManager {
         do {
             try await healthStore.requestAuthorization(toShare: [], read: readTypes)
             isAuthorized = true
+            // Re-register bg delivery after auth — iOS may have silently disabled it
+            // during long background kills or HealthKit permission state transitions.
+            setupBackgroundDelivery()
             return true
         } catch {
             let message = "Authorization failed: \(error.localizedDescription)"
@@ -134,9 +141,21 @@ final class HealthKitManager {
 
     /// Set up HKObserverQuery + enableBackgroundDelivery for key health types.
     /// iOS will wake the app when new samples arrive, even if the process was killed.
-    /// Call this from AppDelegate.didFinishLaunchingWithOptions.
+    /// Safe to call multiple times — tears down existing observers and disables prior
+    /// bg delivery before re-registering. Call from AppDelegate.didFinishLaunchingWithOptions
+    /// and again after authorization completes to recover from long-term iOS delivery failures.
     func setupBackgroundDelivery() {
         guard HKHealthStore.isHealthDataAvailable() else { return }
+
+        // Tear down existing observers to prevent duplicate wake callbacks
+        if !observerQueries.isEmpty {
+            teardownObserverQueries()
+            healthStore.disableAllBackgroundDelivery { success, error in
+                if let error {
+                    ActivityLogger.shared.logFromBackground(.health, "disableAllBackgroundDelivery error: \(error.localizedDescription)")
+                }
+            }
+        }
 
         let monitoredTypes: [HKQuantityTypeIdentifier] = [
             .stepCount,
@@ -156,6 +175,7 @@ final class HealthKitManager {
             }
 
             // Observer query fires when new samples arrive
+            let sampleTypeKey = sampleType.identifier
             let query = HKObserverQuery(sampleType: sampleType, predicate: nil) { [weak self] _, completionHandler, error in
                 guard error == nil else {
                     completionHandler()
@@ -167,6 +187,7 @@ final class HealthKitManager {
                         completionHandler()
                         return
                     }
+                    self.observerWakeCounts[sampleTypeKey, default: 0] += 1
                     await self.queryAndSend()
                     completionHandler()
                 }
@@ -183,6 +204,7 @@ final class HealthKitManager {
                 }
             }
 
+            let sleepKey = sleepType.identifier
             let query = HKObserverQuery(sampleType: sleepType, predicate: nil) { [weak self] _, completionHandler, error in
                 guard error == nil else {
                     completionHandler()
@@ -193,6 +215,7 @@ final class HealthKitManager {
                         completionHandler()
                         return
                     }
+                    self.observerWakeCounts[sleepKey, default: 0] += 1
                     await self.queryAndSend()
                     completionHandler()
                 }
@@ -201,7 +224,33 @@ final class HealthKitManager {
             observerQueries.append(query)
         }
 
+        startObserverWakeLogger()
+
         ActivityLogger.shared.log(.health, "Background delivery registered for \(monitoredTypes.count + 1) types (incl. sleep)")
+    }
+
+    /// Fire hourly timer to log observer wake counts, then reset.
+    /// Helps distinguish "observer firing but data missing" vs "observer never fires" (bg delivery dead).
+    private func startObserverWakeLogger() {
+        observerWakeLogTimer?.invalidate()
+        observerWakeLogTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.flushObserverWakeLog()
+            }
+        }
+    }
+
+    private func flushObserverWakeLog() {
+        guard !observerWakeCounts.isEmpty else {
+            ActivityLogger.shared.log(.health, "Observer wakes (1h): none")
+            return
+        }
+        let line = observerWakeCounts
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key.shortHK)=\($0.value)" }
+            .joined(separator: " ")
+        ActivityLogger.shared.log(.health, "Observer wakes (1h): \(line)")
+        observerWakeCounts.removeAll()
     }
 
     /// Stop observer queries (called on disable)
@@ -258,7 +307,17 @@ final class HealthKitManager {
             || summary.restingHeartRate != nil || summary.hrvAvgMs != nil
             || summary.distanceMeters != nil || summary.sleepMinutes != nil
         if !hasAnyData {
-            ActivityLogger.shared.log(.health, "All health metrics nil — skipping send (auth=\(isAuthorized))")
+            let states = [
+                "steps=\(summary.steps.map(String.init) ?? "–")",
+                "hr=\(summary.heartRateAvg.map { String(format: "%.0f", $0) } ?? "–")",
+                "kcal=\(summary.activeEnergyKcal.map { String(format: "%.0f", $0) } ?? "–")",
+                "spO2=\(summary.bloodOxygenPercent.map { String(format: "%.0f", $0) } ?? "–")",
+                "resting=\(summary.restingHeartRate.map { String(format: "%.0f", $0) } ?? "–")",
+                "hrv=\(summary.hrvAvgMs.map { String(format: "%.0f", $0) } ?? "–")",
+                "dist=\(summary.distanceMeters.map { String(format: "%.0f", $0) } ?? "–")",
+                "sleep=\(summary.sleepMinutes?.total.map { String(format: "%.0f", $0) } ?? "–")"
+            ].joined(separator: " ")
+            ActivityLogger.shared.log(.health, "Skipped: auth=\(isAuthorized) \(states)")
             lastSendResult = .error("all metrics nil")
             return
         }
@@ -310,7 +369,6 @@ final class HealthKitManager {
         // Per-metric query windows — widened for smart ring batch sync patterns
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: end)
-        let twoHoursAgo = end.addingTimeInterval(-2 * 3600)
         let twentyFourHoursAgo = end.addingTimeInterval(-24 * 3600)
 
         var summary = HealthSummary(periodStart: todayStart, periodEnd: end)
@@ -319,8 +377,8 @@ final class HealthKitManager {
         async let stepsResult = queryCumulativeSum(.stepCount, unit: .count(), from: todayStart, to: end)
         async let energyResult = queryCumulativeSum(.activeEnergyBurned, unit: .kilocalorie(), from: todayStart, to: end)
         async let distanceResult = queryCumulativeSum(.distanceWalkingRunning, unit: .meter(), from: todayStart, to: end)
-        // Heart rate — last 2 hours (smart rings batch-sync, not realtime like Watch)
-        async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twoHoursAgo, to: end)
+        // Heart rate — 24h window (smart rings batch-sync, may write hours after measurement)
+        async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
         // Vitals — last 24 hours (resting HR, HRV, SpO2 are typically calculated once per sleep/day)
         async let restingHRResult = queryLatestSample(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
         async let hrvResult = queryDiscreteAvg(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: twentyFourHoursAgo, to: end)
@@ -374,7 +432,10 @@ final class HealthKitManager {
         from start: Date,
         to end: Date
     ) async -> Double? {
-        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return nil }
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
+            return nil
+        }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
 
         return await withCheckedContinuation { continuation in
@@ -382,8 +443,10 @@ final class HealthKitManager {
                 quantityType: type,
                 quantitySamplePredicate: predicate,
                 options: .cumulativeSum
-            ) { _, stats, _ in
-                continuation.resume(returning: stats?.sumQuantity()?.doubleValue(for: unit))
+            ) { _, stats, error in
+                let value = stats?.sumQuantity()?.doubleValue(for: unit)
+                Self.logHK("\(identifier.rawValue.shortHK): \(value.map { String(format: "%.1f", $0) } ?? (error.map { "err(\($0.localizedDescription))" } ?? "empty"))")
+                continuation.resume(returning: value)
             }
             healthStore.execute(query)
         }
@@ -395,21 +458,28 @@ final class HealthKitManager {
         from start: Date,
         to end: Date
     ) async -> (avg: Double, min: Double, max: Double)? {
-        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return nil }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
+            return nil
+        }
+        // .strictEndDate: smart ring samples may have startDate before the window
+        // but endDate inside the window (batched overnight syncs).
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
 
         return await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
                 options: [.discreteAverage, .discreteMin, .discreteMax]
-            ) { _, stats, _ in
+            ) { _, stats, error in
                 guard let avg = stats?.averageQuantity()?.doubleValue(for: unit),
                       let min = stats?.minimumQuantity()?.doubleValue(for: unit),
                       let max = stats?.maximumQuantity()?.doubleValue(for: unit) else {
+                    Self.logHK("\(identifier.rawValue.shortHK): \(error.map { "err(\($0.localizedDescription))" } ?? "empty")")
                     continuation.resume(returning: nil)
                     return
                 }
+                Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", avg)) min=\(String(format: "%.1f", min)) max=\(String(format: "%.1f", max))")
                 continuation.resume(returning: (avg, min, max))
             }
             healthStore.execute(query)
@@ -422,16 +492,22 @@ final class HealthKitManager {
         from start: Date,
         to end: Date
     ) async -> Double? {
-        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return nil }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
+            return nil
+        }
+        // .strictEndDate for smart ring batch-sync samples
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
 
         return await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
                 options: .discreteAverage
-            ) { _, stats, _ in
-                continuation.resume(returning: stats?.averageQuantity()?.doubleValue(for: unit))
+            ) { _, stats, error in
+                let value = stats?.averageQuantity()?.doubleValue(for: unit)
+                Self.logHK("\(identifier.rawValue.shortHK): \(value.map { "avg=" + String(format: "%.1f", $0) } ?? (error.map { "err(\($0.localizedDescription))" } ?? "empty"))")
+                continuation.resume(returning: value)
             }
             healthStore.execute(query)
         }
@@ -443,8 +519,12 @@ final class HealthKitManager {
         from start: Date,
         to end: Date
     ) async -> Double? {
-        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return nil }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
+            return nil
+        }
+        // .strictEndDate for smart ring batch-sync samples
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
 
         return await withCheckedContinuation { continuation in
@@ -453,8 +533,10 @@ final class HealthKitManager {
                 predicate: predicate,
                 limit: 1,
                 sortDescriptors: [sortDescriptor]
-            ) { _, samples, _ in
-                continuation.resume(returning: (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
+            ) { _, samples, error in
+                let value = (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit)
+                Self.logHK("\(identifier.rawValue.shortHK): \(value.map { String(format: "%.2f", $0) } ?? (error.map { "err(\($0.localizedDescription))" } ?? "empty"))")
+                continuation.resume(returning: value)
             }
             healthStore.execute(query)
         }
@@ -474,8 +556,9 @@ final class HealthKitManager {
                 predicate: predicate,
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: [sortDescriptor]
-            ) { _, samples, _ in
+            ) { _, samples, error in
                 guard let samples = samples as? [HKCategorySample], !samples.isEmpty else {
+                    Self.logHK("sleep: \(error.map { "err(\($0.localizedDescription))" } ?? "empty")")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -506,6 +589,7 @@ final class HealthKitManager {
                 }
 
                 summary.total = totalMinutes
+                Self.logHK("sleep: total=\(String(format: "%.0f", totalMinutes))m deep=\(Int(summary.deep ?? 0)) rem=\(Int(summary.rem ?? 0)) core=\(Int(summary.core ?? 0)) awake=\(Int(summary.awake ?? 0)) n=\(samples.count)")
                 continuation.resume(returning: summary)
             }
             healthStore.execute(query)
@@ -566,6 +650,27 @@ final class HealthKitManager {
         case .mixedCardio: return "mixed_cardio"
         default: return "other"
         }
+    }
+}
+
+private extension HealthKitManager {
+    /// Nonisolated log helper — safe to call from HKSampleQuery/HKStatisticsQuery
+    /// completion handlers which run on background queues.
+    nonisolated static func logHK(_ message: String) {
+        ActivityLogger.shared.logFromBackground(.health, "HK " + message)
+    }
+}
+
+private extension String {
+    /// Short forms for HealthKit identifier raw values to keep log lines compact.
+    /// e.g. "HKQuantityTypeIdentifierHeartRate" -> "heartRate"
+    var shortHK: String {
+        let prefix = "HKQuantityTypeIdentifier"
+        if hasPrefix(prefix) {
+            let trimmed = String(dropFirst(prefix.count))
+            return trimmed.prefix(1).lowercased() + trimmed.dropFirst()
+        }
+        return self
     }
 }
 
