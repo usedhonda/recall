@@ -8,7 +8,9 @@ struct HealthSummary: Codable {
     // Activity
     var steps: Int?
     var activeEnergyKcal: Double?
+    var basalEnergyKcal: Double?
     var distanceMeters: Double?
+    var flightsClimbed: Int?
 
     // Heart
     var heartRateAvg: Double?
@@ -23,6 +25,9 @@ struct HealthSummary: Codable {
 
     // Body
     var bodyMassKg: Double?
+    var bodyFatPercent: Double?
+    var leanBodyMassKg: Double?
+    var bmi: Double?
     var bodyTemperatureCelsius: Double?
     var wristTemperatureCelsius: Double?
 
@@ -40,7 +45,9 @@ extension HealthSummary {
         var parts: [String] = []
         if let v = steps { parts.append("steps=\(v)") }
         if let v = activeEnergyKcal { parts.append("kcal=\(String(format: "%.0f", v))") }
+        if let v = basalEnergyKcal { parts.append("basal=\(String(format: "%.0f", v))") }
         if let v = distanceMeters { parts.append("dist=\(String(format: "%.0f", v))") }
+        if let v = flightsClimbed { parts.append("flights=\(v)") }
         if let v = heartRateAvg { parts.append("hr=\(String(format: "%.0f", v))") }
         if let v = heartRateMin { parts.append("hrMin=\(String(format: "%.0f", v))") }
         if let v = heartRateMax { parts.append("hrMax=\(String(format: "%.0f", v))") }
@@ -49,6 +56,9 @@ extension HealthSummary {
         if let v = bloodOxygenPercent { parts.append("spO2=\(String(format: "%.0f", v))") }
         if let v = respiratoryRateAvg { parts.append("resp=\(String(format: "%.0f", v))") }
         if let v = bodyMassKg { parts.append("mass=\(String(format: "%.1f", v))") }
+        if let v = bodyFatPercent { parts.append("bodyFat=\(String(format: "%.1f", v))%") }
+        if let v = leanBodyMassKg { parts.append("lean=\(String(format: "%.1f", v))kg") }
+        if let v = bmi { parts.append("bmi=\(String(format: "%.1f", v))") }
         if let v = bodyTemperatureCelsius { parts.append("bodyTemp=\(String(format: "%.1f", v))") }
         if let v = wristTemperatureCelsius { parts.append("wristTemp=\(String(format: "%.1f", v))") }
         if let s = sleepMinutes, let t = s.total { parts.append("sleep=\(String(format: "%.0f", t))m") }

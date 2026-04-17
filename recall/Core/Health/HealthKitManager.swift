@@ -89,10 +89,15 @@ final class HealthKitManager {
             .restingHeartRate,
             .heartRateVariabilitySDNN,
             .activeEnergyBurned,
+            .basalEnergyBurned,
             .distanceWalkingRunning,
+            .flightsClimbed,
             .oxygenSaturation,
             .respiratoryRate,
             .bodyMass,
+            .bodyFatPercentage,
+            .leanBodyMass,
+            .bodyMassIndex,
             .bodyTemperature,
             .appleSleepingWristTemperature,
         ]
@@ -370,13 +375,16 @@ final class HealthKitManager {
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: end)
         let twentyFourHoursAgo = end.addingTimeInterval(-24 * 3600)
+        let fourteenDaysAgo = end.addingTimeInterval(-14 * 24 * 3600)
 
         var summary = HealthSummary(periodStart: todayStart, periodEnd: end)
 
         // Cumulative daily totals — today 00:00 to now
         async let stepsResult = queryCumulativeSum(.stepCount, unit: .count(), from: todayStart, to: end)
         async let energyResult = queryCumulativeSum(.activeEnergyBurned, unit: .kilocalorie(), from: todayStart, to: end)
+        async let basalEnergyResult = queryCumulativeSum(.basalEnergyBurned, unit: .kilocalorie(), from: todayStart, to: end)
         async let distanceResult = queryCumulativeSum(.distanceWalkingRunning, unit: .meter(), from: todayStart, to: end)
+        async let flightsResult = queryCumulativeSum(.flightsClimbed, unit: .count(), from: todayStart, to: end)
         // Heart rate — 24h window (smart rings batch-sync, may write hours after measurement)
         async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
         // Vitals — last 24 hours (resting HR, HRV, SpO2 are typically calculated once per sleep/day)
@@ -384,8 +392,11 @@ final class HealthKitManager {
         async let hrvResult = queryDiscreteAvg(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: twentyFourHoursAgo, to: end)
         async let oxygenResult = queryLatestSample(.oxygenSaturation, unit: .percent(), from: twentyFourHoursAgo, to: end)
         async let respiratoryResult = queryDiscreteAvg(.respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
-        // Body metrics — last 24 hours
-        async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: twentyFourHoursAgo, to: end)
+        // Body metrics — 14 days for low-frequency body composition measurements
+        async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: fourteenDaysAgo, to: end)
+        async let bodyFatResult = queryLatestSample(.bodyFatPercentage, unit: .percent(), from: fourteenDaysAgo, to: end)
+        async let leanBodyMassResult = queryLatestSample(.leanBodyMass, unit: .gramUnit(with: .kilo), from: fourteenDaysAgo, to: end)
+        async let bmiResult = queryLatestSample(.bodyMassIndex, unit: .count(), from: fourteenDaysAgo, to: end)
         async let bodyTempResult = queryLatestSample(.bodyTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
         async let wristTempResult = queryLatestSample(.appleSleepingWristTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
         // Sleep — look back 24 hours to capture full sleep sessions.
@@ -399,7 +410,11 @@ final class HealthKitManager {
             summary.steps = Int(steps)
         }
         summary.activeEnergyKcal = await energyResult
+        summary.basalEnergyKcal = await basalEnergyResult
         summary.distanceMeters = await distanceResult
+        if let flights = await flightsResult {
+            summary.flightsClimbed = Int(flights)
+        }
 
         if let hr = await heartRateResult {
             summary.heartRateAvg = hr.avg
@@ -416,6 +431,11 @@ final class HealthKitManager {
 
         summary.respiratoryRateAvg = await respiratoryResult
         summary.bodyMassKg = await bodyMassResult
+        if let bodyFat = await bodyFatResult {
+            summary.bodyFatPercent = bodyFat * 100
+        }
+        summary.leanBodyMassKg = await leanBodyMassResult
+        summary.bmi = await bmiResult
         summary.bodyTemperatureCelsius = await bodyTempResult
         summary.wristTemperatureCelsius = await wristTempResult
         summary.sleepMinutes = await sleepResult
