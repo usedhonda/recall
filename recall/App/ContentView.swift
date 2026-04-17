@@ -33,7 +33,10 @@ struct ContentView: View {
                     Label("UPLOAD", systemImage: "arrow.up")
                 }
 
-            SettingsView()
+            NavigationStack {
+                SettingsView()
+                    .toolbar(.hidden, for: .navigationBar)
+            }
                 .tabItem {
                     Label("CONFIG", systemImage: "slider.horizontal.3")
                 }
