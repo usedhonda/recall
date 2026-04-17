@@ -17,6 +17,9 @@ struct SettingsView: View {
                     healthSection
                     locationSection
                     deviceSection
+#if DEBUG
+                    debugSection
+#endif
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
@@ -362,6 +365,31 @@ struct SettingsView: View {
             .hudCard()
         }
     }
+
+#if DEBUG
+    // MARK: - Debug
+
+    @ViewBuilder
+    private var debugSection: some View {
+        VStack(spacing: 8) {
+            HUDSectionHeader(title: "Debug", color: RecallTheme.Colors.neonAmber)
+            NavigationLink {
+                HealthKitInspectorView()
+            } label: {
+                HStack {
+                    Text("HEALTHKIT INSPECTOR")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.textPrimary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.neonAmber)
+                }
+            }
+            .hudCard(borderColor: RecallTheme.Colors.neonAmber.opacity(0.35))
+        }
+    }
+#endif
 
     // MARK: - Reusable Controls
 
