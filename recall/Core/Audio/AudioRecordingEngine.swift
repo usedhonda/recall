@@ -172,20 +172,20 @@ final class AudioRecordingEngine {
         // Reset ring buffer
         ringBuffer.reset()
 
-        // Setup audio engine tap
+        // Setup audio engine tap (Phase A: format-validated install)
         let inputNode = audioEngine.inputNode
-        let hwFormat = inputNode.outputFormat(forBus: 0)
+        let hwFormat: AVAudioFormat
+        do {
+            hwFormat = try safeInstallTap(on: inputNode, source: "start")
+        } catch {
+            activity.log(.error, snapshotAudioState(prefix: "start failed"))
+            consecutiveRestartFailures += 1
+            scheduleRecoveryRetry(reason: "start invalid format")
+            throw error
+        }
         let hwSampleRate = hwFormat.sampleRate
 
         logger.info("Hardware sample rate: \(hwSampleRate) Hz, channels: \(hwFormat.channelCount)")
-
-        // Remove any existing tap to prevent double-install crash (SIGABRT)
-        // Safe no-op if no tap is installed
-        inputNode.removeTap(onBus: 0)
-
-        inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
-            self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
-        }
 
         audioEngine.prepare()
         try audioEngine.start()
@@ -234,6 +234,9 @@ final class AudioRecordingEngine {
         pendingSegmentBuffer = []
         pendingChunkStartedAt = nil
 
+        // Release silent keepalive on user stop (was previously never called)
+        BackgroundKeepAlive.shared.stop()
+
         logger.info("Recording engine stopped")
         activity.log(.state, "Engine stopped (user)")
         activity.log(.state, "Engine stopped")
@@ -265,7 +268,8 @@ final class AudioRecordingEngine {
 
                 // Heartbeat: always log watchdog cycle for liveness monitoring
                 let route = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portType.rawValue ?? "none"
-                let sr = Int(self.audioEngine.inputNode.outputFormat(forBus: 0).sampleRate)
+                let hwFmt = self.audioEngine.inputNode.outputFormat(forBus: 0)
+                let sr = hwFmt.sampleRate > 0 ? Int(hwFmt.sampleRate) : -1
                 self.activity.log(.state, "WD \(self.state.rawValue) eng=\(self.audioEngine.isRunning) ka=\(BackgroundKeepAlive.shared.isPlaying) \(sr)Hz \(route)")
 
                 switch self.state {
@@ -856,6 +860,7 @@ final class AudioRecordingEngine {
     private func resumeAfterInterruption(attempt: Int = 1) {
         let maxAttempts = 3
         logger.info("Resuming after interruption (attempt \(attempt)/\(maxAttempts))")
+        activity.log(.state, snapshotAudioState(prefix: "resume enter attempt=\(attempt)"))
 
         // On retry attempts, stop and reinstall tap (avoid reset to preserve sample rate)
         if attempt > 1 {
@@ -866,13 +871,16 @@ final class AudioRecordingEngine {
         do {
             try sessionManager.configure()
 
-            // Re-install tap if engine was reset
+            // Re-install tap if engine was reset (Phase A: format-validated)
             if attempt > 1 {
                 let inputNode = audioEngine.inputNode
-                let hwFormat = inputNode.outputFormat(forBus: 0)
-                let hwSampleRate = hwFormat.sampleRate
-                inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
-                    self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
+                do {
+                    _ = try safeInstallTap(on: inputNode, source: "resume-attempt-\(attempt)")
+                } catch {
+                    activity.log(.error, snapshotAudioState(prefix: "resume invalid"))
+                    consecutiveRestartFailures += 1
+                    scheduleRecoveryRetry(reason: "resume invalid format")
+                    return
                 }
                 audioEngine.prepare()
             }
@@ -922,6 +930,8 @@ final class AudioRecordingEngine {
         isRestarting = true
         defer { isRestarting = false }
 
+        activity.log(.state, snapshotAudioState(prefix: "restart enter"))
+
         // Cancel existing processing (but NOT watchdog)
         processingTask?.cancel()
         processingTask = nil
@@ -930,21 +940,15 @@ final class AudioRecordingEngine {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
 
-        // Re-setup and start
+        // Re-setup and start (Phase A: safeInstallTap throws on bad format)
         do {
             try sessionManager.configure()
 
             let inputNode = audioEngine.inputNode
-            let hwFormat = inputNode.outputFormat(forBus: 0)
+            let hwFormat = try safeInstallTap(on: inputNode, source: "restart-soft")
             let hwSampleRate = hwFormat.sampleRate
 
             activity.log(.state, "Restart: format \(Int(hwSampleRate))Hz ch=\(hwFormat.channelCount)")
-
-            // Defensive: remove tap again right before install (guard against stale tap)
-            inputNode.removeTap(onBus: 0)
-            inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
-                self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
-            }
 
             audioEngine.prepare()
             try audioEngine.start()
@@ -956,20 +960,19 @@ final class AudioRecordingEngine {
 
             consecutiveRestartFailures = 0
             activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
+            activity.log(.state, snapshotAudioState(prefix: "restart done"))
         } catch {
             // If stop+start fails, try with full reset as last resort
             activity.log(.error, "Soft restart failed: \(error.localizedDescription), trying hard reset")
+            activity.log(.error, snapshotAudioState(prefix: "soft fail"))
             audioEngine.reset()
             do {
                 try sessionManager.configure()
                 let inputNode = audioEngine.inputNode
-                let hwFormat = inputNode.outputFormat(forBus: 0)
+                let hwFormat = try safeInstallTap(on: inputNode, source: "restart-hard")
                 let hwSampleRate = hwFormat.sampleRate
                 activity.log(.state, "Hard reset format: \(Int(hwSampleRate))Hz")
 
-                inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
-                    self?.handleAudioBuffer(buffer, hardwareSampleRate: hwSampleRate)
-                }
                 audioEngine.prepare()
                 try audioEngine.start()
                 state = .listening
@@ -979,6 +982,7 @@ final class AudioRecordingEngine {
                 BackgroundKeepAlive.shared.resumePlayback()
                 consecutiveRestartFailures = 0
                 activity.log(.state, "Engine restarted (hard) — Listening (\(Int(hwSampleRate))Hz)")
+                activity.log(.state, snapshotAudioState(prefix: "restart done (hard)"))
             } catch {
                 consecutiveRestartFailures += 1
                 logger.error("Failed to restart engine: \(error.localizedDescription)")
@@ -987,7 +991,68 @@ final class AudioRecordingEngine {
                 if consecutiveRestartFailures >= maxRestartBeforeRecreate {
                     activity.log(.error, "Engine restart failed \(consecutiveRestartFailures)x — needs full recreate by HealthMonitor")
                 }
+                activity.log(.error, snapshotAudioState(prefix: "hard fail"))
+                scheduleRecoveryRetry(reason: "restart hard failed")
             }
         }
+    }
+
+    // MARK: - installTap Safety / Recovery (Phase A)
+
+    private enum AudioFormatError: Error {
+        case invalidFormat(sampleRate: Double, channels: AVAudioChannelCount)
+    }
+
+    private func safeInstallTap(on inputNode: AVAudioInputNode, source: String) throws -> AVAudioFormat {
+        let hwFormat = inputNode.outputFormat(forBus: 0)
+        let sr = hwFormat.sampleRate
+        let ch = hwFormat.channelCount
+
+        activity.log(.state, "installTap pre [src=\(source)] sr=\(sr) ch=\(ch) fmt=\(hwFormat.commonFormat.rawValue)")
+
+        guard sr > 0, ch > 0 else {
+            activity.log(.error, "Invalid hwFormat [src=\(source)] sr=\(sr) ch=\(ch) — abort installTap")
+            throw AudioFormatError.invalidFormat(sampleRate: sr, channels: ch)
+        }
+
+        inputNode.removeTap(onBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
+            self?.handleAudioBuffer(buffer, hardwareSampleRate: sr)
+        }
+        return hwFormat
+    }
+
+    private func scheduleRecoveryRetry(reason: String) {
+        let attempt = consecutiveRestartFailures
+        let delaySec: Double
+        switch attempt {
+        case ..<2: delaySec = 2
+        case 2:    delaySec = 4
+        case 3:    delaySec = 8
+        default:   delaySec = 15
+        }
+        activity.log(.state, "Recovery scheduled in \(Int(delaySec))s (reason=\(reason), failures=\(attempt))")
+
+        resumeRetryTask?.cancel()
+        resumeRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delaySec))
+            guard let self else { return }
+            guard !self.userStopped else { return }
+            self.restartEngine()
+        }
+    }
+
+    private func snapshotAudioState(prefix: String) -> String {
+        let session = AVAudioSession.sharedInstance()
+        let route = session.currentRoute
+        let inPort = route.inputs.first?.portType.rawValue ?? "none"
+        let outPort = route.outputs.first?.portType.rawValue ?? "none"
+        let cat = session.category.rawValue
+        let mode = session.mode.rawValue
+        let sr = session.sampleRate
+        let buf = session.ioBufferDuration
+        let mic = sessionManager.desiredMicMode.rawValue
+        let other = session.isOtherAudioPlaying
+        return "\(prefix) cat=\(cat) mode=\(mode) sr=\(sr) buf=\(buf) in=\(inPort) out=\(outPort) mic=\(mic) other=\(other)"
     }
 }
