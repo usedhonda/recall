@@ -53,6 +53,16 @@ final class AudioSessionManager {
         try session.setActive(true, options: [])
         let mode = desiredMicMode == .bluetoothHFP ? "HFP+A2DP" : "A2DP only"
         logger.info("Audio session configured (\(mode))")
+
+        // Post-configure snapshot — captures the actual session state right after setActive succeeds.
+        // The engine-side `restart enter` snapshot fires before configure(), so this is the only
+        // place where we can confirm the session was actually promoted to .playAndRecord.
+        let route = session.currentRoute
+        let inPort = route.inputs.first?.portType.rawValue ?? "none"
+        let outPort = route.outputs.first?.portType.rawValue ?? "none"
+        Task { @MainActor in
+            ActivityLogger.shared.log(.state, "session configured cat=\(session.category.rawValue) mode=\(session.mode.rawValue) sr=\(session.sampleRate) buf=\(session.ioBufferDuration) in=\(inPort) out=\(outPort) other=\(session.isOtherAudioPlaying)")
+        }
     }
 
     func deactivate() {

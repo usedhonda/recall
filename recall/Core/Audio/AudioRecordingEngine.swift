@@ -207,7 +207,12 @@ final class AudioRecordingEngine {
         startWatchdog()
     }
 
-    func stop() {
+    /// Stop the engine.
+    /// - Parameter intentional: `true` only for true user-initiated stops (UI Stop button).
+    ///   When `false` (default), this is an internal teardown for recreate/retry — `userStopped`
+    ///   is NOT set so HealthMonitor/resumeAfterInterruption can still recover, and
+    ///   `BackgroundKeepAlive` is NOT stopped (otherwise retry storms become self-amplifying).
+    func stop(intentional: Bool = false) {
         watchdogTask?.cancel()
         watchdogTask = nil
         processingTask?.cancel()
@@ -226,7 +231,6 @@ final class AudioRecordingEngine {
         }
 
         state = .idle
-        userStopped = true
         currentRMS = 0
         vadProbability = 0
         silenceStart = nil
@@ -234,12 +238,15 @@ final class AudioRecordingEngine {
         pendingSegmentBuffer = []
         pendingChunkStartedAt = nil
 
-        // Release silent keepalive on user stop (was previously never called)
-        BackgroundKeepAlive.shared.stop()
-
-        logger.info("Recording engine stopped")
-        activity.log(.state, "Engine stopped (user)")
-        activity.log(.state, "Engine stopped")
+        if intentional {
+            userStopped = true
+            BackgroundKeepAlive.shared.stop()
+            logger.info("Recording engine stopped (user)")
+            activity.log(.state, "Engine stopped (user)")
+        } else {
+            logger.info("Recording engine stopped (internal)")
+            activity.log(.state, "Engine stopped (internal)")
+        }
     }
 
     // MARK: - Audio Buffer Handling (called from audio thread)
@@ -1001,9 +1008,42 @@ final class AudioRecordingEngine {
 
     private enum AudioFormatError: Error {
         case invalidFormat(sampleRate: Double, channels: AVAudioChannelCount)
+        case invalidSessionCategory(String)
+        case noInputRoute
+        case invalidSessionState(sampleRate: Double, ioBuffer: TimeInterval)
+        /// installTap raised NSException — engine instance is poisoned, must be recreated.
+        case installTapException(String)
     }
 
     private func safeInstallTap(on inputNode: AVAudioInputNode, source: String) throws -> AVAudioFormat {
+        // Gate 1: session must be in .playAndRecord. SoloAmbient = iOS default = recall lost
+        // its session config (e.g. setActive failed earlier). Installing a tap in this state
+        // raises NSException because input bus has no route.
+        let session = AVAudioSession.sharedInstance()
+        let cat = session.category
+        guard cat == .playAndRecord else {
+            activity.log(.error, "Bad session category [src=\(source)] cat=\(cat.rawValue) — abort installTap")
+            throw AudioFormatError.invalidSessionCategory(cat.rawValue)
+        }
+
+        // Gate 2: must have an input route. installTap on a route-less input bus raises NSException
+        // even when the cached hwFormat looks valid.
+        guard !session.currentRoute.inputs.isEmpty else {
+            activity.log(.error, "No input route [src=\(source)] — abort installTap")
+            throw AudioFormatError.noInputRoute
+        }
+
+        // Gate 3: session state itself must be valid. Zero sampleRate or ioBufferDuration is a
+        // sign the session was configured but not yet activated, or activation failed silently.
+        let sessSR = session.sampleRate
+        let sessBuf = session.ioBufferDuration
+        guard sessSR > 0, sessBuf > 0 else {
+            activity.log(.error, "Bad session state [src=\(source)] sr=\(sessSR) buf=\(sessBuf) — abort installTap")
+            throw AudioFormatError.invalidSessionState(sampleRate: sessSR, ioBuffer: sessBuf)
+        }
+
+        // Gate 4: hardware format must report non-zero sr/ch. Cached value can lie about route
+        // status, so this is the last-line check before installTap.
         let hwFormat = inputNode.outputFormat(forBus: 0)
         let sr = hwFormat.sampleRate
         let ch = hwFormat.channelCount
@@ -1016,8 +1056,25 @@ final class AudioRecordingEngine {
         }
 
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: hwFormat) { [weak self] buffer, _ in
-            self?.handleAudioBuffer(buffer, hardwareSampleRate: sr)
+
+        // Phase B last-line defense: even after all the gates above, AVAudioEngine can still
+        // raise NSException from installTap (route flicker, contention with another app, etc).
+        // The Obj-C bridge converts NSException into a Swift-catchable throw via NSError out-param,
+        // which Swift presents as `throws` (no `error:` argument).
+        do {
+            try InstallTapBridge.installTap(
+                on: inputNode,
+                bus: 0,
+                bufferSize: tapBufferSize,
+                format: hwFormat,
+                block: { [weak self] buffer, _ in
+                    self?.handleAudioBuffer(buffer, hardwareSampleRate: sr)
+                }
+            )
+        } catch {
+            let reason = (error as NSError).localizedDescription
+            activity.log(.error, "installTap NSException [src=\(source)] \(reason) — engine must be recreated")
+            throw AudioFormatError.installTapException(reason)
         }
         return hwFormat
     }

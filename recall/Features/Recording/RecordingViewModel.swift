@@ -168,17 +168,35 @@ final class RecordingViewModel {
         }
     }
 
+    /// Backoff schedule (seconds). Permanent but sparse — no cap on attempts,
+    /// just sparser cadence so we don't burn battery / iOS scheduling budget.
+    /// Index 0..6, then stays at 1800 (30 min) forever.
+    private static let retryBackoffSeconds: [Int] = [10, 30, 60, 120, 300, 900, 1800]
+
+    private static let cannotInterruptOthersOSStatus: Int = 560557684
+
+    private func backoffDelay(attempt: Int) -> Int {
+        let i = min(attempt, Self.retryBackoffSeconds.count - 1)
+        return Self.retryBackoffSeconds[i]
+    }
+
     private func scheduleBackgroundRetry(modelContainer: ModelContainer) {
         retryTask?.cancel()
         retryTask = Task { [weak self] in
             var attempt = 0
+            var intLaneAttempt = 0   // long-backoff lane for !int (cannotInterruptOthers)
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(10))
+                // Choose backoff: !int gets longer waits, normal failures get standard ladder
+                let delaySec = intLaneAttempt > 0
+                    ? self?.backoffDelay(attempt: intLaneAttempt + 1) ?? 60
+                    : self?.backoffDelay(attempt: attempt) ?? 30
+                try? await Task.sleep(for: .seconds(delaySec))
                 guard let self, !Task.isCancelled else { return }
                 guard self.engine?.state == .idle else { return } // recovered
                 attempt += 1
-                ActivityLogger.shared.log(.state, "Background retry #\(attempt)")
-                self.engine?.stop()
+                let lane = intLaneAttempt > 0 ? "intLane=\(intLaneAttempt)" : "normal"
+                ActivityLogger.shared.log(.state, "Background retry #\(attempt) (delay=\(delaySec)s, \(lane))")
+                self.engine?.stop()   // intentional: false — keepalive stays alive
                 self.engine = nil
                 self.engine = AudioRecordingEngine()
                 self.engine?.setModelContainer(modelContainer)
@@ -195,7 +213,16 @@ final class RecordingViewModel {
                     self.startMusicAutoSwitch()
                     return
                 } catch {
-                    ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: \(error.localizedDescription)")
+                    let desc = error.localizedDescription
+                    let isIntConflict = (error as NSError).code == Self.cannotInterruptOthersOSStatus
+                        || desc.contains("\(Self.cannotInterruptOthersOSStatus)")
+                    if isIntConflict {
+                        intLaneAttempt += 1
+                        ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: !int (cannotInterruptOthers) — long backoff lane=\(intLaneAttempt)")
+                    } else {
+                        intLaneAttempt = 0   // exit lane on non-!int failure
+                        ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: \(desc)")
+                    }
                 }
             }
         }
@@ -234,7 +261,7 @@ final class RecordingViewModel {
         healthCheckTask = nil
         retryTask?.cancel()
         retryTask = nil
-        engine?.stop()
+        engine?.stop(intentional: true)
         UploadManager.shared.stopProcessing()
         logger.info("Recording stopped")
         syncSharedState()

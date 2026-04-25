@@ -52,6 +52,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SDKROOT: iphoneos
         SUPPORTS_MACCATALYST: false
+        SWIFT_OBJC_BRIDGING_HEADER: recall/recall-Bridging-Header.h
+        CLANG_ENABLE_OBJC_ARC: "YES"
     dependencies:
       - package: FluidAudio
         product: FluidAudio
