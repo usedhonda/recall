@@ -323,7 +323,8 @@ struct RecordingView: View {
                 icon: "sunglasses.fill",
                 label: glassesLabel,
                 isActive: telemetry.photoScanCoordinator.isEnabled,
-                neonColor: RecallTheme.Colors.neonAmber
+                neonColor: RecallTheme.Colors.neonAmber,
+                iconScale: .small
             ) {
                 if telemetry.photoScanCoordinator.isEnabled {
                     telemetry.photoScanCoordinator.stop()

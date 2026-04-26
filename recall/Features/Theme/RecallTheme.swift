@@ -189,6 +189,7 @@ struct CyberpunkStreamToggle: View {
     let label: String
     let isActive: Bool
     let neonColor: Color
+    var iconScale: Image.Scale = .medium
     let action: () -> Void
 
     @State private var borderPulse = false
@@ -198,6 +199,8 @@ struct CyberpunkStreamToggle: View {
             VStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.title3)
+                    .imageScale(iconScale)
+                    .frame(height: 22)
                 Text(label.uppercased())
                     .font(RecallTheme.Fonts.hudMicro)
                 Text(isActive ? "ON" : "OFF")
