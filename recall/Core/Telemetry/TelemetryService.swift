@@ -9,8 +9,9 @@ final class TelemetryService {
 
     let healthManager = HealthKitManager()
     let locationManager = LocationManager()
-    let motionManager = MotionActivityManager()
     let nowPlayingManager = NowPlayingManager()
+    let photoLibraryAuthorizer: PhotoLibraryAuthorizer
+    let photoScanCoordinator: PhotoScanCoordinator
 
     private(set) var isActive = false
 
@@ -26,7 +27,11 @@ final class TelemetryService {
         return URLSession(configuration: config)
     }()
 
-    private init() {}
+    private init() {
+        let authorizer = PhotoLibraryAuthorizer()
+        self.photoLibraryAuthorizer = authorizer
+        self.photoScanCoordinator = PhotoScanCoordinator(authorizer: authorizer)
+    }
 
     // MARK: - Lifecycle
 
@@ -59,11 +64,10 @@ final class TelemetryService {
         // Restore and start location if enabled
         locationManager.restoreSettings()
 
-        // Restore motion and now playing
-        motionManager.restoreSettings()
+        // Restore now playing
         nowPlayingManager.restoreSettings()
 
-        ActivityLogger.shared.log(.telemetry, "Health: \(healthManager.isEnabled), Location: \(locationManager.isEnabled) (auth=\(locationManager.hasAuthorization)), Motion: \(motionManager.isEnabled), NowPlaying: \(nowPlayingManager.isEnabled)")
+        ActivityLogger.shared.log(.telemetry, "Health: \(healthManager.isEnabled), Location: \(locationManager.isEnabled) (auth=\(locationManager.hasAuthorization)), NowPlaying: \(nowPlayingManager.isEnabled)")
     }
 
     func stop() {
@@ -72,7 +76,6 @@ final class TelemetryService {
         healthManager.isEnabled = false
         locationManager.stopUpdates()
         locationManager.isEnabled = false
-        motionManager.stop()
         nowPlayingManager.stop()
         ActivityLogger.shared.log(.telemetry, "TelemetryService stopped")
     }
@@ -111,7 +114,6 @@ final class TelemetryService {
                     timestamp: payload.timestamp
                 ),
             ],
-            motion: motionManager.snapshot,
             nowPlaying: nowPlayingManager.snapshot
         )
 
@@ -173,7 +175,7 @@ final class TelemetryService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("recall-ios/1.0", forHTTPHeaderField: "User-Agent")
 
-        let batch = TelemetrySampleBatch(samples: [], health: summary, motion: motionManager.snapshot, nowPlaying: nowPlayingManager.snapshot)
+        let batch = TelemetrySampleBatch(samples: [], health: summary, nowPlaying: nowPlayingManager.snapshot)
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

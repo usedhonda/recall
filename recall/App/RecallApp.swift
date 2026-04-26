@@ -7,7 +7,7 @@ struct RecallApp: App {
     @State private var recordingViewModel = RecordingViewModel()
 
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([AudioChunk.self])
+        let schema = Schema([AudioChunk.self, MediaChunk.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
             return try ModelContainer(for: schema, configurations: [config])
@@ -68,6 +68,25 @@ struct RecallApp: App {
 
                     // Start telemetry (health + location)
                     TelemetryService.shared.start()
+
+                    // Auto-start Ray-Ban Meta photo import if enabled
+                    ActivityLogger.shared.log(.telemetry, "[photo] startup gate: enabled=\(AppSettings.shared.glassesAutoImportEnabled)")
+                    if AppSettings.shared.glassesAutoImportEnabled {
+                        let authorizer = TelemetryService.shared.photoLibraryAuthorizer
+                        authorizer.refresh()
+                        ActivityLogger.shared.log(.telemetry, "[photo] auth status (initial): \(PhotoLibraryAuthorizer.statusName(authorizer.status))")
+                        if !authorizer.canRead {
+                            _ = await authorizer.requestReadWrite()
+                            ActivityLogger.shared.log(.telemetry, "[photo] auth status (after request): \(PhotoLibraryAuthorizer.statusName(authorizer.status))")
+                        }
+                        if authorizer.canRead {
+                            TelemetryService.shared.photoScanCoordinator.setModelContainer(sharedModelContainer)
+                            TelemetryService.shared.photoScanCoordinator.start()
+                            MediaUploadManager.shared.startProcessing(modelContainer: sharedModelContainer)
+                        } else {
+                            ActivityLogger.shared.log(.error, "[photo] startup blocked — cannot read library")
+                        }
+                    }
                 }
                 .task(id: "darwinObserver") {
                     // Observe Darwin notifications from Control Center widget

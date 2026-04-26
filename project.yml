@@ -59,8 +59,8 @@ targets:
         product: FluidAudio
       - sdk: HealthKit.framework
       - sdk: CoreLocation.framework
-      - sdk: CoreMotion.framework
       - sdk: MediaPlayer.framework
+      - sdk: Photos.framework
       - target: RecordingControl
         embed: true
     info:
@@ -78,7 +78,7 @@ targets:
         NSLocationAlwaysAndWhenInUseUsageDescription: "recall tracks your location in the background for continuous lifelogging."
         NSHealthShareUsageDescription: "recall reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry."
         NSHealthUpdateUsageDescription: "recall does not write any health data."
-        NSMotionUsageDescription: "recall uses motion data to detect your activity (walking, driving, stationary) for lifelogging context."
+        NSPhotoLibraryUsageDescription: "recall imports photos and videos taken with your Ray-Ban Meta smart glasses to your lifelog. Other photos are not uploaded."
         UIBackgroundModes:
           - audio
           - location

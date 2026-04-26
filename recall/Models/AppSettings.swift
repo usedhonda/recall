@@ -184,9 +184,13 @@ final class AppSettings {
 
     // MARK: - Context Data Settings
 
-    var motionEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "motionEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "motionEnabled") }
+    /// Auto-import photos and videos taken with Ray-Ban Meta smart glasses.
+    var glassesAutoImportEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "glassesAutoImportEnabled") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "glassesAutoImportEnabled")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "glassesAutoImportEnabled") }
     }
 
     var nowPlayingEnabled: Bool {

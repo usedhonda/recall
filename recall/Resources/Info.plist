@@ -55,8 +55,8 @@
 	<string>recall uses your location for lifelogging telemetry.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>recall continuously records audio for lifelogging. Only voice segments are saved.</string>
-	<key>NSMotionUsageDescription</key>
-	<string>recall uses motion data to detect your activity (walking, driving, stationary) for lifelogging context.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>recall imports photos and videos taken with your Ray-Ban Meta smart glasses to your lifelog. Other photos are not uploaded.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

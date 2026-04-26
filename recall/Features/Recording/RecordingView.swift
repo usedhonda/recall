@@ -320,17 +320,24 @@ struct RecordingView: View {
     private var contextStreamsBar: some View {
         HStack(spacing: 8) {
             CyberpunkStreamToggle(
-                icon: motionIcon,
-                label: motionLabel,
-                isActive: telemetry.motionManager.isEnabled,
-                neonColor: RecallTheme.Colors.neonCyan
+                icon: "sunglasses.fill",
+                label: glassesLabel,
+                isActive: telemetry.photoScanCoordinator.isEnabled,
+                neonColor: RecallTheme.Colors.neonAmber
             ) {
-                if telemetry.motionManager.isEnabled {
-                    telemetry.motionManager.stop()
-                    AppSettings.shared.motionEnabled = false
+                if telemetry.photoScanCoordinator.isEnabled {
+                    telemetry.photoScanCoordinator.stop()
+                    AppSettings.shared.glassesAutoImportEnabled = false
                 } else {
-                    telemetry.motionManager.start()
-                    AppSettings.shared.motionEnabled = true
+                    Task {
+                        let status = await telemetry.photoLibraryAuthorizer.requestReadWrite()
+                        guard status == .authorized || status == .limited else { return }
+                        if let container = modelContainer {
+                            telemetry.photoScanCoordinator.setModelContainer(container)
+                        }
+                        telemetry.photoScanCoordinator.start()
+                        AppSettings.shared.glassesAutoImportEnabled = true
+                    }
                 }
             }
 
@@ -353,21 +360,10 @@ struct RecordingView: View {
         }
     }
 
-    private var motionIcon: String {
-        switch telemetry.motionManager.currentActivity {
-        case "walking": return "figure.walk"
-        case "running": return "figure.run"
-        case "automotive": return "car.fill"
-        case "cycling": return "bicycle"
-        case "stationary": return "moon.zzz.fill"
-        default: return "figure.walk"
-        }
-    }
-
-    private var motionLabel: String {
-        guard telemetry.motionManager.isEnabled else { return "Motion" }
-        let activity = telemetry.motionManager.currentActivity
-        return activity == "unknown" ? "Motion" : activity.capitalized
+    private var glassesLabel: String {
+        guard telemetry.photoScanCoordinator.isEnabled else { return "Glasses" }
+        let count = telemetry.photoScanCoordinator.recentImportCount
+        return count > 0 ? "Glasses (\(count))" : "Glasses"
     }
 
     // MARK: - Mic Selector
