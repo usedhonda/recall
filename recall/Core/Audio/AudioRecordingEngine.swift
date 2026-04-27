@@ -182,6 +182,15 @@ final class AudioRecordingEngine {
         let hwFormat: AVAudioFormat
         do {
             hwFormat = try safeInstallTap(on: inputNode, source: "start")
+        } catch AudioFormatError.installTapException(let reason) {
+            // installTap NSException = engine instance is poisoned. Don't schedule
+            // same-engine retry; let HealthMonitor recreate the engine via VM.
+            activity.log(.error, "start hit installTap NSException — engine poisoned, escalating to HealthMonitor (\(reason))")
+            activity.log(.error, snapshotAudioState(prefix: "start installTap exception"))
+            engineNeedsRecreate = true
+            consecutiveRestartFailures += 1
+            state = .idle
+            throw AudioFormatError.installTapException(reason)
         } catch {
             activity.log(.error, snapshotAudioState(prefix: "start failed"))
             consecutiveRestartFailures += 1
@@ -888,6 +897,16 @@ final class AudioRecordingEngine {
                 let inputNode = audioEngine.inputNode
                 do {
                     _ = try safeInstallTap(on: inputNode, source: "resume-attempt-\(attempt)")
+                } catch AudioFormatError.installTapException(let reason) {
+                    // Interruption recovery is a particularly NSException-prone path
+                    // (audio session is still settling). Treat as poisoned and let
+                    // HealthMonitor recreate.
+                    activity.log(.error, "resume hit installTap NSException — engine poisoned, escalating to HealthMonitor (\(reason))")
+                    activity.log(.error, snapshotAudioState(prefix: "resume installTap exception"))
+                    engineNeedsRecreate = true
+                    consecutiveRestartFailures += 1
+                    state = .idle
+                    return
                 } catch {
                     activity.log(.error, snapshotAudioState(prefix: "resume invalid"))
                     consecutiveRestartFailures += 1
