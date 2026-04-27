@@ -94,6 +94,11 @@ final class AudioRecordingEngine {
     private var consecutiveRestartFailures: Int = 0
     private let maxRestartBeforeRecreate: Int = 5
 
+    /// Set true when `installTap` raises NSException — engine instance is poisoned and
+    /// internal `audioEngine.reset()` + retry cannot recover. HealthMonitor reads this
+    /// flag and triggers full engine recreate via `RecordingViewModel`.
+    private(set) var engineNeedsRecreate: Bool = false
+
     // MARK: - Consecutive Voice Frame Guard
 
     private var consecutiveVoiceFrames: Int = 0
@@ -934,6 +939,12 @@ final class AudioRecordingEngine {
             activity.log(.state, "restartEngine skipped — already restarting")
             return
         }
+        // If the engine instance is already poisoned, same-instance restart will keep
+        // raising NSException. Defer to HealthMonitor-driven full recreate.
+        guard !engineNeedsRecreate else {
+            activity.log(.state, "restartEngine skipped — engine needs recreate")
+            return
+        }
         isRestarting = true
         defer { isRestarting = false }
 
@@ -968,6 +979,17 @@ final class AudioRecordingEngine {
             consecutiveRestartFailures = 0
             activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
             activity.log(.state, snapshotAudioState(prefix: "restart done"))
+        } catch AudioFormatError.installTapException(let reason) {
+            // installTap NSException = engine instance is poisoned. `audioEngine.reset()`
+            // + retry on the same instance has been observed to keep raising the exception
+            // and trap recovery in an internal 2/4/8/15s loop while HealthMonitor's 30s
+            // window misses the .idle state due to short-lived .listening flips.
+            // Escalate to HealthMonitor for full engine recreate instead.
+            engineNeedsRecreate = true
+            consecutiveRestartFailures += 1
+            state = .idle
+            activity.log(.error, "Soft restart hit installTap NSException — engine poisoned, escalating to HealthMonitor (\(reason))")
+            activity.log(.error, snapshotAudioState(prefix: "installTap exception"))
         } catch {
             // If stop+start fails, try with full reset as last resort
             activity.log(.error, "Soft restart failed: \(error.localizedDescription), trying hard reset")
@@ -990,6 +1012,13 @@ final class AudioRecordingEngine {
                 consecutiveRestartFailures = 0
                 activity.log(.state, "Engine restarted (hard) — Listening (\(Int(hwSampleRate))Hz)")
                 activity.log(.state, snapshotAudioState(prefix: "restart done (hard)"))
+            } catch AudioFormatError.installTapException(let reason) {
+                // Same exception class on hard path — same conclusion: poisoned, recreate.
+                engineNeedsRecreate = true
+                consecutiveRestartFailures += 1
+                state = .idle
+                activity.log(.error, "Hard restart hit installTap NSException — engine poisoned, escalating to HealthMonitor (\(reason))")
+                activity.log(.error, snapshotAudioState(prefix: "installTap exception (hard)"))
             } catch {
                 consecutiveRestartFailures += 1
                 logger.error("Failed to restart engine: \(error.localizedDescription)")
@@ -997,6 +1026,7 @@ final class AudioRecordingEngine {
                 state = .idle
                 if consecutiveRestartFailures >= maxRestartBeforeRecreate {
                     activity.log(.error, "Engine restart failed \(consecutiveRestartFailures)x — needs full recreate by HealthMonitor")
+                    engineNeedsRecreate = true
                 }
                 activity.log(.error, snapshotAudioState(prefix: "hard fail"))
                 scheduleRecoveryRetry(reason: "restart hard failed")
@@ -1080,6 +1110,13 @@ final class AudioRecordingEngine {
     }
 
     private func scheduleRecoveryRetry(reason: String) {
+        // If engine is poisoned (installTap NSException, or repeated hard failures),
+        // skip same-engine retry entirely. HealthMonitor's 30s loop will recreate
+        // the engine instance, which is the only path that can actually recover.
+        if engineNeedsRecreate {
+            activity.log(.state, "Recovery skipped — engine needs recreate (HealthMonitor will recreate)")
+            return
+        }
         let attempt = consecutiveRestartFailures
         let delaySec: Double
         switch attempt {
@@ -1095,6 +1132,7 @@ final class AudioRecordingEngine {
             try? await Task.sleep(for: .seconds(delaySec))
             guard let self else { return }
             guard !self.userStopped else { return }
+            guard !self.engineNeedsRecreate else { return }
             self.restartEngine()
         }
     }

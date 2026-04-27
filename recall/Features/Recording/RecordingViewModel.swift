@@ -230,15 +230,27 @@ final class RecordingViewModel {
 
     /// Upper-level health monitor — independent of engine's internal watchdog.
     /// Detects engine death that the watchdog couldn't recover from and recreates the engine entirely.
+    /// Polls every 5s. Triggers full recreate when:
+    ///   - engine instance is nil, or
+    ///   - `engineNeedsRecreate` flag is set (installTap NSException → poisoned instance), or
+    ///   - engine has been idle without user-stop (fallback for non-exception failures).
     private func startHealthMonitor(modelContainer: ModelContainer) {
         healthCheckTask?.cancel()
         healthCheckTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled else { return }
 
                 guard let engine = self.engine else {
                     ActivityLogger.shared.log(.error, "HealthMonitor: engine is nil — recreating")
+                    await self.start(modelContainer: modelContainer)
+                    return
+                }
+
+                if engine.engineNeedsRecreate && !engine.userStopped {
+                    ActivityLogger.shared.log(.error, "HealthMonitor: engine poisoned (installTap NSException) — full recreate")
+                    self.engine?.stop()
+                    self.engine = nil
                     await self.start(modelContainer: modelContainer)
                     return
                 }
