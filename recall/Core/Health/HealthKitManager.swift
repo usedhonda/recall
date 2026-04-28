@@ -597,7 +597,10 @@ final class HealthKitManager {
         let value: Double
         let intervalStart: Date
         let intervalEnd: Date
-        let sampleCount: Int
+        /// Optional — provenance is "representative latest sample" only,
+        /// taken via limit=1 query to avoid scanning thousands of samples
+        /// per HR/HRV background wake. nil when not retrieved.
+        let sampleCount: Int?
         let source: String?
         let sourceBundleId: String?
         let deviceModel: String?
@@ -607,7 +610,7 @@ final class HealthKitManager {
         let avg: Double
         let intervalStart: Date
         let intervalEnd: Date
-        let sampleCount: Int
+        let sampleCount: Int?
         let source: String?
         let sourceBundleId: String?
         let deviceModel: String?
@@ -619,7 +622,7 @@ final class HealthKitManager {
         let max: Double
         let intervalStart: Date
         let intervalEnd: Date
-        let sampleCount: Int
+        let sampleCount: Int?
         let source: String?
         let sourceBundleId: String?
         let deviceModel: String?
@@ -658,7 +661,7 @@ final class HealthKitManager {
 
         // Resolve source/device + sample count via a quick contributing-samples scan.
         let provenance = await fetchProvenance(type: type, predicate: predicate)
-        Self.logHK("\(identifier.rawValue.shortHK): \(String(format: "%.1f", value)) n=\(provenance.sampleCount)")
+        Self.logHK("\(identifier.rawValue.shortHK): \(String(format: "%.1f", value)) src=\(provenance.source ?? "n/a")")
         return CumulativeSumResult(
             value: value,
             intervalStart: start,
@@ -707,7 +710,7 @@ final class HealthKitManager {
         }
 
         let provenance = await fetchProvenance(type: type, predicate: predicate)
-        Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", avg)) min=\(String(format: "%.1f", mn)) max=\(String(format: "%.1f", mx)) n=\(provenance.sampleCount)")
+        Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", avg)) min=\(String(format: "%.1f", mn)) max=\(String(format: "%.1f", mx)) src=\(provenance.source ?? "n/a")")
         return DiscreteStatsResult(
             avg: avg, min: mn, max: mx,
             intervalStart: start,
@@ -752,7 +755,7 @@ final class HealthKitManager {
         }
 
         let provenance = await fetchProvenance(type: type, predicate: predicate)
-        Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", value)) n=\(provenance.sampleCount)")
+        Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", value)) src=\(provenance.source ?? "n/a")")
         return DiscreteAvgResult(
             avg: value,
             intervalStart: start,
@@ -806,33 +809,45 @@ final class HealthKitManager {
     }
 
     private struct ProvenanceInfo {
-        let sampleCount: Int
+        /// Always nil from this lightweight path (limit=1 cannot count). Reserved
+        /// for a future opt-in pass on a small allowlist of metrics.
+        let sampleCount: Int?
         let source: String?
         let sourceBundleId: String?
         let deviceModel: String?
     }
 
-    /// Best-effort scan of contributing samples to surface source/device + count.
-    /// Used when statistics queries report aggregated values without provenance.
+    /// Lightweight provenance lookup for aggregate statistics. Reads only the
+    /// most recent contributing sample (limit=1, sorted by endDate desc) to
+    /// surface a *representative* source/device. Avoids the original
+    /// `HKObjectQueryNoLimit` scan that would pull thousands of HR samples
+    /// during a background wake.
+    ///
+    /// Caveats (per Cdx audit):
+    /// - This is a "representative" source, not a full breakdown. Aggregates
+    ///   that span multiple sources (e.g. steps from iPhone + Apple Watch +
+    ///   third-party app) will only reflect the latest writer.
+    /// - `sampleCount` is intentionally nil here. Server should treat
+    ///   aggregate provenance as best-effort, and use `sleep.segments` /
+    ///   `workouts[]` / latest records for stable routing.
     private func fetchProvenance(
         type: HKQuantityType,
         predicate: NSPredicate
     ) async -> ProvenanceInfo {
-        await withCheckedContinuation { continuation in
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: type,
                 predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: nil
+                limit: 1,
+                sortDescriptors: [sortDescriptor]
             ) { _, samples, _ in
-                let quantitySamples = (samples as? [HKQuantitySample]) ?? []
-                let count = quantitySamples.count
-                let lastSource = quantitySamples.last?.sourceRevision.source
+                let latest = (samples?.first as? HKQuantitySample)
                 continuation.resume(returning: ProvenanceInfo(
-                    sampleCount: count,
-                    source: lastSource?.name,
-                    sourceBundleId: lastSource?.bundleIdentifier,
-                    deviceModel: quantitySamples.last?.device?.model
+                    sampleCount: nil,
+                    source: latest?.sourceRevision.source.name,
+                    sourceBundleId: latest?.sourceRevision.source.bundleIdentifier,
+                    deviceModel: latest?.device?.model
                 ))
             }
             healthStore.execute(query)
