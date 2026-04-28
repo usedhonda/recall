@@ -489,6 +489,7 @@ final class HealthKitManager {
                 intervalEnd: r.intervalEnd,
                 sampleCount: r.sampleCount,
                 source: r.source,
+                sourceBundleId: r.sourceBundleId,
                 deviceModel: r.deviceModel
             ))
         }
@@ -506,6 +507,7 @@ final class HealthKitManager {
                 intervalStart: nil, intervalEnd: nil,
                 sampleCount: nil,
                 source: r.source,
+                sourceBundleId: r.sourceBundleId,
                 deviceModel: r.deviceModel
             ))
         }
@@ -523,6 +525,7 @@ final class HealthKitManager {
                 intervalEnd: r.intervalEnd,
                 sampleCount: r.sampleCount,
                 source: r.source,
+                sourceBundleId: r.sourceBundleId,
                 deviceModel: r.deviceModel
             ))
         }
@@ -540,6 +543,7 @@ final class HealthKitManager {
                 intervalEnd: r.intervalEnd,
                 sampleCount: r.sampleCount,
                 source: r.source,
+                sourceBundleId: r.sourceBundleId,
                 deviceModel: r.deviceModel
             ))
         }
@@ -585,6 +589,7 @@ final class HealthKitManager {
         let value: Double
         let measuredAt: Date
         let source: String?
+        let sourceBundleId: String?
         let deviceModel: String?
     }
 
@@ -594,6 +599,7 @@ final class HealthKitManager {
         let intervalEnd: Date
         let sampleCount: Int
         let source: String?
+        let sourceBundleId: String?
         let deviceModel: String?
     }
 
@@ -603,6 +609,7 @@ final class HealthKitManager {
         let intervalEnd: Date
         let sampleCount: Int
         let source: String?
+        let sourceBundleId: String?
         let deviceModel: String?
     }
 
@@ -614,6 +621,7 @@ final class HealthKitManager {
         let intervalEnd: Date
         let sampleCount: Int
         let source: String?
+        let sourceBundleId: String?
         let deviceModel: String?
     }
 
@@ -657,6 +665,7 @@ final class HealthKitManager {
             intervalEnd: end,
             sampleCount: provenance.sampleCount,
             source: provenance.source,
+            sourceBundleId: provenance.sourceBundleId,
             deviceModel: provenance.deviceModel
         )
     }
@@ -705,6 +714,7 @@ final class HealthKitManager {
             intervalEnd: end,
             sampleCount: provenance.sampleCount,
             source: provenance.source,
+            sourceBundleId: provenance.sourceBundleId,
             deviceModel: provenance.deviceModel
         )
     }
@@ -749,6 +759,7 @@ final class HealthKitManager {
             intervalEnd: end,
             sampleCount: provenance.sampleCount,
             source: provenance.source,
+            sourceBundleId: provenance.sourceBundleId,
             deviceModel: provenance.deviceModel
         )
     }
@@ -784,6 +795,7 @@ final class HealthKitManager {
                     value: value,
                     measuredAt: sample.endDate,
                     source: sample.sourceRevision.source.name,
+                    sourceBundleId: sample.sourceRevision.source.bundleIdentifier,
                     deviceModel: sample.device?.model
                 )
                 Self.logHK("\(identifier.rawValue.shortHK): \(String(format: "%.2f", value)) at=\(sample.endDate.formatted(.iso8601)) src=\(sample.sourceRevision.source.name)")
@@ -796,6 +808,7 @@ final class HealthKitManager {
     private struct ProvenanceInfo {
         let sampleCount: Int
         let source: String?
+        let sourceBundleId: String?
         let deviceModel: String?
     }
 
@@ -814,9 +827,13 @@ final class HealthKitManager {
             ) { _, samples, _ in
                 let quantitySamples = (samples as? [HKQuantitySample]) ?? []
                 let count = quantitySamples.count
-                let source = quantitySamples.last?.sourceRevision.source.name
-                let device = quantitySamples.last?.device?.model
-                continuation.resume(returning: ProvenanceInfo(sampleCount: count, source: source, deviceModel: device))
+                let lastSource = quantitySamples.last?.sourceRevision.source
+                continuation.resume(returning: ProvenanceInfo(
+                    sampleCount: count,
+                    source: lastSource?.name,
+                    sourceBundleId: lastSource?.bundleIdentifier,
+                    deviceModel: quantitySamples.last?.device?.model
+                ))
             }
             healthStore.execute(query)
         }
@@ -882,6 +899,7 @@ final class HealthKitManager {
                             end: sample.endDate,
                             stage: stageName,
                             source: sample.sourceRevision.source.name,
+                            sourceBundleId: sample.sourceRevision.source.bundleIdentifier,
                             deviceModel: sample.device?.model
                         ))
                     }
@@ -921,6 +939,7 @@ final class HealthKitManager {
                         start: workout.startDate,
                         end: workout.endDate,
                         source: workout.sourceRevision.source.name,
+                        sourceBundleId: workout.sourceRevision.source.bundleIdentifier,
                         deviceModel: workout.device?.model
                     )
                 }

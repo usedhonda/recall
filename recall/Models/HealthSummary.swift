@@ -87,6 +87,7 @@ struct SleepSegment: Codable {
     /// / "asleepUnspecified" / "awake" / "inBed".
     let stage: String
     let source: String?
+    let sourceBundleId: String?
     let deviceModel: String?
 }
 
@@ -99,6 +100,7 @@ struct WorkoutSummary: Codable {
     let start: Date
     let end: Date
     var source: String?
+    var sourceBundleId: String?
     var deviceModel: String?
 }
 
@@ -143,6 +145,10 @@ struct HealthRecord: Codable {
 
     /// HKSource.name (e.g. "Health" for manual entries, "Apple Watch", "ISSIN ...").
     let source: String?
+
+    /// HKSource.bundleIdentifier (e.g. "com.apple.Health" / "cc.issin.sbm").
+    /// More stable than `source` for routing decisions on the server.
+    let sourceBundleId: String?
 
     /// HKDevice.model (e.g. "Watch", "iPhone", nil for manual or unknown).
     let deviceModel: String?
