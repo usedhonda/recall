@@ -300,17 +300,19 @@ final class HealthKitManager {
         lastQueryAt = Date()
         lastSendResult = .sending
 
-        let summary = await aggregateHealthData(from: start, to: end)
+        let pair = await aggregateHealthDataPair(from: start, to: end)
+        let summary = pair.legacy
+        let payload = pair.payload
         lastSummary = summary
 
         let isBackground = UIApplication.shared.applicationState != .active
-        ActivityLogger.shared.log(.health, "Queried \(start.formatted(.dateTime.hour().minute()))–\(end.formatted(.dateTime.hour().minute())) [\(isBackground ? "bg" : "fg")]")
+        ActivityLogger.shared.log(.health, "Queried \(start.formatted(.dateTime.hour().minute()))–\(end.formatted(.dateTime.hour().minute())) [\(isBackground ? "bg" : "fg")] records=\(payload.records.count)")
 
-        // Skip sending if all health metrics are nil — prevents overwriting good data on server
-        let hasAnyData = summary.steps != nil || summary.heartRateAvg != nil
-            || summary.activeEnergyKcal != nil || summary.bloodOxygenPercent != nil
-            || summary.restingHeartRate != nil || summary.hrvAvgMs != nil
-            || summary.distanceMeters != nil || summary.sleepMinutes != nil
+        // Skip sending only when nothing at all came back — both the legacy
+        // numeric struct and the new record array must be empty.
+        let hasAnyData = !payload.records.isEmpty
+            || payload.sleep != nil
+            || (payload.workouts?.isEmpty == false)
         if !hasAnyData {
             let states = [
                 "steps=\(summary.steps.map(String.init) ?? "–")",
@@ -329,15 +331,15 @@ final class HealthKitManager {
 
         if isBackground {
             // In background, use TelemetryUploader with beginBackgroundTask for reliable delivery
-            await TelemetryUploader.shared.uploadHealthOnly(summary)
+            await TelemetryUploader.shared.uploadHealthOnly(summary, payload: payload)
             let now = Date()
             lastSentTime = now
             lastAcceptedAt = now
             totalSuccessfulSends += 1
             lastSendResult = .sent(status: 0, body: "bg-queued")
-            ActivityLogger.shared.log(.health, "Queued bg upload: steps=\(summary.steps ?? 0) hr=\(summary.heartRateAvg.map { String(format: "%.0f", $0) } ?? "–")")
+            ActivityLogger.shared.log(.health, "Queued bg upload: \(payload.recordsLogSummary())")
         } else {
-            let result = await TelemetryService.shared.sendHealth(summary)
+            let result = await TelemetryService.shared.sendHealth(summary, payload: payload)
             lastSendResult = result
             if case .sent = result {
                 let now = Date()
@@ -346,7 +348,7 @@ final class HealthKitManager {
                 totalSuccessfulSends += 1
                 lastErrorAt = nil
                 lastErrorMessage = nil
-                ActivityLogger.shared.log(.health, "Sent: steps=\(summary.steps ?? 0) hr=\(summary.heartRateAvg.map { String(format: "%.0f", $0) } ?? "–")")
+                ActivityLogger.shared.log(.health, "Sent: \(payload.recordsLogSummary())")
             } else if case .error(let detail) = result {
                 totalSendErrors += 1
                 recordHealthError(detail)
@@ -371,11 +373,26 @@ final class HealthKitManager {
     // MARK: - Data Aggregation
 
     func aggregateHealthData(from start: Date, to end: Date) async -> HealthSummary {
-        // Per-metric query windows — widened for smart ring batch sync patterns
+        let pair = await aggregateHealthDataPair(from: start, to: end)
+        return pair.legacy
+    }
+
+    /// Returns both the legacy `HealthSummary` (numeric only, for backward
+    /// compatibility) and the new `HealthPayload` (self-describing records
+    /// with measurement time + provenance). Callers that send to the server
+    /// should prefer the payload; UI code that only needs numbers can use
+    /// the legacy struct.
+    func aggregateHealthDataPair(from start: Date, to end: Date) async -> (legacy: HealthSummary, payload: HealthPayload) {
+        // Per-metric query windows
+        // - Cumulative / discrete avg / discrete stats: bounded windows so the
+        //   aggregation reflects "today" or "last 24h".
+        // - Latest samples: window widened to Date.distantPast so we never drop
+        //   a low-frequency measurement (body weight measured weeks ago is still
+        //   valid; server uses `measuredAt` to decide how to use it).
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: end)
         let twentyFourHoursAgo = end.addingTimeInterval(-24 * 3600)
-        let fourteenDaysAgo = end.addingTimeInterval(-14 * 24 * 3600)
+        let latestLookback = Date.distantPast
 
         var summary = HealthSummary(periodStart: todayStart, periodEnd: end)
 
@@ -387,89 +404,261 @@ final class HealthKitManager {
         async let flightsResult = queryCumulativeSum(.flightsClimbed, unit: .count(), from: todayStart, to: end)
         // Heart rate — 24h window (smart rings batch-sync, may write hours after measurement)
         async let heartRateResult = queryDiscreteStats(.heartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
-        // Vitals — last 24 hours (resting HR, HRV, SpO2 are typically calculated once per sleep/day)
-        async let restingHRResult = queryLatestSample(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
+        // Vitals — discrete averages stay on 24h. Latest samples use distantPast
+        // so old values still come through with their measuredAt.
+        async let restingHRResult = queryLatestSample(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: latestLookback, to: end)
         async let hrvResult = queryDiscreteAvg(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: twentyFourHoursAgo, to: end)
-        async let oxygenResult = queryLatestSample(.oxygenSaturation, unit: .percent(), from: twentyFourHoursAgo, to: end)
+        async let oxygenResult = queryLatestSample(.oxygenSaturation, unit: .percent(), from: latestLookback, to: end)
         async let respiratoryResult = queryDiscreteAvg(.respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute()), from: twentyFourHoursAgo, to: end)
-        // Body metrics — 14 days for low-frequency body composition measurements
-        async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: fourteenDaysAgo, to: end)
-        async let bodyFatResult = queryLatestSample(.bodyFatPercentage, unit: .percent(), from: fourteenDaysAgo, to: end)
-        async let leanBodyMassResult = queryLatestSample(.leanBodyMass, unit: .gramUnit(with: .kilo), from: fourteenDaysAgo, to: end)
-        async let bmiResult = queryLatestSample(.bodyMassIndex, unit: .count(), from: fourteenDaysAgo, to: end)
-        async let bodyTempResult = queryLatestSample(.bodyTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
-        async let wristTempResult = queryLatestSample(.appleSleepingWristTemperature, unit: .degreeCelsius(), from: twentyFourHoursAgo, to: end)
+        // Body metrics — distantPast so monthly weigh-ins / occasional body comp
+        // measurements are not silently discarded.
+        async let bodyMassResult = queryLatestSample(.bodyMass, unit: .gramUnit(with: .kilo), from: latestLookback, to: end)
+        async let bodyFatResult = queryLatestSample(.bodyFatPercentage, unit: .percent(), from: latestLookback, to: end)
+        async let leanBodyMassResult = queryLatestSample(.leanBodyMass, unit: .gramUnit(with: .kilo), from: latestLookback, to: end)
+        async let bmiResult = queryLatestSample(.bodyMassIndex, unit: .count(), from: latestLookback, to: end)
+        async let bodyTempResult = queryLatestSample(.bodyTemperature, unit: .degreeCelsius(), from: latestLookback, to: end)
+        async let wristTempResult = queryLatestSample(.appleSleepingWristTemperature, unit: .degreeCelsius(), from: latestLookback, to: end)
         // Sleep — look back 24 hours to capture full sleep sessions.
         // Smart rings may write sleep samples with early startDates (naps, early bedtime).
-        // 14h was too short and caused partial sleep data (e.g. 1.9h instead of full night).
         let sleepLookback = twentyFourHoursAgo
         async let sleepResult = querySleep(from: sleepLookback, to: end)
         async let workoutsResult = queryWorkouts(from: todayStart, to: end)
 
-        if let steps = await stepsResult {
-            summary.steps = Int(steps)
-        }
-        summary.activeEnergyKcal = await energyResult
-        summary.basalEnergyKcal = await basalEnergyResult
-        summary.distanceMeters = await distanceResult
-        if let flights = await flightsResult {
-            summary.flightsClimbed = Int(flights)
-        }
+        // Resolve all query results once.
+        let steps = await stepsResult
+        let energy = await energyResult
+        let basalEnergy = await basalEnergyResult
+        let distance = await distanceResult
+        let flights = await flightsResult
+        let heartRate = await heartRateResult
+        let restingHR = await restingHRResult
+        let hrv = await hrvResult
+        let oxygen = await oxygenResult
+        let respiratory = await respiratoryResult
+        let bodyMass = await bodyMassResult
+        let bodyFat = await bodyFatResult
+        let leanBodyMass = await leanBodyMassResult
+        let bmi = await bmiResult
+        let bodyTemp = await bodyTempResult
+        let wristTemp = await wristTempResult
+        let sleep = await sleepResult
+        let workouts = await workoutsResult
 
-        if let hr = await heartRateResult {
+        // --- Populate legacy HealthSummary (numeric only) ---
+        if let s = steps { summary.steps = Int(s.value) }
+        summary.activeEnergyKcal = energy?.value
+        summary.basalEnergyKcal = basalEnergy?.value
+        summary.distanceMeters = distance?.value
+        if let f = flights { summary.flightsClimbed = Int(f.value) }
+
+        if let hr = heartRate {
             summary.heartRateAvg = hr.avg
             summary.heartRateMin = hr.min
             summary.heartRateMax = hr.max
         }
 
-        summary.restingHeartRate = await restingHRResult
-        summary.hrvAvgMs = await hrvResult
+        summary.restingHeartRate = restingHR?.value
+        summary.hrvAvgMs = hrv?.avg
 
-        if let oxygen = await oxygenResult {
-            summary.bloodOxygenPercent = oxygen * 100
+        if let o = oxygen { summary.bloodOxygenPercent = o.value * 100 }
+
+        summary.respiratoryRateAvg = respiratory?.avg
+        summary.bodyMassKg = bodyMass?.value
+        if let bf = bodyFat { summary.bodyFatPercent = bf.value * 100 }
+        summary.leanBodyMassKg = leanBodyMass?.value
+        summary.bmi = bmi?.value
+        summary.bodyTemperatureCelsius = bodyTemp?.value
+        summary.wristTemperatureCelsius = wristTemp?.value
+        summary.sleepMinutes = sleep
+        summary.workouts = workouts
+
+        // --- Build self-describing HealthPayload ---
+        var records: [HealthRecord] = []
+
+        func appendCumulative(_ id: HKQuantityTypeIdentifier, _ result: CumulativeSumResult?, unit: String) {
+            guard let r = result else { return }
+            records.append(HealthRecord(
+                metricId: id.rawValue,
+                value: r.value,
+                valueText: nil,
+                valueMin: nil, valueMax: nil,
+                unit: unit,
+                aggregation: "cumulativeSum",
+                measuredAt: r.intervalEnd,
+                intervalStart: r.intervalStart,
+                intervalEnd: r.intervalEnd,
+                sampleCount: r.sampleCount,
+                source: r.source,
+                deviceModel: r.deviceModel
+            ))
+        }
+        func appendLatest(_ id: HKQuantityTypeIdentifier, _ result: LatestSampleResult?, unit: String, scaleToPercent: Bool = false) {
+            guard let r = result else { return }
+            let v = scaleToPercent ? r.value * 100 : r.value
+            records.append(HealthRecord(
+                metricId: id.rawValue,
+                value: v,
+                valueText: nil,
+                valueMin: nil, valueMax: nil,
+                unit: unit,
+                aggregation: "latest",
+                measuredAt: r.measuredAt,
+                intervalStart: nil, intervalEnd: nil,
+                sampleCount: nil,
+                source: r.source,
+                deviceModel: r.deviceModel
+            ))
+        }
+        func appendAvg(_ id: HKQuantityTypeIdentifier, _ result: DiscreteAvgResult?, unit: String) {
+            guard let r = result else { return }
+            records.append(HealthRecord(
+                metricId: id.rawValue,
+                value: r.avg,
+                valueText: nil,
+                valueMin: nil, valueMax: nil,
+                unit: unit,
+                aggregation: "discreteAvg",
+                measuredAt: r.intervalEnd,
+                intervalStart: r.intervalStart,
+                intervalEnd: r.intervalEnd,
+                sampleCount: r.sampleCount,
+                source: r.source,
+                deviceModel: r.deviceModel
+            ))
+        }
+        func appendStats(_ id: HKQuantityTypeIdentifier, _ result: DiscreteStatsResult?, unit: String) {
+            guard let r = result else { return }
+            records.append(HealthRecord(
+                metricId: id.rawValue,
+                value: r.avg,
+                valueText: nil,
+                valueMin: r.min, valueMax: r.max,
+                unit: unit,
+                aggregation: "discreteStats",
+                measuredAt: r.intervalEnd,
+                intervalStart: r.intervalStart,
+                intervalEnd: r.intervalEnd,
+                sampleCount: r.sampleCount,
+                source: r.source,
+                deviceModel: r.deviceModel
+            ))
         }
 
-        summary.respiratoryRateAvg = await respiratoryResult
-        summary.bodyMassKg = await bodyMassResult
-        if let bodyFat = await bodyFatResult {
-            summary.bodyFatPercent = bodyFat * 100
-        }
-        summary.leanBodyMassKg = await leanBodyMassResult
-        summary.bmi = await bmiResult
-        summary.bodyTemperatureCelsius = await bodyTempResult
-        summary.wristTemperatureCelsius = await wristTempResult
-        summary.sleepMinutes = await sleepResult
-        summary.workouts = await workoutsResult
+        appendCumulative(.stepCount, steps, unit: "count")
+        appendCumulative(.activeEnergyBurned, energy, unit: "kcal")
+        appendCumulative(.basalEnergyBurned, basalEnergy, unit: "kcal")
+        appendCumulative(.distanceWalkingRunning, distance, unit: "m")
+        appendCumulative(.flightsClimbed, flights, unit: "count")
 
-        return summary
+        appendStats(.heartRate, heartRate, unit: "count/min")
+        appendLatest(.restingHeartRate, restingHR, unit: "count/min")
+        appendAvg(.heartRateVariabilitySDNN, hrv, unit: "ms")
+        appendLatest(.oxygenSaturation, oxygen, unit: "%", scaleToPercent: true)
+        appendAvg(.respiratoryRate, respiratory, unit: "count/min")
+
+        appendLatest(.bodyMass, bodyMass, unit: "kg")
+        appendLatest(.bodyFatPercentage, bodyFat, unit: "%", scaleToPercent: true)
+        appendLatest(.leanBodyMass, leanBodyMass, unit: "kg")
+        appendLatest(.bodyMassIndex, bmi, unit: "count")
+        appendLatest(.bodyTemperature, bodyTemp, unit: "degC")
+        appendLatest(.appleSleepingWristTemperature, wristTemp, unit: "degC")
+
+        let payload = HealthPayload(
+            collectedAt: end,
+            records: records,
+            sleep: sleep,
+            workouts: workouts
+        )
+
+        return (summary, payload)
     }
 
     // MARK: - Query Helpers
+
+    // MARK: - Intermediate result types (carry timestamp + provenance)
+    //
+    // Each query helper returns one of these so the aggregator can populate
+    // both the legacy `HealthSummary` (numeric only) and the new
+    // `HealthPayload` (self-describing record per metric).
+
+    struct LatestSampleResult {
+        let value: Double
+        let measuredAt: Date
+        let source: String?
+        let deviceModel: String?
+    }
+
+    struct CumulativeSumResult {
+        let value: Double
+        let intervalStart: Date
+        let intervalEnd: Date
+        let sampleCount: Int
+        let source: String?
+        let deviceModel: String?
+    }
+
+    struct DiscreteAvgResult {
+        let avg: Double
+        let intervalStart: Date
+        let intervalEnd: Date
+        let sampleCount: Int
+        let source: String?
+        let deviceModel: String?
+    }
+
+    struct DiscreteStatsResult {
+        let avg: Double
+        let min: Double
+        let max: Double
+        let intervalStart: Date
+        let intervalEnd: Date
+        let sampleCount: Int
+        let source: String?
+        let deviceModel: String?
+    }
 
     private func queryCumulativeSum(
         _ identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
         from start: Date,
         to end: Date
-    ) async -> Double? {
+    ) async -> CumulativeSumResult? {
         guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
             Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
             return nil
         }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
 
-        return await withCheckedContinuation { continuation in
+        let stats: HKStatistics? = await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
                 options: .cumulativeSum
             ) { _, stats, error in
-                let value = stats?.sumQuantity()?.doubleValue(for: unit)
-                Self.logHK("\(identifier.rawValue.shortHK): \(value.map { String(format: "%.1f", $0) } ?? (error.map { "err(\($0.localizedDescription))" } ?? "empty"))")
-                continuation.resume(returning: value)
+                if let error {
+                    Self.logHK("\(identifier.rawValue.shortHK): err(\(error.localizedDescription))")
+                }
+                continuation.resume(returning: stats)
             }
             healthStore.execute(query)
         }
+
+        guard let stats, let value = stats.sumQuantity()?.doubleValue(for: unit) else {
+            Self.logHK("\(identifier.rawValue.shortHK): empty")
+            return nil
+        }
+
+        // Resolve source/device + sample count via a quick contributing-samples scan.
+        let provenance = await fetchProvenance(type: type, predicate: predicate)
+        Self.logHK("\(identifier.rawValue.shortHK): \(String(format: "%.1f", value)) n=\(provenance.sampleCount)")
+        return CumulativeSumResult(
+            value: value,
+            intervalStart: start,
+            intervalEnd: end,
+            sampleCount: provenance.sampleCount,
+            source: provenance.source,
+            deviceModel: provenance.deviceModel
+        )
     }
 
     private func queryDiscreteStats(
@@ -477,7 +666,7 @@ final class HealthKitManager {
         unit: HKUnit,
         from start: Date,
         to end: Date
-    ) async -> (avg: Double, min: Double, max: Double)? {
+    ) async -> DiscreteStatsResult? {
         guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
             Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
             return nil
@@ -486,24 +675,38 @@ final class HealthKitManager {
         // but endDate inside the window (batched overnight syncs).
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
 
-        return await withCheckedContinuation { continuation in
+        let stats: HKStatistics? = await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
                 options: [.discreteAverage, .discreteMin, .discreteMax]
             ) { _, stats, error in
-                guard let avg = stats?.averageQuantity()?.doubleValue(for: unit),
-                      let min = stats?.minimumQuantity()?.doubleValue(for: unit),
-                      let max = stats?.maximumQuantity()?.doubleValue(for: unit) else {
-                    Self.logHK("\(identifier.rawValue.shortHK): \(error.map { "err(\($0.localizedDescription))" } ?? "empty")")
-                    continuation.resume(returning: nil)
-                    return
+                if let error {
+                    Self.logHK("\(identifier.rawValue.shortHK): err(\(error.localizedDescription))")
                 }
-                Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", avg)) min=\(String(format: "%.1f", min)) max=\(String(format: "%.1f", max))")
-                continuation.resume(returning: (avg, min, max))
+                continuation.resume(returning: stats)
             }
             healthStore.execute(query)
         }
+
+        guard let stats,
+              let avg = stats.averageQuantity()?.doubleValue(for: unit),
+              let mn = stats.minimumQuantity()?.doubleValue(for: unit),
+              let mx = stats.maximumQuantity()?.doubleValue(for: unit) else {
+            Self.logHK("\(identifier.rawValue.shortHK): empty")
+            return nil
+        }
+
+        let provenance = await fetchProvenance(type: type, predicate: predicate)
+        Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", avg)) min=\(String(format: "%.1f", mn)) max=\(String(format: "%.1f", mx)) n=\(provenance.sampleCount)")
+        return DiscreteStatsResult(
+            avg: avg, min: mn, max: mx,
+            intervalStart: start,
+            intervalEnd: end,
+            sampleCount: provenance.sampleCount,
+            source: provenance.source,
+            deviceModel: provenance.deviceModel
+        )
     }
 
     private func queryDiscreteAvg(
@@ -511,7 +714,7 @@ final class HealthKitManager {
         unit: HKUnit,
         from start: Date,
         to end: Date
-    ) async -> Double? {
+    ) async -> DiscreteAvgResult? {
         guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
             Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
             return nil
@@ -519,18 +722,35 @@ final class HealthKitManager {
         // .strictEndDate for smart ring batch-sync samples
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
 
-        return await withCheckedContinuation { continuation in
+        let stats: HKStatistics? = await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
                 options: .discreteAverage
             ) { _, stats, error in
-                let value = stats?.averageQuantity()?.doubleValue(for: unit)
-                Self.logHK("\(identifier.rawValue.shortHK): \(value.map { "avg=" + String(format: "%.1f", $0) } ?? (error.map { "err(\($0.localizedDescription))" } ?? "empty"))")
-                continuation.resume(returning: value)
+                if let error {
+                    Self.logHK("\(identifier.rawValue.shortHK): err(\(error.localizedDescription))")
+                }
+                continuation.resume(returning: stats)
             }
             healthStore.execute(query)
         }
+
+        guard let stats, let value = stats.averageQuantity()?.doubleValue(for: unit) else {
+            Self.logHK("\(identifier.rawValue.shortHK): empty")
+            return nil
+        }
+
+        let provenance = await fetchProvenance(type: type, predicate: predicate)
+        Self.logHK("\(identifier.rawValue.shortHK): avg=\(String(format: "%.1f", value)) n=\(provenance.sampleCount)")
+        return DiscreteAvgResult(
+            avg: value,
+            intervalStart: start,
+            intervalEnd: end,
+            sampleCount: provenance.sampleCount,
+            source: provenance.source,
+            deviceModel: provenance.deviceModel
+        )
     }
 
     private func queryLatestSample(
@@ -538,7 +758,7 @@ final class HealthKitManager {
         unit: HKUnit,
         from start: Date,
         to end: Date
-    ) async -> Double? {
+    ) async -> LatestSampleResult? {
         guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
             Self.logHK("\(identifier.rawValue.shortHK): type-unavailable")
             return nil
@@ -554,9 +774,49 @@ final class HealthKitManager {
                 limit: 1,
                 sortDescriptors: [sortDescriptor]
             ) { _, samples, error in
-                let value = (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit)
-                Self.logHK("\(identifier.rawValue.shortHK): \(value.map { String(format: "%.2f", $0) } ?? (error.map { "err(\($0.localizedDescription))" } ?? "empty"))")
-                continuation.resume(returning: value)
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    Self.logHK("\(identifier.rawValue.shortHK): \(error.map { "err(\($0.localizedDescription))" } ?? "empty")")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let value = sample.quantity.doubleValue(for: unit)
+                let result = LatestSampleResult(
+                    value: value,
+                    measuredAt: sample.endDate,
+                    source: sample.sourceRevision.source.name,
+                    deviceModel: sample.device?.model
+                )
+                Self.logHK("\(identifier.rawValue.shortHK): \(String(format: "%.2f", value)) at=\(sample.endDate.formatted(.iso8601)) src=\(sample.sourceRevision.source.name)")
+                continuation.resume(returning: result)
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    private struct ProvenanceInfo {
+        let sampleCount: Int
+        let source: String?
+        let deviceModel: String?
+    }
+
+    /// Best-effort scan of contributing samples to surface source/device + count.
+    /// Used when statistics queries report aggregated values without provenance.
+    private func fetchProvenance(
+        type: HKQuantityType,
+        predicate: NSPredicate
+    ) async -> ProvenanceInfo {
+        await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, _ in
+                let quantitySamples = (samples as? [HKQuantitySample]) ?? []
+                let count = quantitySamples.count
+                let source = quantitySamples.last?.sourceRevision.source.name
+                let device = quantitySamples.last?.device?.model
+                continuation.resume(returning: ProvenanceInfo(sampleCount: count, source: source, deviceModel: device))
             }
             healthStore.execute(query)
         }
@@ -585,31 +845,51 @@ final class HealthKitManager {
 
                 var summary = SleepSummary()
                 var totalMinutes: Double = 0
+                var segments: [SleepSegment] = []
 
                 for sample in samples {
                     let minutes = sample.endDate.timeIntervalSince(sample.startDate) / 60.0
 
+                    let stageName: String?
                     switch sample.value {
                     case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
                         summary.rem = (summary.rem ?? 0) + minutes
                         totalMinutes += minutes
+                        stageName = "asleepREM"
                     case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
                         summary.deep = (summary.deep ?? 0) + minutes
                         totalMinutes += minutes
+                        stageName = "asleepDeep"
                     case HKCategoryValueSleepAnalysis.asleepCore.rawValue:
                         summary.core = (summary.core ?? 0) + minutes
                         totalMinutes += minutes
+                        stageName = "asleepCore"
                     case HKCategoryValueSleepAnalysis.awake.rawValue:
                         summary.awake = (summary.awake ?? 0) + minutes
+                        stageName = "awake"
                     case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
                         totalMinutes += minutes
+                        stageName = "asleepUnspecified"
+                    case HKCategoryValueSleepAnalysis.inBed.rawValue:
+                        stageName = "inBed"
                     default:
-                        break
+                        stageName = nil
+                    }
+
+                    if let stageName {
+                        segments.append(SleepSegment(
+                            start: sample.startDate,
+                            end: sample.endDate,
+                            stage: stageName,
+                            source: sample.sourceRevision.source.name,
+                            deviceModel: sample.device?.model
+                        ))
                     }
                 }
 
                 summary.total = totalMinutes
-                Self.logHK("sleep: total=\(String(format: "%.0f", totalMinutes))m deep=\(Int(summary.deep ?? 0)) rem=\(Int(summary.rem ?? 0)) core=\(Int(summary.core ?? 0)) awake=\(Int(summary.awake ?? 0)) n=\(samples.count)")
+                summary.segments = segments.isEmpty ? nil : segments
+                Self.logHK("sleep: total=\(String(format: "%.0f", totalMinutes))m deep=\(Int(summary.deep ?? 0)) rem=\(Int(summary.rem ?? 0)) core=\(Int(summary.core ?? 0)) awake=\(Int(summary.awake ?? 0)) segments=\(segments.count) n=\(samples.count)")
                 continuation.resume(returning: summary)
             }
             healthStore.execute(query)
@@ -639,7 +919,9 @@ final class HealthKitManager {
                         energyKcal: workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()),
                         distanceMeters: workout.totalDistance?.doubleValue(for: .meter()),
                         start: workout.startDate,
-                        end: workout.endDate
+                        end: workout.endDate,
+                        source: workout.sourceRevision.source.name,
+                        deviceModel: workout.device?.model
                     )
                 }
 
