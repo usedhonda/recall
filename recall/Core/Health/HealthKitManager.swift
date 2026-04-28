@@ -58,6 +58,15 @@ final class HealthKitManager {
     // Observer wake tracking — key = HK identifier raw value (e.g. "HKQuantityTypeIdentifierHeartRate")
     private var observerWakeCounts: [String: Int] = [:]
     private var observerWakeLogTimer: Timer?
+
+    // Debounce / coalesce HKObserverQuery wakes. Background-delivery is now
+    // registered for low-frequency metrics too, and a single body-composition
+    // app session can write multiple related samples in quick succession (mass
+    // + body fat + lean + BMI). Without coalescing each one would trigger a
+    // full queryAndSend cycle.
+    private var lastObserverSendAt: Date = .distantPast
+    private let observerDebounceInterval: TimeInterval = 60
+    private var pendingObserverSendTask: Task<Void, Never>?
     private var sendInterval: TimeInterval {
         AppSettings.shared.telemetrySendInterval  // same as Location (default 60s)
     }
@@ -162,11 +171,27 @@ final class HealthKitManager {
             }
         }
 
+        // High-frequency metrics: already wake recall on every new sample
+        // (heart rate / step writes) — these drive the regular telemetry beat.
+        // Low-frequency metrics: weights, resting HR, body comp, temperatures,
+        // workouts. Without observers these only got picked up on app launch
+        // or as a piggyback on location/HR wake, which could leave a freshly
+        // entered weight invisible until next foreground.
         let monitoredTypes: [HKQuantityTypeIdentifier] = [
+            // High-frequency
             .stepCount,
             .heartRate,
             .heartRateVariabilitySDNN,
             .oxygenSaturation,
+            // Low-frequency (added per Cdx audit; debounce coalesces bursts)
+            .restingHeartRate,
+            .respiratoryRate,
+            .bodyMass,
+            .bodyFatPercentage,
+            .leanBodyMass,
+            .bodyMassIndex,
+            .bodyTemperature,
+            .appleSleepingWristTemperature,
         ]
 
         for typeId in monitoredTypes {
@@ -182,19 +207,14 @@ final class HealthKitManager {
             // Observer query fires when new samples arrive
             let sampleTypeKey = sampleType.identifier
             let query = HKObserverQuery(sampleType: sampleType, predicate: nil) { [weak self] _, completionHandler, error in
-                guard error == nil else {
-                    completionHandler()
-                    return
-                }
-
+                // iOS treats `completionHandler()` as an ack; if it doesn't
+                // come back within ~30s the system stops delivering. So we
+                // ack immediately and run the actual send (debounced) later.
+                completionHandler()
+                guard error == nil else { return }
                 Task { @MainActor [weak self] in
-                    guard let self, self.isEnabled else {
-                        completionHandler()
-                        return
-                    }
-                    self.observerWakeCounts[sampleTypeKey, default: 0] += 1
-                    await self.queryAndSend()
-                    completionHandler()
+                    self?.observerWakeCounts[sampleTypeKey, default: 0] += 1
+                    self?.scheduleDebouncedQueryAndSend()
                 }
             }
             healthStore.execute(query)
@@ -211,27 +231,68 @@ final class HealthKitManager {
 
             let sleepKey = sleepType.identifier
             let query = HKObserverQuery(sampleType: sleepType, predicate: nil) { [weak self] _, completionHandler, error in
-                guard error == nil else {
-                    completionHandler()
-                    return
-                }
+                completionHandler()
+                guard error == nil else { return }
                 Task { @MainActor [weak self] in
-                    guard let self, self.isEnabled else {
-                        completionHandler()
-                        return
-                    }
-                    self.observerWakeCounts[sleepKey, default: 0] += 1
-                    await self.queryAndSend()
-                    completionHandler()
+                    self?.observerWakeCounts[sleepKey, default: 0] += 1
+                    self?.scheduleDebouncedQueryAndSend()
                 }
             }
             healthStore.execute(query)
             observerQueries.append(query)
         }
 
+        // Workouts — low-frequency, but a fresh workout end is meaningful.
+        let workoutType = HKWorkoutType.workoutType()
+        healthStore.enableBackgroundDelivery(for: workoutType, frequency: .immediate) { _, error in
+            if let error {
+                ActivityLogger.shared.logFromBackground(.health, "BG delivery failed for workout: \(error.localizedDescription)")
+            }
+        }
+        let workoutKey = workoutType.identifier
+        let workoutQuery = HKObserverQuery(sampleType: workoutType, predicate: nil) { [weak self] _, completionHandler, error in
+            completionHandler()
+            guard error == nil else { return }
+            Task { @MainActor [weak self] in
+                self?.observerWakeCounts[workoutKey, default: 0] += 1
+                self?.scheduleDebouncedQueryAndSend()
+            }
+        }
+        healthStore.execute(workoutQuery)
+        observerQueries.append(workoutQuery)
+
         startObserverWakeLogger()
 
-        ActivityLogger.shared.log(.health, "Background delivery registered for \(monitoredTypes.count + 1) types (incl. sleep)")
+        ActivityLogger.shared.log(.health, "Background delivery registered for \(monitoredTypes.count + 2) types (incl. sleep + workout)")
+    }
+
+    /// Coalesce observer wakes inside `observerDebounceInterval`. If a recent
+    /// queryAndSend happened, the next call is deferred until the window
+    /// passes; further wakes inside the window collapse into the same task.
+    private func scheduleDebouncedQueryAndSend() {
+        guard isEnabled else { return }
+        let elapsed = Date().timeIntervalSince(lastObserverSendAt)
+        if elapsed >= observerDebounceInterval {
+            // Outside the window — fire immediately.
+            pendingObserverSendTask?.cancel()
+            pendingObserverSendTask = nil
+            lastObserverSendAt = Date()
+            Task { @MainActor [weak self] in
+                guard let self, self.isEnabled else { return }
+                await self.queryAndSend()
+            }
+            return
+        }
+        // Inside the debounce window — schedule (or replace) the deferred run.
+        if pendingObserverSendTask != nil { return }
+        let remaining = observerDebounceInterval - elapsed
+        pendingObserverSendTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, remaining) * 1_000_000_000))
+            guard let self, !Task.isCancelled, self.isEnabled else { return }
+            self.pendingObserverSendTask = nil
+            self.lastObserverSendAt = Date()
+            await self.queryAndSend()
+        }
     }
 
     /// Fire hourly timer to log observer wake counts, then reset.
