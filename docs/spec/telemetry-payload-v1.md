@@ -16,9 +16,20 @@ Content-Type: application/json
 User-Agent: recall-ios/1.0
 ```
 
-- `{server_base}`: `AppSettings.telemetryServerURL` (例: `http://mac-mini.tailnet:8300`)
+- `{server_base}`: `AppSettings.telemetryServerURL` (実運用では **Gateway `http://mac-mini.tailnet:18789`** を指す。auto-migrate ロジックで `:8765` → `:18789` 置換あり)
 - TLS 不要 (Tailscale WireGuard で暗号化済み)
 - 認証: Bearer token (Keychain 管理)
+
+### 1.1 サーバー側受信ホストの実態 (重要)
+
+`/api/telemetry` を受信しているサーバーは **2 系統存在する**:
+
+| ホスト | port | 実装 | 用途 |
+|---|---|---|---|
+| **Gateway (OpenClaw)** | `:18789` | `vibeterm-telemetry` plugin (Node.js) | **本番受信側**。`~/.openclaw/workspace/memory/health-state.json` 更新 + 日報生成 |
+| **VoiceLog API** | `:8300` | FastAPI (`com.voicelog.api`) | **現状 smoke test のみ**。`telemetry_health_records` 等 DB schema は v4 で整備済 (Phase 2 完了)。実機からは未到達 |
+
+recall iOS の現状の送信先は **Gateway (`:18789`)** であり、VoiceLog DB には **実機 POST が一度も到達していない**。ここに齟齬があるため、Phase 3 で構成方針を決定する必要がある (§8 参照)。
 
 ---
 
@@ -260,13 +271,23 @@ User-Agent: recall-ios/1.0
 
 ## 8. Migration Phases
 
-| Phase | recall iOS | server (VoiceLog) | 備考 |
-|---|---|---|---|
-| **1. 並走開始 (現状)** | `health` + `health2` を両方送る | `health` を従来どおり処理。`health2` を **少なくとも parse できる状態** にする (まずは log で OK) | recall 単独 deploy 可能 |
-| **2. 切替** | 同上 | `health2` を主に処理開始。`health` は fallback | server deploy 必要 |
-| **3. 旧形式廃止** | `health2` のみ送信 (`health` 削除) | `health` 受け口削除 | recall + server を同時 deploy |
+| Phase | recall iOS | Gateway plugin (`:18789`) | VoiceLog (`:8300`) | 状態 |
+|---|---|---|---|---|
+| **1. recall 改修** | `health` + `health2` を両方送る | (旧形式のみ参照) | (smoke のみ) | ✅ 完了 (commit `44dd6f5` 等) |
+| **2. VoiceLog 受け口** | 同上 | (変更なし) | `health2` 主処理 + DB 保存 | ✅ 完了 (commit `c0e8767`)。**ただし実機 POST は届いていない** |
+| **3. 構成方針決定 (要判断)** | 同上 or 送信先変更 | 改修 or forward 追加 | 実機到達 | ⚠️ **未着手** |
+| **4. 旧形式廃止** | `health2` のみ送信 | 旧形式参照削除 | `health` 受け口削除 | ⏳ Phase 3 後 |
 
-**現状: Phase 1 完了 (recall 側)**。Phase 2 のため、server 側に `health2` parse + DB 保存の実装が必要。
+### Phase 3 の選択肢
+
+| 案 | 内容 | メリット | デメリット |
+|---|---|---|---|
+| **A. 現状維持** | recall は Gateway 送信のまま、Gateway は旧形式のみ参照、`health2` は無視 | 工数ゼロ | `health2` の self-describing 情報 (source / aggregation / metricId 等) が活用されない。VoiceLog DB は使われない |
+| **B. Gateway plugin を `health2` 対応 (推奨)** | `vibeterm-telemetry` plugin を改修して `health2.records[]` を parse、`health-state.json` の精度向上 + 日報に反映 | 既存運用 (health-state / 日報) を維持しつつ精度向上 | Gateway plugin の改修工数。VoiceLog DB は依然未使用 |
+| **C. recall を VoiceLog `:8300` に向け直す** | recall の `telemetryServerURL` を Gateway → VoiceLog に変更 | VoiceLog DB が活きる | Gateway plugin が動かなくなり、`health-state.json` 更新と日報生成が止まる |
+| **D. Gateway plugin から VoiceLog に forward** | Gateway plugin で受けた payload をそのまま VoiceLog `:8300` に POST し、両方で保存 | 両方活きる | 二重保存の整合性管理コスト、Gateway → VoiceLog 障害時の挙動 |
+
+推奨は **B**。日報・health-state 更新フローを壊さずに self-describing 情報を最大活用できる。VoiceLog DB は将来的に C/D 方針が決まってから埋める。
 
 ---
 
