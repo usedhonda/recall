@@ -288,8 +288,9 @@ final class HealthKitManager {
         let remaining = observerDebounceInterval - elapsed
         pendingObserverSendTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, remaining) * 1_000_000_000))
-            guard let self, !Task.isCancelled, self.isEnabled else { return }
+            guard let self else { return }
             self.pendingObserverSendTask = nil
+            guard !Task.isCancelled, self.isEnabled else { return }
             self.lastObserverSendAt = Date()
             await self.queryAndSend()
         }
@@ -341,6 +342,8 @@ final class HealthKitManager {
     func stopTimer() {
         timer?.invalidate()
         timer = nil
+        pendingObserverSendTask?.cancel()
+        pendingObserverSendTask = nil
     }
 
     // MARK: - Query and Send
