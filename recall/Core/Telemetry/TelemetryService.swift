@@ -156,7 +156,7 @@ final class TelemetryService {
 
     // MARK: - Health Send
 
-    func sendHealth(_ summary: HealthSummary, payload: HealthPayload? = nil) async -> HealthSendResult {
+    func sendHealth(_ payload: HealthPayload) async -> HealthSendResult {
         guard ConnectivityMonitor.shared.canSendHealth else {
             return .error("waiting for WiFi (health wifi-only)")
         }
@@ -178,7 +178,6 @@ final class TelemetryService {
 
         let batch = TelemetrySampleBatch(
             samples: [],
-            health: summary,
             health2: payload,
             nowPlaying: nowPlayingManager.snapshot
         )
@@ -189,9 +188,7 @@ final class TelemetryService {
         do {
             let body = try encoder.encode(batch)
             request.httpBody = body
-            let legacyDump = summary.nonNilKeysSummary()
-            let payloadDump = payload?.recordsLogSummary() ?? "none"
-            ActivityLogger.shared.log(.telemetry, "Telemetry POST (fg): body=\(body.count)B health=[\(legacyDump)] health2=[\(payloadDump)]")
+            ActivityLogger.shared.log(.telemetry, "Telemetry POST (fg): body=\(body.count)B health2=[\(payload.recordsLogSummary())]")
 
             let (data, response) = try await urlSession.data(for: request)
 

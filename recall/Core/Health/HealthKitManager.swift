@@ -15,7 +15,6 @@ final class HealthKitManager {
     private(set) var lastSendResult: HealthSendResult = .none
     private(set) var lastSentTime: Date?
     private(set) var lastAcceptedAt: Date?
-    private(set) var lastSummary: HealthSummary?
     private(set) var isAuthorized = false
     private(set) var errorHistory: [HealthNetworkError] = []
     private(set) var suppressedDuplicateErrors = 0
@@ -364,38 +363,23 @@ final class HealthKitManager {
         lastQueryAt = Date()
         lastSendResult = .sending
 
-        let pair = await aggregateHealthDataPair(from: start, to: end)
-        let summary = pair.legacy
-        let payload = pair.payload
-        lastSummary = summary
+        let payload = await aggregateHealthPayload(from: start, to: end)
 
         let isBackground = UIApplication.shared.applicationState != .active
         ActivityLogger.shared.log(.health, "Queried \(start.formatted(.dateTime.hour().minute()))–\(end.formatted(.dateTime.hour().minute())) [\(isBackground ? "bg" : "fg")] records=\(payload.records.count)")
 
-        // Skip sending only when nothing at all came back — both the legacy
-        // numeric struct and the new record array must be empty.
         let hasAnyData = !payload.records.isEmpty
             || payload.sleep != nil
             || (payload.workouts?.isEmpty == false)
         if !hasAnyData {
-            let states = [
-                "steps=\(summary.steps.map(String.init) ?? "–")",
-                "hr=\(summary.heartRateAvg.map { String(format: "%.0f", $0) } ?? "–")",
-                "kcal=\(summary.activeEnergyKcal.map { String(format: "%.0f", $0) } ?? "–")",
-                "spO2=\(summary.bloodOxygenPercent.map { String(format: "%.0f", $0) } ?? "–")",
-                "resting=\(summary.restingHeartRate.map { String(format: "%.0f", $0) } ?? "–")",
-                "hrv=\(summary.hrvAvgMs.map { String(format: "%.0f", $0) } ?? "–")",
-                "dist=\(summary.distanceMeters.map { String(format: "%.0f", $0) } ?? "–")",
-                "sleep=\(summary.sleepMinutes?.total.map { String(format: "%.0f", $0) } ?? "–")"
-            ].joined(separator: " ")
-            ActivityLogger.shared.log(.health, "Skipped: auth=\(isAuthorized) \(states)")
+            ActivityLogger.shared.log(.health, "Skipped: auth=\(isAuthorized) records=0")
             lastSendResult = .error("all metrics nil")
             return
         }
 
         if isBackground {
             // In background, use TelemetryUploader with beginBackgroundTask for reliable delivery
-            await TelemetryUploader.shared.uploadHealthOnly(summary, payload: payload)
+            await TelemetryUploader.shared.uploadHealthOnly(payload)
             let now = Date()
             lastSentTime = now
             lastAcceptedAt = now
@@ -403,7 +387,7 @@ final class HealthKitManager {
             lastSendResult = .sent(status: 0, body: "bg-queued")
             ActivityLogger.shared.log(.health, "Queued bg upload: \(payload.recordsLogSummary())")
         } else {
-            let result = await TelemetryService.shared.sendHealth(summary, payload: payload)
+            let result = await TelemetryService.shared.sendHealth(payload)
             lastSendResult = result
             if case .sent = result {
                 let now = Date()
@@ -436,17 +420,9 @@ final class HealthKitManager {
 
     // MARK: - Data Aggregation
 
-    func aggregateHealthData(from start: Date, to end: Date) async -> HealthSummary {
-        let pair = await aggregateHealthDataPair(from: start, to: end)
-        return pair.legacy
-    }
-
-    /// Returns both the legacy `HealthSummary` (numeric only, for backward
-    /// compatibility) and the new `HealthPayload` (self-describing records
-    /// with measurement time + provenance). Callers that send to the server
-    /// should prefer the payload; UI code that only needs numbers can use
-    /// the legacy struct.
-    func aggregateHealthDataPair(from start: Date, to end: Date) async -> (legacy: HealthSummary, payload: HealthPayload) {
+    /// Returns the self-describing `HealthPayload` (records + sleep + workouts
+    /// with measurement time + provenance per metric).
+    func aggregateHealthPayload(from start: Date, to end: Date) async -> HealthPayload {
         // Per-metric query windows
         // - Cumulative / discrete avg / discrete stats: bounded windows so the
         //   aggregation reflects "today" or "last 24h".
@@ -457,8 +433,6 @@ final class HealthKitManager {
         let todayStart = calendar.startOfDay(for: end)
         let twentyFourHoursAgo = end.addingTimeInterval(-24 * 3600)
         let latestLookback = Date.distantPast
-
-        var summary = HealthSummary(periodStart: todayStart, periodEnd: end)
 
         // Cumulative daily totals — today 00:00 to now
         async let stepsResult = queryCumulativeSum(.stepCount, unit: .count(), from: todayStart, to: end)
@@ -507,34 +481,6 @@ final class HealthKitManager {
         let wristTemp = await wristTempResult
         let sleep = await sleepResult
         let workouts = await workoutsResult
-
-        // --- Populate legacy HealthSummary (numeric only) ---
-        if let s = steps { summary.steps = Int(s.value) }
-        summary.activeEnergyKcal = energy?.value
-        summary.basalEnergyKcal = basalEnergy?.value
-        summary.distanceMeters = distance?.value
-        if let f = flights { summary.flightsClimbed = Int(f.value) }
-
-        if let hr = heartRate {
-            summary.heartRateAvg = hr.avg
-            summary.heartRateMin = hr.min
-            summary.heartRateMax = hr.max
-        }
-
-        summary.restingHeartRate = restingHR?.value
-        summary.hrvAvgMs = hrv?.avg
-
-        if let o = oxygen { summary.bloodOxygenPercent = o.value * 100 }
-
-        summary.respiratoryRateAvg = respiratory?.avg
-        summary.bodyMassKg = bodyMass?.value
-        if let bf = bodyFat { summary.bodyFatPercent = bf.value * 100 }
-        summary.leanBodyMassKg = leanBodyMass?.value
-        summary.bmi = bmi?.value
-        summary.bodyTemperatureCelsius = bodyTemp?.value
-        summary.wristTemperatureCelsius = wristTemp?.value
-        summary.sleepMinutes = sleep
-        summary.workouts = workouts
 
         // --- Build self-describing HealthPayload ---
         var records: [HealthRecord] = []
@@ -631,23 +577,20 @@ final class HealthKitManager {
         appendLatest(.bodyTemperature, bodyTemp, unit: "degC")
         appendLatest(.appleSleepingWristTemperature, wristTemp, unit: "degC")
 
-        let payload = HealthPayload(
+        return HealthPayload(
             collectedAt: end,
             records: records,
             sleep: sleep,
             workouts: workouts
         )
-
-        return (summary, payload)
     }
 
     // MARK: - Query Helpers
 
     // MARK: - Intermediate result types (carry timestamp + provenance)
     //
-    // Each query helper returns one of these so the aggregator can populate
-    // both the legacy `HealthSummary` (numeric only) and the new
-    // `HealthPayload` (self-describing record per metric).
+    // Each query helper returns one of these so the aggregator can build a
+    // `HealthRecord` per metric with measurement time + source/device info.
 
     struct LatestSampleResult {
         let value: Double

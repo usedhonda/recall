@@ -76,8 +76,8 @@ final class TelemetryUploader: NSObject {
     // MARK: - Public API
 
     /// Upload location samples via background URLSession (Lane B fallback)
-    func upload(samples: [LocationSample], health: HealthSummary? = nil, healthPayload: HealthPayload? = nil) async throws {
-        guard !samples.isEmpty || health != nil || healthPayload != nil else { return }
+    func upload(samples: [LocationSample], healthPayload: HealthPayload? = nil) async throws {
+        guard !samples.isEmpty || healthPayload != nil else { return }
 
         let settings = await MainActor.run { AppSettings.shared }
         let serverURL = await MainActor.run { settings.telemetryServerURL }
@@ -102,7 +102,6 @@ final class TelemetryUploader: NSObject {
                     quality: sample.quality
                 )
             },
-            health: health,
             health2: healthPayload,
             nowPlaying: nowPlaying
         )
@@ -129,9 +128,9 @@ final class TelemetryUploader: NSObject {
     }
 
     /// Upload health data only (no location samples) — used from background HKObserverQuery/timer.
-    /// `payload` carries the new self-describing records (with measuredAt + source).
+    /// Carries the self-describing records (with measuredAt + source) under `health2`.
     @MainActor
-    func uploadHealthOnly(_ summary: HealthSummary, payload: HealthPayload? = nil) async {
+    func uploadHealthOnly(_ payload: HealthPayload) async {
         let settings = AppSettings.shared
         guard !settings.telemetryServerURL.isEmpty,
               let token = KeychainHelper.shared.getToken() else { return }
@@ -144,14 +143,11 @@ final class TelemetryUploader: NSObject {
             }
         }
 
-        let legacyDump = summary.nonNilKeysSummary()
-        let payloadDump = payload?.recordsLogSummary() ?? "none"
-        ActivityLogger.shared.log(.telemetry, "Telemetry POST (bg): health=[\(legacyDump)] health2=[\(payloadDump)]")
+        ActivityLogger.shared.log(.telemetry, "Telemetry POST (bg): health2=[\(payload.recordsLogSummary())]")
 
         do {
             try await uploadImmediate(
                 samples: [],
-                health: summary,
                 healthPayload: payload,
                 serverURL: settings.telemetryServerURL,
                 token: token
@@ -160,7 +156,7 @@ final class TelemetryUploader: NSObject {
         } catch {
             TelemetryUploader.log("healthOnly FAIL \(error.localizedDescription) -> laneB")
             do {
-                try await upload(samples: [], health: summary, healthPayload: payload)
+                try await upload(samples: [], healthPayload: payload)
             } catch {
                 TelemetryUploader.log("healthOnly laneB FAIL \(error.localizedDescription)")
             }
@@ -214,8 +210,7 @@ final class TelemetryUploader: NSObject {
         do {
             try await uploadImmediate(
                 samples: samples,
-                health: health?.summary,
-                healthPayload: health?.payload,
+                healthPayload: health,
                 serverURL: settings.telemetryServerURL,
                 token: token
             )
@@ -227,7 +222,7 @@ final class TelemetryUploader: NSObject {
             TelemetryUploader.log("laneA FAIL \(detail) -> laneB")
             lastUploadResult = "error: \(detail)"
             do {
-                try await upload(samples: samples, health: health?.summary, healthPayload: health?.payload)
+                try await upload(samples: samples, healthPayload: health)
                 TelemetryUploader.log("laneB OK samples=\(samples.count)")
             } catch {
                 for sample in samples {
@@ -247,12 +242,11 @@ final class TelemetryUploader: NSObject {
     /// Upload samples immediately using default URLSession (Lane A)
     private func uploadImmediate(
         samples: [LocationSample],
-        health: HealthSummary? = nil,
         healthPayload: HealthPayload? = nil,
         serverURL: String,
         token: String
     ) async throws {
-        // Same nowPlaying snapshot rule as `upload(samples:health:...)`.
+        // Same nowPlaying snapshot rule as `upload(samples:healthPayload:)`.
         let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
 
         let batch = TelemetrySampleBatch(
@@ -268,7 +262,6 @@ final class TelemetryUploader: NSObject {
                     quality: sample.quality
                 )
             },
-            health: health,
             health2: healthPayload,
             nowPlaying: nowPlaying
         )
@@ -294,18 +287,18 @@ final class TelemetryUploader: NSObject {
     /// Query HealthKit data for background upload piggyback.
     /// Uses the shared HealthKitManager (which has been authorized) for consistent behavior.
     @MainActor
-    private func queryHealthForBackground() async -> (summary: HealthSummary, payload: HealthPayload)? {
+    private func queryHealthForBackground() async -> HealthPayload? {
         let manager = TelemetryService.shared.healthManager
         guard manager.isEnabled, manager.isAuthorized else { return nil }
         guard HKHealthStore.isHealthDataAvailable() else { return nil }
 
         let now = Date()
-        let pair = await manager.aggregateHealthDataPair(from: now.addingTimeInterval(-3600), to: now)
+        let payload = await manager.aggregateHealthPayload(from: now.addingTimeInterval(-3600), to: now)
 
-        let hasData = !pair.payload.records.isEmpty
-            || pair.payload.sleep != nil
-            || (pair.payload.workouts?.isEmpty == false)
-        return hasData ? (summary: pair.legacy, payload: pair.payload) : nil
+        let hasData = !payload.records.isEmpty
+            || payload.sleep != nil
+            || (payload.workouts?.isEmpty == false)
+        return hasData ? payload : nil
     }
 
     /// Process completed background session

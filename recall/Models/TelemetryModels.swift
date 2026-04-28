@@ -1,13 +1,12 @@
 import Foundation
 import CoreLocation
 
-/// Flat sample format matching server's expected { "samples": [...], "health": {...} } schema.
-/// `health2` carries the new self-describing payload (records with measuredAt +
-/// source). Server may consume `health` (legacy) and `health2` (new) in parallel
-/// during migration; once `health2` is fully supported `health` will be dropped.
+/// Flat sample format matching server's expected { "samples": [...], "health2": {...} } schema.
+/// `health2` carries the self-describing payload (records with measuredAt +
+/// source per metric). Server interprets each record by `metricId` + `unit` +
+/// `aggregation` rather than relying on field names.
 struct TelemetrySampleBatch: Encodable {
     let samples: [TelemetrySample]
-    var health: HealthSummary?
     var health2: HealthPayload?
     var nowPlaying: NowPlayingSnapshot?
 }
