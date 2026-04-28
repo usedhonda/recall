@@ -297,7 +297,7 @@ final class LocationManager: NSObject {
                     totalHttpErrors += 1
                     recordNetworkError(detail)
                 }
-                let sample = LocationSample(from: location)
+                let sample = LocationSample(from: location, quality: quality)
                 await LocationQueue.shared.enqueue(sample)
                 totalQueuedBackgroundSends += 1
                 lastSentLocation = location
@@ -480,7 +480,7 @@ final class LocationManager: NSObject {
                         self.totalHttpErrors += 1
                         self.recordNetworkError(detail)
                     }
-                    let sample = LocationSample(from: location)
+                    let sample = LocationSample(from: location, quality: quality)
                     await LocationQueue.shared.enqueue(sample)
                     self.totalQueuedBackgroundSends += 1
                     self.lastSentLocation = location

@@ -21,6 +21,10 @@ struct TelemetrySample: Encodable {
     let altitude: Double?
     let speed: Double?
     let timestamp: Date
+    /// "good" / "approx" / nil. Forwarded from `LocationSample.quality`
+    /// (which mirrors `LocationManager.qualityFor`) so server can reason
+    /// about reduced-accuracy fixes.
+    let quality: String?
 }
 
 /// Server response for telemetry uploads

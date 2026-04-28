@@ -84,6 +84,11 @@ final class TelemetryUploader: NSObject {
         guard let token = KeychainHelper.shared.getToken(),
               !serverURL.isEmpty else { return }
 
+        // Snapshot nowPlaying so background uploads carry the same context as
+        // foreground sends (Cdx audit: previously only foreground sendLocation/
+        // sendHealth attached `nowPlaying`, leaving background batches blind).
+        let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
+
         let batch = TelemetrySampleBatch(
             samples: samples.map { sample in
                 TelemetrySample(
@@ -93,11 +98,13 @@ final class TelemetryUploader: NSObject {
                     accuracy: sample.accuracy,
                     altitude: sample.altitude,
                     speed: sample.speed,
-                    timestamp: sample.timestamp
+                    timestamp: sample.timestamp,
+                    quality: sample.quality
                 )
             },
             health: health,
-            health2: healthPayload
+            health2: healthPayload,
+            nowPlaying: nowPlaying
         )
 
         let url = URL(string: "\(serverURL)/api/telemetry")!
@@ -245,6 +252,9 @@ final class TelemetryUploader: NSObject {
         serverURL: String,
         token: String
     ) async throws {
+        // Same nowPlaying snapshot rule as `upload(samples:health:...)`.
+        let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
+
         let batch = TelemetrySampleBatch(
             samples: samples.map { sample in
                 TelemetrySample(
@@ -254,11 +264,13 @@ final class TelemetryUploader: NSObject {
                     accuracy: sample.accuracy,
                     altitude: sample.altitude,
                     speed: sample.speed,
-                    timestamp: sample.timestamp
+                    timestamp: sample.timestamp,
+                    quality: sample.quality
                 )
             },
             health: health,
-            health2: healthPayload
+            health2: healthPayload,
+            nowPlaying: nowPlaying
         )
 
         let url = URL(string: "\(serverURL)/api/telemetry")!

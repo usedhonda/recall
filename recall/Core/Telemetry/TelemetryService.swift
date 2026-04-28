@@ -111,7 +111,8 @@ final class TelemetryService {
                     accuracy: payload.accuracy,
                     altitude: payload.altitude,
                     speed: payload.speed,
-                    timestamp: payload.timestamp
+                    timestamp: payload.timestamp,
+                    quality: payload.quality
                 ),
             ],
             nowPlaying: nowPlayingManager.snapshot

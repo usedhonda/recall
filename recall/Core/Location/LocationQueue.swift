@@ -10,8 +10,12 @@ struct LocationSample: Codable, Identifiable {
     let altitude: Double?
     let speed: Double?
     let timestamp: Date
+    /// "good" / "approx" / nil. Mirrors `LocationPayload.quality` so the
+    /// signal survives the queue path. Older samples persisted before this
+    /// field existed decode as nil thanks to the optional declaration.
+    var quality: String?
 
-    init(latitude: Double, longitude: Double, accuracy: Double, altitude: Double?, speed: Double?, timestamp: Date) {
+    init(latitude: Double, longitude: Double, accuracy: Double, altitude: Double?, speed: Double?, timestamp: Date, quality: String? = nil) {
         self.id = UUID()
         self.latitude = latitude
         self.longitude = longitude
@@ -19,9 +23,10 @@ struct LocationSample: Codable, Identifiable {
         self.altitude = altitude
         self.speed = speed
         self.timestamp = timestamp
+        self.quality = quality
     }
 
-    init(from location: CLLocation) {
+    init(from location: CLLocation, quality: String? = nil) {
         self.id = UUID()
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
@@ -29,6 +34,7 @@ struct LocationSample: Codable, Identifiable {
         self.altitude = location.altitude
         self.speed = location.speed >= 0 ? location.speed : nil
         self.timestamp = location.timestamp
+        self.quality = quality
     }
 }
 
