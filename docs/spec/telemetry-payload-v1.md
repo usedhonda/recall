@@ -337,7 +337,30 @@ server 側で単位変換が必要な場合 (例: lbs 表示) は `unit` を見�
 
 ---
 
+## 11.1 サーバー側 (Gateway) 実装ファイル参照
+
+Gateway (`:18789`) の `vibeterm-telemetry` plugin が `/api/telemetry` を受信。Phase 3 (B案) の改修対象。
+
+| 役割 | パス (mac mini) | 備考 |
+|---|---|---|
+| Plugin ルート | `~/.openclaw/extensions/vibeterm-telemetry/` | `package.json` 2026.2.8、`type=module` (ESM) |
+| エントリポイント | `index.js` | **4-route bundle** (`/api/telemetry` / `/api/web-history` / `/api/recall-settings` / `/api/voice-transcript`)。**全面書換 NG** (memory `feedback_fragile_equilibrium` 過去事例あり) |
+| Telemetry handler 本体 | `src/handler.js` | POST `/api/telemetry` のメイン処理 |
+| In-memory store | `src/store.js` | dedup + circular buffer |
+| `health-state.json` 書込先 | `~/.openclaw/workspace/memory/health-state.json` | `HEALTH_STATE_PATH` 定数で参照 |
+| 既存スキーマ | 旧 flat `health` (steps / activeEnergyKcal / heartRateAvg / ... / sleepMinutes / workouts) を直接 mapping | `health2` は現状未対応 |
+
+### 改修方針 (Phase 3 B案)
+
+- `body.health2` がある場合は優先採用、無ければ既存の `body.health` (legacy) を fallback
+- `health2.records[]` の各 record を `metricId` キーで `health-state.json` の対応フィールドにマッピング (e.g. `HKQuantityTypeIdentifierBodyMass` → `bodyMassKg` + `lastSeen.bodyMassKg.at = measuredAt`)
+- `source` / `sourceBundleId` を `lastSeen.{metric}.source` 等として保存 (日報側で利用可能に)
+- 既存の 4-route バンドル構造は維持。`handler.js` のみ最小改修
+
+---
+
 ## 12. 関連プラン / ログ
 
 - 本仕様の元プラン: `~/.claude/plans/tender-sniffing-goblet.md`
 - recall 側実装 commit: `44dd6f5`, `637a71a`, `124609c`, `c1fb425`, `0b9462e`, `90d4db4`
+- 仕様書改版: `f316ffb` (v1 初版), `9188dcb` (Gateway 実態反映 + Phase 3)
