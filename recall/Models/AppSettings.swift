@@ -51,7 +51,10 @@ final class AppSettings {
     }
 
     var debugLogHost: String {
-        get { UserDefaults.standard.string(forKey: "debugLogHost") ?? "" }
+        get {
+            let val = UserDefaults.standard.string(forKey: "debugLogHost") ?? ""
+            return val.isEmpty ? "100.89.110.24" : val
+        }
         set { UserDefaults.standard.set(newValue, forKey: "debugLogHost") }
     }
 
