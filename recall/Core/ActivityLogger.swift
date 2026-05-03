@@ -49,6 +49,12 @@ final class ActivityLogger {
     private(set) var entries: [Entry] = []
     private let maxEntries = 200
 
+    // UI dedupe — collapse identical (category, message) within window to prevent
+    // on-screen spam (e.g., repeated `[H] Error: HTTP 404`). UDP and file logs are
+    // always sent in full so the off-device debug trail stays complete.
+    private var recentUIMessages: [String: Date] = [:]
+    private let dedupeWindow: TimeInterval = 30
+
     // Remote log via UDP broadcast
     private let udpQueue = DispatchQueue(label: "com.recall.udplog", qos: .utility)
     private nonisolated(unsafe) var udpConnection: NWConnection?
@@ -70,12 +76,25 @@ final class ActivityLogger {
 
     func log(_ category: Entry.Category, _ message: String) {
         let entry = Entry(timestamp: Date(), category: category, message: message)
+
+        sendUDP(entry.formatted)
+        writeToFile(entry)
+
+        let key = "\(category.rawValue):\(message)"
+        let now = entry.timestamp
+        if let last = recentUIMessages[key], now.timeIntervalSince(last) < dedupeWindow {
+            return
+        }
+        recentUIMessages[key] = now
+        if recentUIMessages.count > 100 {
+            let cutoff = now.addingTimeInterval(-dedupeWindow * 2)
+            recentUIMessages = recentUIMessages.filter { $0.value > cutoff }
+        }
+
         entries.append(entry)
         if entries.count > maxEntries {
             entries.removeFirst(entries.count - maxEntries)
         }
-        sendUDP(entry.formatted)
-        writeToFile(entry)
     }
 
     nonisolated func logFromBackground(_ category: Entry.Category, _ message: String) {
