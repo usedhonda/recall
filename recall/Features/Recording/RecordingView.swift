@@ -433,38 +433,9 @@ struct RecordingView: View {
 
     @ViewBuilder
     private var telemetryStatusBanner: some View {
-        let loc = telemetry.locationManager
-        if loc.isEnabled {
-            TimelineView(.periodic(from: .now, by: 15)) { context in
-                let stale = telemetryStaleMinutes(at: context.date)
-                if stale >= 5 {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                        if let lastErr = loc.lastError {
-                            Text("LINK DOWN \(Int(stale))m — \(lastErr)")
-                                .font(RecallTheme.Fonts.hudMicro)
-                        } else {
-                            Text("LINK DOWN \(Int(stale))m — no server response")
-                                .font(RecallTheme.Fonts.hudMicro)
-                        }
-                    }
-                    .foregroundStyle(stale >= 30 ? RecallTheme.Colors.neonRed : RecallTheme.Colors.neonAmber)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill((stale >= 30 ? RecallTheme.Colors.neonRed : RecallTheme.Colors.neonAmber).opacity(0.1))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke((stale >= 30 ? RecallTheme.Colors.neonRed : RecallTheme.Colors.neonAmber).opacity(0.3), lineWidth: 1)
-                    )
-                    .padding(.horizontal, 12)
-                }
-            }
-        }
+        // Suppressed during gateway plugin-loader outage (2026-05-03).
+        // Restore once /api/telemetry route is back to avoid silently hiding real link issues.
+        EmptyView()
     }
 
     private func telemetryStaleMinutes(at now: Date) -> TimeInterval {
@@ -533,21 +504,9 @@ struct RecordingView: View {
         if !isConnected {
             return ("OFFLINE", .critical)
         }
-        if !isReachable {
-            let monitor = ServerHealthMonitor.shared
-            let minutes = monitor.lastSuccessAt.map {
-                Int(now.timeIntervalSince($0) / 60)
-            } ?? 0
-            let severity: BannerSeverity = minutes >= 30 ? .critical : .warning
-            return ("UPLOAD SERVER UNREACHABLE \(minutes)m", severity)
-        }
-        if let lastSuccess = lastUploadSuccess, pendingCount > 0 {
-            let staleMinutes = Int(now.timeIntervalSince(lastSuccess) / 60)
-            if staleMinutes >= 5 {
-                let severity: BannerSeverity = staleMinutes >= 30 ? .critical : .warning
-                return ("UPLOAD STALLED \(staleMinutes)m — \(pendingCount) pending", severity)
-            }
-        }
+        // Server-side outage banners (UNREACHABLE / STALLED) are suppressed during the
+        // gateway plugin-loader outage (2026-05-03). Restore once /api/telemetry route
+        // is back so legitimate server problems become visible again.
         return nil
     }
 

@@ -80,6 +80,10 @@ final class ActivityLogger {
         sendUDP(entry.formatted)
         writeToFile(entry)
 
+        if Self.shouldSuppressUI(message: message) {
+            return
+        }
+
         let key = "\(category.rawValue):\(message)"
         let now = entry.timestamp
         if let last = recentUIMessages[key], now.timeIntervalSince(last) < dedupeWindow {
@@ -95,6 +99,13 @@ final class ActivityLogger {
         if entries.count > maxEntries {
             entries.removeFirst(entries.count - maxEntries)
         }
+    }
+
+    private static func shouldSuppressUI(message: String) -> Bool {
+        // Hide backend transport errors (e.g. HTTP 404/5xx) — these are server-side
+        // outages the user can't act on. UDP and file logs still capture them so
+        // remote debugging stays intact.
+        message.contains("HTTP 4") || message.contains("HTTP 5")
     }
 
     nonisolated func logFromBackground(_ category: Entry.Category, _ message: String) {
