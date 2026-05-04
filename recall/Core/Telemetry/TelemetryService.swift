@@ -103,18 +103,7 @@ final class TelemetryService {
         request.setValue("recall-ios/1.0", forHTTPHeaderField: "User-Agent")
 
         let batch = TelemetrySampleBatch(
-            samples: [
-                TelemetrySample(
-                    id: UUID().uuidString,
-                    lat: payload.latitude,
-                    lon: payload.longitude,
-                    accuracy: payload.accuracy,
-                    altitude: payload.altitude,
-                    speed: payload.speed,
-                    timestamp: payload.timestamp,
-                    quality: payload.quality
-                ),
-            ],
+            samples: [TelemetrySample(from: payload)],
             nowPlaying: nowPlayingManager.snapshot
         )
 

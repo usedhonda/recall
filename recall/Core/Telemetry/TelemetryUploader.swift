@@ -90,18 +90,7 @@ final class TelemetryUploader: NSObject {
         let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
 
         let batch = TelemetrySampleBatch(
-            samples: samples.map { sample in
-                TelemetrySample(
-                    id: sample.id.uuidString,
-                    lat: sample.latitude,
-                    lon: sample.longitude,
-                    accuracy: sample.accuracy,
-                    altitude: sample.altitude,
-                    speed: sample.speed,
-                    timestamp: sample.timestamp,
-                    quality: sample.quality
-                )
-            },
+            samples: samples.map { TelemetrySample(from: $0) },
             health2: healthPayload,
             nowPlaying: nowPlaying
         )
@@ -250,18 +239,7 @@ final class TelemetryUploader: NSObject {
         let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
 
         let batch = TelemetrySampleBatch(
-            samples: samples.map { sample in
-                TelemetrySample(
-                    id: sample.id.uuidString,
-                    lat: sample.latitude,
-                    lon: sample.longitude,
-                    accuracy: sample.accuracy,
-                    altitude: sample.altitude,
-                    speed: sample.speed,
-                    timestamp: sample.timestamp,
-                    quality: sample.quality
-                )
-            },
+            samples: samples.map { TelemetrySample(from: $0) },
             health2: healthPayload,
             nowPlaying: nowPlaying
         )

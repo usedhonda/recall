@@ -15,6 +15,16 @@ struct LocationSample: Codable, Identifiable {
     /// field existed decode as nil thanks to the optional declaration.
     var quality: String?
 
+    // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04).
+    // All optional so samples persisted before this field existed still decode.
+    var speedAccuracy: Double?
+    var course: Double?
+    var courseAccuracy: Double?
+    var verticalAccuracy: Double?
+    var floor: Int?
+    var producedByAccessory: Bool?
+    var simulatedBySoftware: Bool?
+
     init(latitude: Double, longitude: Double, accuracy: Double, altitude: Double?, speed: Double?, timestamp: Date, quality: String? = nil) {
         self.id = UUID()
         self.latitude = latitude
@@ -35,6 +45,16 @@ struct LocationSample: Codable, Identifiable {
         self.speed = location.speed >= 0 ? location.speed : nil
         self.timestamp = location.timestamp
         self.quality = quality
+
+        self.speedAccuracy = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
+        self.course = location.course >= 0 ? location.course : nil
+        self.courseAccuracy = location.courseAccuracy >= 0 ? location.courseAccuracy : nil
+        self.verticalAccuracy = location.verticalAccuracy >= 0 ? location.verticalAccuracy : nil
+        self.floor = location.floor?.level
+        if let info = location.sourceInformation {
+            self.producedByAccessory = info.isProducedByAccessory
+            self.simulatedBySoftware = info.isSimulatedBySoftware
+        }
     }
 }
 

@@ -221,15 +221,7 @@ final class LocationManager: NSObject {
         let quality = qualityFor(location)
 
         if isInForeground {
-            let payload = LocationPayload(
-                latitude: location.coordinate.latitude,
-                longitude: location.coordinate.longitude,
-                accuracy: location.horizontalAccuracy,
-                altitude: location.altitude,
-                speed: location.speed >= 0 ? location.speed : nil,
-                timestamp: location.timestamp,
-                quality: quality
-            )
+            let payload = LocationPayload(from: location, quality: quality)
 
             totalAttemptedSends += 1
             lastAttemptAt = Date()
@@ -247,10 +239,11 @@ final class LocationManager: NSObject {
                 }
                 resetHeartbeatTimer()
                 ActivityLogger.shared.log(.location, String(
-                    format: "Sent: %.4f, %.4f (%.0fm)",
+                    format: "Sent: %.4f, %.4f (%.0fm)%@",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
-                    location.horizontalAccuracy
+                    location.horizontalAccuracy,
+                    formatLocationMeta(location)
                 ))
             } else if case .httpError(let detail) = result {
                 totalHttpErrors += 1
@@ -258,15 +251,7 @@ final class LocationManager: NSObject {
             }
         } else {
             // BG: try direct send first, fallback to queue on failure
-            let payload = LocationPayload(
-                latitude: location.coordinate.latitude,
-                longitude: location.coordinate.longitude,
-                accuracy: location.horizontalAccuracy,
-                altitude: location.altitude,
-                speed: location.speed >= 0 ? location.speed : nil,
-                timestamp: location.timestamp,
-                quality: quality
-            )
+            let payload = LocationPayload(from: location, quality: quality)
 
             totalAttemptedSends += 1
             lastAttemptAt = Date()
@@ -286,10 +271,11 @@ final class LocationManager: NSObject {
                 }
                 resetHeartbeatTimer()
                 ActivityLogger.shared.log(.location, String(
-                    format: "BG direct sent: %.4f, %.4f (%.0fm)",
+                    format: "BG direct sent: %.4f, %.4f (%.0fm)%@",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
-                    location.horizontalAccuracy
+                    location.horizontalAccuracy,
+                    formatLocationMeta(location)
                 ))
             } else {
                 // Direct send failed — fallback to queue
@@ -305,10 +291,11 @@ final class LocationManager: NSObject {
                 resetHeartbeatTimer()
 
                 ActivityLogger.shared.log(.location, String(
-                    format: "BG queued (fallback): %.4f, %.4f (%.0fm)",
+                    format: "BG queued (fallback): %.4f, %.4f (%.0fm)%@",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
-                    location.horizontalAccuracy
+                    location.horizontalAccuracy,
+                    formatLocationMeta(location)
                 ))
 
                 await TelemetryUploader.shared.triggerUpload()
@@ -384,6 +371,28 @@ final class LocationManager: NSObject {
         return timeSinceLastSend >= minSendInterval || distance >= minDistance
     }
 
+    /// Formats Phase 1 (Track 2) sample metadata for ActivityLog visibility.
+    /// Empty string when nothing meaningful is present so the existing log line
+    /// stays compact when the OS doesn't supply enriched fields.
+    private func formatLocationMeta(_ location: CLLocation) -> String {
+        var parts: [String] = []
+        if let level = location.floor?.level { parts.append("f\(level)") }
+        if location.verticalAccuracy >= 0 {
+            parts.append(String(format: "vA%.0f", location.verticalAccuracy))
+        }
+        if location.speedAccuracy >= 0 {
+            parts.append(String(format: "spdA%.1f", location.speedAccuracy))
+        }
+        if location.course >= 0 {
+            parts.append(String(format: "c%.0f", location.course))
+        }
+        if let info = location.sourceInformation {
+            if info.isProducedByAccessory { parts.append("acc") }
+            if info.isSimulatedBySoftware { parts.append("sim") }
+        }
+        return parts.isEmpty ? "" : " " + parts.joined(separator: " ")
+    }
+
     // MARK: - Heartbeat Timer
 
     private func startHeartbeatTimer() {
@@ -413,15 +422,7 @@ final class LocationManager: NSObject {
         let isInForeground = UIApplication.shared.applicationState == .active
 
         if isInForeground {
-            let payload = LocationPayload(
-                latitude: location.coordinate.latitude,
-                longitude: location.coordinate.longitude,
-                accuracy: location.horizontalAccuracy,
-                altitude: location.altitude,
-                speed: location.speed >= 0 ? location.speed : nil,
-                timestamp: location.timestamp,
-                quality: quality
-            )
+            let payload = LocationPayload(from: location, quality: quality)
             Task {
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
@@ -444,15 +445,7 @@ final class LocationManager: NSObject {
             }
         } else {
             // BG heartbeat: try direct send first, fallback to queue
-            let payload = LocationPayload(
-                latitude: location.coordinate.latitude,
-                longitude: location.coordinate.longitude,
-                accuracy: location.horizontalAccuracy,
-                altitude: location.altitude,
-                speed: location.speed >= 0 ? location.speed : nil,
-                timestamp: location.timestamp,
-                quality: quality
-            )
+            let payload = LocationPayload(from: location, quality: quality)
             Task {
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
@@ -470,10 +463,11 @@ final class LocationManager: NSObject {
                         self.lastNewAcceptedAt = Date()
                     }
                     ActivityLogger.shared.log(.location, String(
-                        format: "BG heartbeat direct sent: %.4f, %.4f (%.0fm)",
+                        format: "BG heartbeat direct sent: %.4f, %.4f (%.0fm)%@",
                         location.coordinate.latitude,
                         location.coordinate.longitude,
-                        location.horizontalAccuracy
+                        location.horizontalAccuracy,
+                        self.formatLocationMeta(location)
                     ))
                 } else {
                     if case .httpError(let detail) = result {
@@ -486,10 +480,11 @@ final class LocationManager: NSObject {
                     self.lastSentLocation = location
                     self.lastSentTime = Date()
                     ActivityLogger.shared.log(.location, String(
-                        format: "BG heartbeat queued (fallback): %.4f, %.4f (%.0fm)",
+                        format: "BG heartbeat queued (fallback): %.4f, %.4f (%.0fm)%@",
                         location.coordinate.latitude,
                         location.coordinate.longitude,
-                        location.horizontalAccuracy
+                        location.horizontalAccuracy,
+                        self.formatLocationMeta(location)
                     ))
                     await TelemetryUploader.shared.triggerUpload()
                 }
