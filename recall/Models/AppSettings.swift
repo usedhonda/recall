@@ -1,6 +1,28 @@
 import Foundation
 import Observation
 
+struct LocationAnchor: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var latitude: Double
+    var longitude: Double
+    var radius: Double
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        latitude: Double,
+        longitude: Double,
+        radius: Double
+    ) {
+        self.id = id
+        self.name = name
+        self.latitude = latitude
+        self.longitude = longitude
+        self.radius = radius
+    }
+}
+
 @Observable
 final class AppSettings {
     static let shared = AppSettings()
@@ -136,6 +158,18 @@ final class AppSettings {
     var locationBackgroundEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "telemetryLocationBackgroundEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "telemetryLocationBackgroundEnabled") }
+    }
+
+    var locationAnchors: [LocationAnchor] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: "locationAnchors") else { return [] }
+            return (try? JSONDecoder().decode([LocationAnchor].self, from: data)) ?? []
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "locationAnchors")
+            }
+        }
     }
 
     var telemetrySendInterval: TimeInterval {

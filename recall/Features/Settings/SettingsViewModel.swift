@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 import Observation
 import SwiftData
 import SwiftUI
@@ -146,6 +147,42 @@ final class SettingsViewModel {
 
     var lastLocationSentTime: Date? {
         telemetry.locationManager.lastSentTime
+    }
+
+    var currentLocation: CLLocation? {
+        telemetry.locationManager.currentLocation
+    }
+
+    var locationAnchors: [LocationAnchor] {
+        settings.locationAnchors
+    }
+
+    var newAnchorName = ""
+    var newAnchorRadius: Double = 50
+
+    func addAnchorFromCurrentLocation() {
+        guard let location = currentLocation else { return }
+        let trimmedName = newAnchorName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let anchor = LocationAnchor(
+            name: trimmedName.isEmpty ? "anchor \(locationAnchors.count + 1)" : trimmedName,
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude,
+            radius: max(10, newAnchorRadius)
+        )
+        var anchors = settings.locationAnchors
+        anchors.append(anchor)
+        settings.locationAnchors = anchors
+        newAnchorName = ""
+        newAnchorRadius = 50
+        telemetry.locationManager.refreshRegions()
+        telemetry.locationManager.requestAuthorization()
+    }
+
+    func deleteAnchor(id: UUID) {
+        var anchors = settings.locationAnchors
+        anchors.removeAll { $0.id == id }
+        settings.locationAnchors = anchors
+        telemetry.locationManager.refreshRegions()
     }
 
     // MARK: - Network

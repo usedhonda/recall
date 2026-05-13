@@ -343,6 +343,87 @@ struct SettingsView: View {
                             .foregroundStyle(RecallTheme.Colors.neonCyan.opacity(0.7))
                     }
                 }
+
+                Divider()
+                    .overlay(RecallTheme.Colors.border)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("ANCHORS")
+                            .font(RecallTheme.Fonts.hudCaption)
+                            .foregroundStyle(RecallTheme.Colors.textSecondary)
+                        Spacer()
+                        Text("\(viewModel.locationAnchors.count)")
+                            .font(RecallTheme.Fonts.hudMeter)
+                            .foregroundStyle(RecallTheme.Colors.neonCyan)
+                    }
+
+                    if viewModel.locationAnchors.isEmpty {
+                        Text("ADD CURRENT LOCATION TO ENABLE OS REGION ARRIVAL/EXIT WAKES")
+                            .font(RecallTheme.Fonts.hudCaption)
+                            .foregroundStyle(RecallTheme.Colors.textMuted)
+                    } else {
+                        ForEach(viewModel.locationAnchors) { anchor in
+                            HStack(alignment: .top, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(anchor.name.uppercased())
+                                        .font(RecallTheme.Fonts.hudCaption)
+                                        .foregroundStyle(RecallTheme.Colors.textPrimary)
+                                    Text(String(format: "%.5f, %.5f / %.0fm", anchor.latitude, anchor.longitude, anchor.radius))
+                                        .font(RecallTheme.Fonts.hudCaption)
+                                        .foregroundStyle(RecallTheme.Colors.textSecondary)
+                                }
+                                Spacer()
+                                Button("DELETE") {
+                                    viewModel.deleteAnchor(id: anchor.id)
+                                }
+                                .font(RecallTheme.Fonts.hudCaption)
+                                .foregroundStyle(RecallTheme.Colors.neonRed)
+                            }
+                            .padding(8)
+                            .background(RecallTheme.Colors.surfaceAlt)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    viewModel.deleteAnchor(id: anchor.id)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+
+                    TextField("anchor name", text: $viewModel.newAnchorName)
+                        .font(RecallTheme.Fonts.hudBody)
+                        .foregroundStyle(RecallTheme.Colors.textPrimary)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .padding(8)
+                        .background(RecallTheme.Colors.surfaceAlt)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(RecallTheme.Colors.border, lineWidth: 1)
+                        )
+
+                    hudSlider(
+                        label: "ANCHOR RADIUS",
+                        value: "\(Int(viewModel.newAnchorRadius))m",
+                        binding: $viewModel.newAnchorRadius,
+                        range: 25...200,
+                        step: 5
+                    )
+
+                    HUDActionButton(
+                        title: "Add Current Location",
+                        icon: "location.circle",
+                        color: RecallTheme.Colors.neonCyan
+                    ) {
+                        viewModel.addAnchorFromCurrentLocation()
+                    }
+                    .opacity(viewModel.currentLocation == nil ? 0.4 : 1.0)
+                    .disabled(viewModel.currentLocation == nil)
+                }
             }
             .hudCard()
         }

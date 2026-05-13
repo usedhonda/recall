@@ -54,7 +54,7 @@ final class LocationManager: NSObject {
         }
     }
 
-    var minDistance: CLLocationDistance = 50
+    var minDistance: CLLocationDistance = 20
 
     // MARK: - Send Status
 
@@ -97,15 +97,16 @@ final class LocationManager: NSObject {
     // MARK: - Authorization
 
     func requestAuthorization() {
+        let shouldRequestAlways = backgroundEnabled || !AppSettings.shared.locationAnchors.isEmpty
         switch authorizationStatus {
         case .notDetermined:
-            if backgroundEnabled {
+            if shouldRequestAlways {
                 locationManager.requestAlwaysAuthorization()
             } else {
                 locationManager.requestWhenInUseAuthorization()
             }
         case .authorizedWhenInUse:
-            if backgroundEnabled {
+            if shouldRequestAlways {
                 locationManager.requestAlwaysAuthorization()
             }
         default:
@@ -156,6 +157,7 @@ final class LocationManager: NSObject {
             }
         }
 
+        refreshRegions()
         startLiveUpdates()
         ActivityLogger.shared.log(.location, "Location updates started (bg=\(backgroundEnabled) canBg=\(canUseBackground) auth=\(authorizationStatus.rawValue))")
     }
@@ -172,7 +174,13 @@ final class LocationManager: NSObject {
 
         locationManager.stopUpdatingLocation()
         locationManager.stopMonitoringSignificantLocationChanges()
+        stopAllRegions()
         ActivityLogger.shared.log(.location, "Location updates stopped")
+    }
+
+    func refreshRegions() {
+        stopAllRegions()
+        startAnchorRegions()
     }
 
     private func startLiveUpdates() {
@@ -358,6 +366,44 @@ final class LocationManager: NSObject {
         forceNextSend()
         guard let location = currentLocation ?? lastGoodLocation else { return }
         await handleLocationUpdate(location)
+    }
+
+    private func startAnchorRegions() {
+        guard isEnabled else { return }
+        let anchors = AppSettings.shared.locationAnchors
+        guard !anchors.isEmpty else { return }
+
+        guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else {
+            ActivityLogger.shared.log(.location, "Region monitoring unavailable")
+            return
+        }
+
+        guard authorizationStatus == .authorizedAlways else {
+            ActivityLogger.shared.log(.location, "Region monitoring needs Always authorization (auth=\(authorizationStatus.rawValue))")
+            requestAuthorization()
+            return
+        }
+
+        for anchor in anchors.prefix(20) {
+            let center = CLLocationCoordinate2D(latitude: anchor.latitude, longitude: anchor.longitude)
+            let maxRadius = locationManager.maximumRegionMonitoringDistance
+            let radius = maxRadius > 0 ? min(max(anchor.radius, 1), maxRadius) : max(anchor.radius, 1)
+            let region = CLCircularRegion(center: center, radius: radius, identifier: anchor.id.uuidString)
+            region.notifyOnEntry = true
+            region.notifyOnExit = true
+            locationManager.startMonitoring(for: region)
+            ActivityLogger.shared.log(.location, "Region monitor started: \(anchor.name) r=\(Int(radius))m")
+        }
+    }
+
+    private func stopAllRegions() {
+        for region in locationManager.monitoredRegions {
+            locationManager.stopMonitoring(for: region)
+        }
+    }
+
+    private func anchorName(for region: CLRegion) -> String {
+        AppSettings.shared.locationAnchors.first { $0.id.uuidString == region.identifier }?.name ?? region.identifier
     }
 
     private func shouldSendLocation(_ location: CLLocation) -> Bool {
@@ -566,6 +612,30 @@ extension LocationManager: CLLocationManagerDelegate {
             lastError = error.localizedDescription
             lastErrorAt = Date()
             recordNetworkError(error.localizedDescription)
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        Task { @MainActor in
+            ActivityLogger.shared.log(.location, "Region enter: \(anchorName(for: region))")
+            forceNextSend()
+            await sendCurrentLocationNow()
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        Task { @MainActor in
+            ActivityLogger.shared.log(.location, "Region exit: \(anchorName(for: region))")
+            forceNextSend()
+            await sendCurrentLocationNow()
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
+        Task { @MainActor in
+            let name = region.map { anchorName(for: $0) } ?? "unknown"
+            ActivityLogger.shared.log(.error, "Region monitoring failed: \(name) \(error.localizedDescription)")
+            recordNetworkError("Region monitoring failed: \(name) \(error.localizedDescription)")
         }
     }
 }
