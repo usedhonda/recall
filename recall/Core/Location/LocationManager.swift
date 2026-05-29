@@ -645,6 +645,7 @@ private extension LocationManager {
         totalFilteredSamples += 1
         lastAttemptAt = Date()
         lastSendResult = .filtered(reason)
+        ActivityLogger.shared.log(.location, "Filtered: \(reason)")
     }
 
     func recordNetworkError(_ message: String) {
