@@ -337,7 +337,10 @@ final class LocationManager: NSObject {
         if let prev = lastGoodLocation {
             let distance = location.distance(from: prev)
             let dt = location.timestamp.timeIntervalSince(prev.timestamp)
-            if dt > 0 {
+            // Only apply the jump guard when prev is recent (<5min). A stale prev
+            // (e.g. departure-airport fix after an intl flight) makes distance/dt
+            // meaningless and would reject every valid post-arrival fix.
+            if dt > 0 && dt < 300 {
                 let speed = distance / dt
                 if speed > 55.6 {  // 200km/h
                     markFiltered("jump \(Int(speed * 3.6))km/h")
