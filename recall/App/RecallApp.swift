@@ -37,10 +37,16 @@ struct RecallApp: App {
                     await observeExternalToggle()
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    // Data saver gate: foreground sends, background stays silent.
+                    ConnectivityMonitor.shared.isAppActive = (phase == .active)
                     guard phase == .active else { return }
                     LaunchContext.markUserForeground()
                     RecordingStateManager.shared.userStopIntent = false
-                    Task { await runNormalStartup() }
+                    Task {
+                        await runNormalStartup()
+                        // Drain location samples queued while backgrounded.
+                        await TelemetryUploader.shared.triggerUpload()
+                    }
                 }
         }
         .modelContainer(sharedModelContainer)
@@ -48,6 +54,10 @@ struct RecallApp: App {
 
     @MainActor
     private func runNormalStartup() async {
+        // Reaching normal startup means we are foregrounded — mark active so the
+        // first telemetry send isn't dropped by the data saver gate before the
+        // scenePhase observer fires.
+        ConnectivityMonitor.shared.isAppActive = true
         guard !normalStartupStarted else { return }
         normalStartupStarted = true
         RecordingStateManager.shared.userStopIntent = false

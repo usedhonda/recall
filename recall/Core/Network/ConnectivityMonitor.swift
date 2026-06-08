@@ -12,6 +12,11 @@ final class ConnectivityMonitor {
     private(set) var isExpensive = false
     private(set) var isConstrained = false
 
+    /// Whether the app is currently in the foreground. Updated from RecallApp's
+    /// scenePhase observer. Used by data saver mode: foreground = send all,
+    /// background = send nothing. Initial false is correct for silent launch.
+    var isAppActive = false
+
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.recall.connectivity", qos: .utility)
     private var lastNetworkInterfaceNames: Set<String> = []
@@ -64,13 +69,14 @@ final class ConnectivityMonitor {
         monitor.cancel()
     }
 
-    private var passesDataSaver: Bool {
-        !AppSettings.shared.dataSaverMode || (isWiFi && !isExpensive)
-    }
+    // Data saver mode is a single axis: foreground sends everything,
+    // background sends nothing. It short-circuits BEFORE the per-stream
+    // wifi-only checks so all three streams behave identically. The
+    // per-stream wifi-only toggles only apply when data saver is OFF.
 
     var canUploadAudio: Bool {
         guard isConnected else { return false }
-        guard passesDataSaver else { return false }
+        if AppSettings.shared.dataSaverMode { return isAppActive }
         if AppSettings.shared.wifiOnlyUpload {
             return isWiFi && !isExpensive && !isConstrained
         }
@@ -79,7 +85,7 @@ final class ConnectivityMonitor {
 
     var canSendHealth: Bool {
         guard isConnected else { return false }
-        guard passesDataSaver else { return false }
+        if AppSettings.shared.dataSaverMode { return isAppActive }
         if AppSettings.shared.healthWifiOnly {
             return isWiFi
         }
@@ -88,7 +94,7 @@ final class ConnectivityMonitor {
 
     var canSendLocation: Bool {
         guard isConnected else { return false }
-        guard passesDataSaver else { return false }
+        if AppSettings.shared.dataSaverMode { return isAppActive }
         if AppSettings.shared.locationWifiOnly {
             return isWiFi
         }
