@@ -187,6 +187,11 @@ final class SettingsViewModel {
 
     // MARK: - Network
 
+    var dataSaverMode: Bool {
+        get { settings.dataSaverMode }
+        set { settings.dataSaverMode = newValue }
+    }
+
     var healthWifiOnly: Bool {
         get { settings.healthWifiOnly }
         set { settings.healthWifiOnly = newValue }

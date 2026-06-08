@@ -82,6 +82,10 @@ final class TelemetryUploader: NSObject {
             Self.log("silent launch: telemetry laneB skipped")
             return
         }
+        guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
+            Self.log("network policy: telemetry laneB skipped")
+            throw URLError(.notConnectedToInternet)
+        }
 
         let settings = await MainActor.run { AppSettings.shared }
         let serverURL = await MainActor.run { settings.telemetryServerURL }
@@ -128,6 +132,10 @@ final class TelemetryUploader: NSObject {
             TelemetryUploader.log("silent launch: healthOnly skipped")
             return
         }
+        guard ConnectivityMonitor.shared.canSendHealth else {
+            TelemetryUploader.log("network policy: healthOnly skipped")
+            return
+        }
         let settings = AppSettings.shared
         guard !settings.telemetryServerURL.isEmpty,
               let token = KeychainHelper.shared.getToken() else { return }
@@ -170,6 +178,10 @@ final class TelemetryUploader: NSObject {
     func triggerUpload() async {
         guard !LaunchContext.shouldStaySilent else {
             TelemetryUploader.log("silent launch: triggerUpload skipped")
+            return
+        }
+        guard ConnectivityMonitor.shared.canSendLocation else {
+            TelemetryUploader.log("network policy: triggerUpload skipped before drain")
             return
         }
         guard !isTriggerUploadRunning else { return }
@@ -251,6 +263,10 @@ final class TelemetryUploader: NSObject {
             TelemetryUploader.log("silent launch: telemetry immediate skipped")
             return
         }
+        guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
+            TelemetryUploader.log("network policy: telemetry immediate skipped")
+            throw URLError(.notConnectedToInternet)
+        }
         // Same nowPlaying snapshot rule as `upload(samples:healthPayload:)`.
         let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
 
@@ -293,6 +309,17 @@ final class TelemetryUploader: NSObject {
             || payload.sleep != nil
             || (payload.workouts?.isEmpty == false)
         return hasData ? payload : nil
+    }
+
+    @MainActor
+    private func canUploadTelemetry(samples: [LocationSample], healthPayload: HealthPayload?) -> Bool {
+        if !samples.isEmpty {
+            return ConnectivityMonitor.shared.canSendLocation
+        }
+        if healthPayload != nil {
+            return ConnectivityMonitor.shared.canSendHealth
+        }
+        return true
     }
 
     /// Process completed background session

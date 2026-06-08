@@ -64,8 +64,13 @@ final class ConnectivityMonitor {
         monitor.cancel()
     }
 
+    private var passesDataSaver: Bool {
+        !AppSettings.shared.dataSaverMode || (isWiFi && !isExpensive)
+    }
+
     var canUploadAudio: Bool {
         guard isConnected else { return false }
+        guard passesDataSaver else { return false }
         if AppSettings.shared.wifiOnlyUpload {
             return isWiFi && !isExpensive && !isConstrained
         }
@@ -74,6 +79,7 @@ final class ConnectivityMonitor {
 
     var canSendHealth: Bool {
         guard isConnected else { return false }
+        guard passesDataSaver else { return false }
         if AppSettings.shared.healthWifiOnly {
             return isWiFi
         }
@@ -82,6 +88,7 @@ final class ConnectivityMonitor {
 
     var canSendLocation: Bool {
         guard isConnected else { return false }
+        guard passesDataSaver else { return false }
         if AppSettings.shared.locationWifiOnly {
             return isWiFi
         }

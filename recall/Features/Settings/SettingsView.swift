@@ -108,6 +108,7 @@ struct SettingsView: View {
         VStack(spacing: 8) {
             HUDSectionHeader(title: "Network")
             VStack(spacing: 12) {
+                hudToggle(label: "DATA SAVER MODE", isOn: $viewModel.dataSaverMode)
                 hudToggle(label: "AUDIO WIFI ONLY", isOn: $viewModel.wifiOnly)
                 hudToggle(label: "HEALTH WIFI ONLY", isOn: $viewModel.healthWifiOnly)
                 hudToggle(label: "LOCATION WIFI ONLY", isOn: $viewModel.locationWifiOnly)

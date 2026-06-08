@@ -121,6 +121,11 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "locationWifiOnly") }
     }
 
+    var dataSaverMode: Bool {
+        get { UserDefaults.standard.bool(forKey: "dataSaverMode") }
+        set { UserDefaults.standard.set(newValue, forKey: "dataSaverMode") }
+    }
+
     var storageCapMB: Int {
         get {
             let val = UserDefaults.standard.integer(forKey: "storageCapMB")
