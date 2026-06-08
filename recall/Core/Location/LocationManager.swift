@@ -210,6 +210,10 @@ final class LocationManager: NSObject {
 
     private func handleLocationUpdate(_ location: CLLocation) async {
         currentLocation = location
+        guard !LaunchContext.shouldStaySilent else {
+            ActivityLogger.shared.log(.location, "Silent launch: location send skipped")
+            return
+        }
 
         let isInForeground = UIApplication.shared.applicationState == .active
         if isInForeground {
@@ -462,6 +466,10 @@ final class LocationManager: NSObject {
     }
 
     private func sendHeartbeat() {
+        guard !LaunchContext.shouldStaySilent else {
+            ActivityLogger.shared.log(.location, "Silent launch: heartbeat skipped")
+            return
+        }
         guard let location = lastGoodLocation ?? currentLocation else { return }
 
         let elapsed = lastSentTime.map { Date().timeIntervalSince($0) } ?? .infinity
@@ -621,6 +629,10 @@ extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         Task { @MainActor in
             ActivityLogger.shared.log(.location, "Region enter: \(anchorName(for: region))")
+            guard !LaunchContext.shouldStaySilent else {
+                ActivityLogger.shared.log(.location, "Silent launch: region enter send skipped")
+                return
+            }
             forceNextSend()
             await sendCurrentLocationNow()
         }
@@ -629,6 +641,10 @@ extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         Task { @MainActor in
             ActivityLogger.shared.log(.location, "Region exit: \(anchorName(for: region))")
+            guard !LaunchContext.shouldStaySilent else {
+                ActivityLogger.shared.log(.location, "Silent launch: region exit send skipped")
+                return
+            }
             forceNextSend()
             await sendCurrentLocationNow()
         }

@@ -27,6 +27,10 @@ final class UploadManager {
     private let activity = ActivityLogger.shared
 
     func startProcessing(modelContext: ModelContext) {
+        guard !LaunchContext.shouldStaySilent else {
+            activity.log(.upload, "Silent launch: audio upload queue not started")
+            return
+        }
         guard !isUploading else { return }
         shouldContinue = true
         isUploading = true

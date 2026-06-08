@@ -78,6 +78,10 @@ final class TelemetryUploader: NSObject {
     /// Upload location samples via background URLSession (Lane B fallback)
     func upload(samples: [LocationSample], healthPayload: HealthPayload? = nil) async throws {
         guard !samples.isEmpty || healthPayload != nil else { return }
+        guard await MainActor.run(body: { !LaunchContext.shouldStaySilent }) else {
+            Self.log("silent launch: telemetry laneB skipped")
+            return
+        }
 
         let settings = await MainActor.run { AppSettings.shared }
         let serverURL = await MainActor.run { settings.telemetryServerURL }
@@ -120,6 +124,10 @@ final class TelemetryUploader: NSObject {
     /// Carries the self-describing records (with measuredAt + source) under `health2`.
     @MainActor
     func uploadHealthOnly(_ payload: HealthPayload) async {
+        guard !LaunchContext.shouldStaySilent else {
+            TelemetryUploader.log("silent launch: healthOnly skipped")
+            return
+        }
         let settings = AppSettings.shared
         guard !settings.telemetryServerURL.isEmpty,
               let token = KeychainHelper.shared.getToken() else { return }
@@ -160,6 +168,10 @@ final class TelemetryUploader: NSObject {
     /// Hybrid: immediate upload first, falls back to background URLSession on failure
     @MainActor
     func triggerUpload() async {
+        guard !LaunchContext.shouldStaySilent else {
+            TelemetryUploader.log("silent launch: triggerUpload skipped")
+            return
+        }
         guard !isTriggerUploadRunning else { return }
         isTriggerUploadRunning = true
         defer { isTriggerUploadRunning = false }
@@ -235,6 +247,10 @@ final class TelemetryUploader: NSObject {
         serverURL: String,
         token: String
     ) async throws {
+        guard await MainActor.run(body: { !LaunchContext.shouldStaySilent }) else {
+            TelemetryUploader.log("silent launch: telemetry immediate skipped")
+            return
+        }
         // Same nowPlaying snapshot rule as `upload(samples:healthPayload:)`.
         let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
 

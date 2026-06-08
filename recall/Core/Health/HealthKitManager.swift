@@ -159,6 +159,10 @@ final class HealthKitManager {
     /// and again after authorization completes to recover from long-term iOS delivery failures.
     func setupBackgroundDelivery() {
         guard HKHealthStore.isHealthDataAvailable() else { return }
+        guard !LaunchContext.shouldStaySilent else {
+            disableBackgroundDelivery()
+            return
+        }
 
         // Tear down existing observers to prevent duplicate wake callbacks
         if !observerQueries.isEmpty {
@@ -270,6 +274,10 @@ final class HealthKitManager {
     /// passes; further wakes inside the window collapse into the same task.
     private func scheduleDebouncedQueryAndSend() {
         guard isEnabled else { return }
+        guard !LaunchContext.shouldStaySilent else {
+            ActivityLogger.shared.log(.health, "Silent launch: health observer send skipped")
+            return
+        }
         let elapsed = Date().timeIntervalSince(lastObserverSendAt)
         if elapsed >= observerDebounceInterval {
             // Outside the window — fire immediately.
@@ -327,6 +335,18 @@ final class HealthKitManager {
         observerQueries.removeAll()
     }
 
+    func disableBackgroundDelivery() {
+        teardownObserverQueries()
+        stopTimer()
+        healthStore.disableAllBackgroundDelivery { success, error in
+            if let error {
+                ActivityLogger.shared.logFromBackground(.health, "BG delivery disable failed: \(error.localizedDescription)")
+            } else {
+                ActivityLogger.shared.logFromBackground(.health, "BG delivery disabled: \(success)")
+            }
+        }
+    }
+
     // MARK: - Timer (supplementary — fires when no new HealthKit data triggers observer)
 
     func startTimer() {
@@ -358,6 +378,10 @@ final class HealthKitManager {
 
     private func queryAndSend(from start: Date, to end: Date) async {
         guard isEnabled else { return }
+        guard !LaunchContext.shouldStaySilent else {
+            ActivityLogger.shared.log(.health, "Silent launch: health send skipped")
+            return
+        }
 
         totalQueries += 1
         lastQueryAt = Date()

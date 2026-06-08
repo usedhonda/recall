@@ -1,6 +1,7 @@
 import UIKit
 import OSLog
 
+@MainActor
 final class AppDelegate: NSObject, UIApplicationDelegate {
     private let logger = Logger(subsystem: "com.recall", category: "AppDelegate")
 
@@ -8,7 +9,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        LaunchContext.recordLaunch(applicationState: application.applicationState)
         ConnectivityMonitor.shared.start()
+
+        if LaunchContext.shouldStaySilent {
+            TelemetryService.shared.healthManager.disableBackgroundDelivery()
+            logger.info("Silent launch: health background delivery disabled")
+            return true
+        }
 
         // Set up HealthKit background delivery — must be in didFinishLaunchingWithOptions
         // so observer queries are ready before iOS delivers background updates

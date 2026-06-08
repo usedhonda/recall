@@ -34,6 +34,10 @@ final class MediaUploadManager {
     private init() {}
 
     func startProcessing(modelContainer: ModelContainer) {
+        guard !LaunchContext.shouldStaySilent else {
+            activity.log(.upload, "[media] silent launch: queue not started")
+            return
+        }
         guard !isUploading else { return }
         shouldContinue = true
         isUploading = true

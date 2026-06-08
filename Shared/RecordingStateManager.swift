@@ -7,6 +7,7 @@ final class RecordingStateManager {
     static let darwinNotificationName = "com.example.recall.recordingStateChanged"
 
     private let isRecordingKey = "isRecording"
+    private let userStopIntentKey = "userStopIntent"
     private let defaults: UserDefaults
 
     private init() {
@@ -19,6 +20,16 @@ final class RecordingStateManager {
             defaults.set(newValue, forKey: isRecordingKey)
             defaults.synchronize()
             postDarwinNotification()
+        }
+    }
+
+    /// Durable user stop intent. This is intentionally separate from
+    /// AudioRecordingEngine.userStopped, which is an in-memory watchdog guard.
+    var userStopIntent: Bool {
+        get { defaults.bool(forKey: userStopIntentKey) }
+        set {
+            defaults.set(newValue, forKey: userStopIntentKey)
+            defaults.synchronize()
         }
     }
 

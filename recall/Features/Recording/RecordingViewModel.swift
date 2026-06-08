@@ -129,6 +129,7 @@ final class RecordingViewModel {
     private var healthCheckTask: Task<Void, Never>?
 
     func start(modelContainer: ModelContainer) async {
+        RecordingStateManager.shared.userStopIntent = false
         lastModelContainer = modelContainer
         for attempt in 1...maxStartRetries {
             do {
@@ -267,6 +268,7 @@ final class RecordingViewModel {
     }
 
     func stop() {
+        RecordingStateManager.shared.userStopIntent = true
         musicSwitchTask?.cancel()
         musicSwitchTask = nil
         healthCheckTask?.cancel()
