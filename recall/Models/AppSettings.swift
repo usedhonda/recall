@@ -1,6 +1,22 @@
 import Foundation
 import Observation
 
+/// Single axis controlling when telemetry/upload is allowed to leave the device.
+/// Replaces the old DATA SAVER + per-stream WiFi-only toggles.
+enum DataPolicy: String, CaseIterable {
+    case any            // send on any network, foreground or background
+    case wifiOnly       // send only on WiFi (not expensive/constrained)
+    case wifiForeground // send only on WiFi while foregrounded (travel mode)
+
+    var displayLabel: String {
+        switch self {
+        case .any: return "ANY NETWORK"
+        case .wifiOnly: return "WI-FI ONLY"
+        case .wifiForeground: return "WI-FI + FOREGROUND"
+        }
+    }
+}
+
 struct LocationAnchor: Codable, Identifiable, Equatable {
     let id: UUID
     var name: String
@@ -97,33 +113,9 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "deviceId") }
     }
 
-    var wifiOnlyUpload: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: "wifiOnlyUpload") == nil { return true }
-            return UserDefaults.standard.bool(forKey: "wifiOnlyUpload")
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "wifiOnlyUpload") }
-    }
-
-    var healthWifiOnly: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: "healthWifiOnly") == nil { return false }
-            return UserDefaults.standard.bool(forKey: "healthWifiOnly")
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "healthWifiOnly") }
-    }
-
-    var locationWifiOnly: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: "locationWifiOnly") == nil { return false }
-            return UserDefaults.standard.bool(forKey: "locationWifiOnly")
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "locationWifiOnly") }
-    }
-
-    var dataSaverMode: Bool {
-        get { UserDefaults.standard.bool(forKey: "dataSaverMode") }
-        set { UserDefaults.standard.set(newValue, forKey: "dataSaverMode") }
+    var dataPolicy: DataPolicy {
+        get { DataPolicy(rawValue: UserDefaults.standard.string(forKey: "dataPolicy") ?? "") ?? .any }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "dataPolicy") }
     }
 
     var storageCapMB: Int {

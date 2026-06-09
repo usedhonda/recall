@@ -44,11 +44,6 @@ final class SettingsViewModel {
         set { settings.uploadServerURL = newValue }
     }
 
-    var wifiOnly: Bool {
-        get { settings.wifiOnlyUpload }
-        set { settings.wifiOnlyUpload = newValue }
-    }
-
     var storageCap: Int {
         get { settings.storageCapMB }
         set { settings.storageCapMB = newValue }
@@ -187,19 +182,9 @@ final class SettingsViewModel {
 
     // MARK: - Network
 
-    var dataSaverMode: Bool {
-        get { settings.dataSaverMode }
-        set { settings.dataSaverMode = newValue }
-    }
-
-    var healthWifiOnly: Bool {
-        get { settings.healthWifiOnly }
-        set { settings.healthWifiOnly = newValue }
-    }
-
-    var locationWifiOnly: Bool {
-        get { settings.locationWifiOnly }
-        set { settings.locationWifiOnly = newValue }
+    var dataPolicy: DataPolicy {
+        get { settings.dataPolicy }
+        set { settings.dataPolicy = newValue }
     }
 
     // MARK: - Context Data

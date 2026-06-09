@@ -110,8 +110,8 @@ final class UploadManager {
                 let reason: String
                 if !cm.isConnected {
                     reason = "offline"
-                } else if cm.isCellular && AppSettings.shared.wifiOnlyUpload {
-                    reason = "cellular (wifi-only)"
+                } else if cm.isCellular && AppSettings.shared.dataPolicy != .any {
+                    reason = "cellular (wifi policy)"
                 } else if cm.isExpensive {
                     reason = "expensive network"
                 } else {

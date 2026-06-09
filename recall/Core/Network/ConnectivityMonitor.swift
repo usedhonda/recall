@@ -69,35 +69,18 @@ final class ConnectivityMonitor {
         monitor.cancel()
     }
 
-    // Data saver mode is a single axis: foreground sends everything,
-    // background sends nothing. It short-circuits BEFORE the per-stream
-    // wifi-only checks so all three streams behave identically. The
-    // per-stream wifi-only toggles only apply when data saver is OFF.
-
-    var canUploadAudio: Bool {
+    // Single data policy gate. All streams (audio/health/location) follow the
+    // same rule so the user picks one option instead of juggling four toggles.
+    private var canSendNow: Bool {
         guard isConnected else { return false }
-        if AppSettings.shared.dataSaverMode { return isAppActive }
-        if AppSettings.shared.wifiOnlyUpload {
-            return isWiFi && !isExpensive && !isConstrained
+        switch AppSettings.shared.dataPolicy {
+        case .any:            return true
+        case .wifiOnly:       return isWiFi && !isExpensive && !isConstrained
+        case .wifiForeground: return isWiFi && !isExpensive && !isConstrained && isAppActive
         }
-        return true
     }
 
-    var canSendHealth: Bool {
-        guard isConnected else { return false }
-        if AppSettings.shared.dataSaverMode { return isAppActive }
-        if AppSettings.shared.healthWifiOnly {
-            return isWiFi
-        }
-        return true
-    }
-
-    var canSendLocation: Bool {
-        guard isConnected else { return false }
-        if AppSettings.shared.dataSaverMode { return isAppActive }
-        if AppSettings.shared.locationWifiOnly {
-            return isWiFi
-        }
-        return true
-    }
+    var canUploadAudio: Bool { canSendNow }
+    var canSendHealth: Bool { canSendNow }
+    var canSendLocation: Bool { canSendNow }
 }

@@ -108,10 +108,13 @@ struct SettingsView: View {
         VStack(spacing: 8) {
             HUDSectionHeader(title: "Network")
             VStack(spacing: 12) {
-                hudToggle(label: "DATA SAVER MODE", isOn: $viewModel.dataSaverMode)
-                hudToggle(label: "AUDIO WIFI ONLY", isOn: $viewModel.wifiOnly)
-                hudToggle(label: "HEALTH WIFI ONLY", isOn: $viewModel.healthWifiOnly)
-                hudToggle(label: "LOCATION WIFI ONLY", isOn: $viewModel.locationWifiOnly)
+                Text("DATA POLICY")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(DataPolicy.allCases, id: \.self) { policy in
+                    hudPolicyRow(policy: policy)
+                }
             }
             .hudCard()
         }
@@ -589,5 +592,24 @@ struct SettingsView: View {
                 .labelsHidden()
                 .tint(RecallTheme.Colors.neonGreen)
         }
+    }
+
+    private func hudPolicyRow(policy: DataPolicy) -> some View {
+        Button {
+            viewModel.dataPolicy = policy
+        } label: {
+            HStack {
+                Text(policy.displayLabel)
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(viewModel.dataPolicy == policy ? RecallTheme.Colors.neonGreen : RecallTheme.Colors.textSecondary)
+                Spacer()
+                if viewModel.dataPolicy == policy {
+                    Image(systemName: "checkmark")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.neonGreen)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
