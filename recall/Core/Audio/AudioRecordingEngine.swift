@@ -164,6 +164,14 @@ final class AudioRecordingEngine {
             }
         }
 
+        // Setup media services reset callback (mediaserverd restart invalidates
+        // every audio object — engine instance can never recover in place)
+        sessionManager.onMediaServicesReset = { [weak self] in
+            Task { @MainActor in
+                self?.handleMediaServicesReset()
+            }
+        }
+
         // Initialize VAD
         if vadService == nil {
             vadService = try await VADService()
@@ -842,6 +850,30 @@ final class AudioRecordingEngine {
         default:
             break
         }
+    }
+
+    // MARK: - Media Services Reset Handling
+
+    private func handleMediaServicesReset() {
+        // All audio objects are invalid — in-place restart can never succeed.
+        // Reuse the poisoned-instance escalation: HealthMonitor polls every 5s
+        // and performs a full engine recreate via RecordingViewModel.
+        guard !userStopped else { return }
+        logger.error("Media services reset — flagging engine for full recreate")
+        activity.log(.error, "Media services reset — engine invalid, escalating to full recreate")
+
+        if state == .recording {
+            Task {
+                await finalizeCurrentChunk()
+            }
+        }
+
+        // Discard the invalidated keep-alive player so the recreate path builds
+        // a fresh one instead of trusting a stale isPlaying from a dead instance.
+        BackgroundKeepAlive.shared.stop()
+
+        engineNeedsRecreate = true
+        state = .idle
     }
 
     // MARK: - Interruption Handling

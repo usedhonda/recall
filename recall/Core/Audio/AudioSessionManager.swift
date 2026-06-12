@@ -27,6 +27,12 @@ final class AudioSessionManager {
             name: AVAudioSession.routeChangeNotification,
             object: session
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMediaServicesReset(_:)),
+            name: AVAudioSession.mediaServicesWereResetNotification,
+            object: session
+        )
     }
 
     func setDesiredMicMode(_ mode: MicMode) {
@@ -112,6 +118,18 @@ final class AudioSessionManager {
 
         logger.info("Audio route changed: reason=\(reasonValue)")
         onRouteChanged?(reason)
+    }
+
+    // MARK: - Media Services Reset Handling
+
+    var onMediaServicesReset: (() -> Void)?
+
+    @objc private func handleMediaServicesReset(_ notification: Notification) {
+        // mediaserverd restarted (user "Reset Media Services" or daemon crash).
+        // Every audio object (engine, players, session config) is now invalid
+        // per Apple docs and must be rebuilt from scratch.
+        logger.error("Media services were reset — all audio objects invalid")
+        onMediaServicesReset?()
     }
 
     // MARK: - Interruption Handling
