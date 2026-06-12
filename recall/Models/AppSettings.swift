@@ -63,11 +63,6 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "preMarginSeconds") }
     }
 
-    var postMarginSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "postMarginSeconds").nonZero ?? 2.0 }
-        set { UserDefaults.standard.set(newValue, forKey: "postMarginSeconds") }
-    }
-
     var chunkDurationSeconds: TimeInterval {
         get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 30.0 }
         set { UserDefaults.standard.set(newValue, forKey: "chunkDurationSeconds") }
@@ -76,11 +71,6 @@ final class AppSettings {
     var minChunkDurationSeconds: TimeInterval {
         get { UserDefaults.standard.double(forKey: "minChunkDurationSeconds").nonZero ?? 2.0 }
         set { UserDefaults.standard.set(newValue, forKey: "minChunkDurationSeconds") }
-    }
-
-    var vadUploadMinProb: Float {
-        get { Float(UserDefaults.standard.double(forKey: "vadUploadMinProb")).nonZero ?? 0.05 }
-        set { UserDefaults.standard.set(Double(newValue), forKey: "vadUploadMinProb") }
     }
 
     var uploadServerURL: String {

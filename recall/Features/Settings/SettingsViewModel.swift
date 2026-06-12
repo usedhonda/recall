@@ -9,36 +9,6 @@ import SwiftUI
 final class SettingsViewModel {
     let settings = AppSettings.shared
 
-    var rmsThreshold: Float {
-        get { settings.rmsThreshold }
-        set { settings.rmsThreshold = newValue }
-    }
-
-    var vadThreshold: Float {
-        get { settings.vadThreshold }
-        set { settings.vadThreshold = newValue }
-    }
-
-    var silenceTimeout: Double {
-        get { settings.silenceTimeout }
-        set { settings.silenceTimeout = newValue }
-    }
-
-    var preMargin: Double {
-        get { settings.preMarginSeconds }
-        set { settings.preMarginSeconds = newValue }
-    }
-
-    var postMargin: Double {
-        get { settings.postMarginSeconds }
-        set { settings.postMarginSeconds = newValue }
-    }
-
-    var chunkDuration: Double {
-        get { settings.chunkDurationSeconds }
-        set { settings.chunkDurationSeconds = newValue }
-    }
-
     var serverURL: String {
         get { settings.uploadServerURL }
         set { settings.uploadServerURL = newValue }
@@ -92,50 +62,6 @@ final class SettingsViewModel {
         isTestingConnection = false
     }
 
-    var healthEnabled: Bool {
-        get { telemetry.healthManager.isEnabled }
-        set {
-            if newValue {
-                Task {
-                    let authorized = await telemetry.healthManager.requestAuthorization()
-                    if authorized {
-                        telemetry.healthManager.isEnabled = true
-                        telemetry.healthManager.startTimer()
-                        settings.healthEnabled = true
-                    }
-                }
-            } else {
-                telemetry.healthManager.isEnabled = false
-                telemetry.healthManager.stopTimer()
-                settings.healthEnabled = false
-            }
-        }
-    }
-
-    var locationEnabled: Bool {
-        get { telemetry.locationManager.isEnabled }
-        set {
-            if newValue {
-                if !telemetry.locationManager.hasAuthorization {
-                    telemetry.locationManager.requestAuthorization()
-                }
-                telemetry.locationManager.isEnabled = true
-            } else {
-                telemetry.locationManager.isEnabled = false
-            }
-        }
-    }
-
-    var locationBackgroundEnabled: Bool {
-        get { telemetry.locationManager.backgroundEnabled }
-        set { telemetry.locationManager.backgroundEnabled = newValue }
-    }
-
-    var telemetrySendInterval: Double {
-        get { telemetry.locationManager.minSendInterval }
-        set { telemetry.locationManager.minSendInterval = newValue }
-    }
-
     var lastHealthQueryTime: Date? {
         telemetry.healthManager.lastQueryAt
     }
@@ -182,9 +108,11 @@ final class SettingsViewModel {
 
     // MARK: - Network
 
-    var dataPolicy: DataPolicy {
-        get { settings.dataPolicy }
-        set { settings.dataPolicy = newValue }
+    // Stored (not computed) so @Observable tracks it and the picker UI
+    // re-renders on selection — computed pass-throughs to UserDefaults
+    // generate no observation events, leaving the checkmark frozen.
+    var dataPolicy: DataPolicy = AppSettings.shared.dataPolicy {
+        didSet { settings.dataPolicy = dataPolicy }
     }
 
     // MARK: - Context Data

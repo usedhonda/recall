@@ -35,72 +35,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - VAD
-
-    @ViewBuilder
-    private var vadSection: some View {
-        VStack(spacing: 8) {
-            HUDSectionHeader(title: "Voice Detection")
-            VStack(spacing: 12) {
-                hudSlider(
-                    label: "RMS THRESHOLD",
-                    value: String(format: "%.3f", viewModel.rmsThreshold),
-                    binding: $viewModel.rmsThreshold,
-                    range: 0.001...0.1,
-                    step: 0.001
-                )
-                hudSlider(
-                    label: "VAD THRESHOLD",
-                    value: String(format: "%.2f", viewModel.vadThreshold),
-                    binding: $viewModel.vadThreshold,
-                    range: 0.1...0.95,
-                    step: 0.05
-                )
-                hudSlider(
-                    label: "SILENCE TIMEOUT",
-                    value: String(format: "%.0fs", viewModel.silenceTimeout),
-                    binding: $viewModel.silenceTimeout,
-                    range: 1...10,
-                    step: 0.5
-                )
-            }
-            .hudCard()
-        }
-    }
-
-    // MARK: - Recording
-
-    @ViewBuilder
-    private var recordingSection: some View {
-        VStack(spacing: 8) {
-            HUDSectionHeader(title: "Recording")
-            VStack(spacing: 12) {
-                hudSlider(
-                    label: "PRE-MARGIN",
-                    value: String(format: "%.1fs", viewModel.preMargin),
-                    binding: $viewModel.preMargin,
-                    range: 0.5...5.0,
-                    step: 0.5
-                )
-                hudSlider(
-                    label: "POST-MARGIN",
-                    value: String(format: "%.1fs", viewModel.postMargin),
-                    binding: $viewModel.postMargin,
-                    range: 0.5...5.0,
-                    step: 0.5
-                )
-                hudSlider(
-                    label: "CHUNK DURATION",
-                    value: String(format: "%.0fs", viewModel.chunkDuration),
-                    binding: $viewModel.chunkDuration,
-                    range: 60...600,
-                    step: 30
-                )
-            }
-            .hudCard()
-        }
-    }
-
     // MARK: - Network
 
     @ViewBuilder
@@ -296,8 +230,6 @@ struct SettingsView: View {
         VStack(spacing: 8) {
             HUDSectionHeader(title: "Health Data", color: RecallTheme.Colors.neonMagenta)
             VStack(spacing: 12) {
-                hudToggle(label: "HEALTH ENABLED", isOn: $viewModel.healthEnabled)
-
                 if let lastQuery = viewModel.lastHealthQueryTime {
                     HStack {
                         Text("LAST QUERY")
@@ -321,21 +253,6 @@ struct SettingsView: View {
         VStack(spacing: 8) {
             HUDSectionHeader(title: "Location")
             VStack(spacing: 12) {
-                hudToggle(label: "LOCATION ENABLED", isOn: $viewModel.locationEnabled)
-                hudToggle(label: "BACKGROUND LOCATION", isOn: $viewModel.locationBackgroundEnabled)
-                    .opacity(viewModel.locationEnabled ? 1.0 : 0.4)
-                    .disabled(!viewModel.locationEnabled)
-
-                hudSlider(
-                    label: "SEND INTERVAL",
-                    value: "\(Int(viewModel.telemetrySendInterval))s",
-                    binding: $viewModel.telemetrySendInterval,
-                    range: 15...300,
-                    step: 5
-                )
-                .opacity(viewModel.locationEnabled ? 1.0 : 0.4)
-                .disabled(!viewModel.locationEnabled)
-
                 if let lastSent = viewModel.lastLocationSentTime {
                     HStack {
                         Text("LAST SENT")
