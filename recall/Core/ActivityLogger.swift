@@ -63,6 +63,24 @@ final class ActivityLogger {
     // File persistence
     private let fileQueue = DispatchQueue(label: "com.recall.filelog", qos: .utility)
     private let logRetentionDays = 7
+
+    // Buffered writer state — touched ONLY on `fileQueue` (serial), so the
+    // `nonisolated(unsafe)` access is race-free. Always-on recording emits
+    // several log lines/second; opening+closing a FileHandle per line tripped
+    // iOS's `diskwrites_resource` flag. Instead we hold one handle open per
+    // day-file and batch lines, flushing on a short timer / size threshold /
+    // immediately for errors so the post-mortem trail keeps the lines that matter.
+    // `nonisolated(unsafe)` (matching `udpConnection`): on this @Observable class
+    // the qualifier also excludes these from observation tracking, which plain
+    // `nonisolated` cannot do for a mutable stored property. Safe because every
+    // access happens on the serial `fileQueue`.
+    private nonisolated(unsafe) var fileHandle: FileHandle?
+    private nonisolated(unsafe) var openLogURL: URL?
+    private nonisolated(unsafe) var pendingBuffer = Data()
+    private nonisolated(unsafe) var flushScheduled = false
+    private let flushInterval: TimeInterval = 2.0
+    private let flushThresholdBytes = 16 * 1024
+
     private let iso8601: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
@@ -153,23 +171,71 @@ final class ActivityLogger {
 
     private func writeToFile(_ entry: Entry) {
         let line = "\(iso8601.string(from: entry.timestamp)) [\(entry.category.rawValue)] \(entry.message)\n"
+        guard let data = line.data(using: .utf8) else { return }
         let url = logFileURL(for: entry.timestamp)
+        // Errors are flushed immediately so a crash/kill never drops the line
+        // that explains it. Routine lines are batched (see `enqueue`).
+        let flushNow = entry.category == .error
+        fileQueue.async { [weak self] in
+            self?.enqueue(data, for: url, flushNow: flushNow)
+        }
+    }
 
-        fileQueue.async { [logsDir = self.logsDirectory] in
-            let fm = FileManager.default
-            if !fm.fileExists(atPath: logsDir.path) {
-                try? fm.createDirectory(at: logsDir, withIntermediateDirectories: true)
-            }
+    /// Appends one line to the in-memory buffer and decides when it reaches
+    /// disk. Runs on `fileQueue`. On a day rollover the previous handle is
+    /// flushed and closed before the new file's handle is opened.
+    private nonisolated func enqueue(_ data: Data, for url: URL, flushNow: Bool) {
+        if openLogURL != url {
+            flushBuffer()
+            closeHandle()
+        }
+        ensureHandleOpen(url)
+        pendingBuffer.append(data)
+        if flushNow || pendingBuffer.count >= flushThresholdBytes {
+            flushBuffer()
+        } else {
+            scheduleFlush()
+        }
+    }
 
-            if fm.fileExists(atPath: url.path) {
-                if let handle = try? FileHandle(forWritingTo: url) {
-                    handle.seekToEndOfFile()
-                    handle.write(line.data(using: .utf8) ?? Data())
-                    handle.closeFile()
-                }
-            } else {
-                try? line.data(using: .utf8)?.write(to: url)
-            }
+    /// Opens (and seeks to end of) the day-file handle if not already open.
+    private nonisolated func ensureHandleOpen(_ url: URL) {
+        if fileHandle != nil, openLogURL == url { return }
+        let fm = FileManager.default
+        let dir = logsDirectory
+        if !fm.fileExists(atPath: dir.path) {
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        if !fm.fileExists(atPath: url.path) {
+            fm.createFile(atPath: url.path, contents: nil)
+        }
+        fileHandle = try? FileHandle(forWritingTo: url)
+        _ = try? fileHandle?.seekToEnd()
+        openLogURL = url
+    }
+
+    /// Writes any buffered bytes to the open handle in a single write.
+    private nonisolated func flushBuffer() {
+        guard !pendingBuffer.isEmpty, let handle = fileHandle else { return }
+        try? handle.write(contentsOf: pendingBuffer)
+        pendingBuffer.removeAll(keepingCapacity: true)
+    }
+
+    private nonisolated func closeHandle() {
+        try? fileHandle?.close()
+        fileHandle = nil
+        openLogURL = nil
+    }
+
+    /// Schedules a single deferred flush; coalesces bursts so we write at most
+    /// once per `flushInterval` instead of once per line.
+    private nonisolated func scheduleFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        fileQueue.asyncAfter(deadline: .now() + flushInterval) { [weak self] in
+            guard let self else { return }
+            self.flushScheduled = false
+            self.flushBuffer()
         }
     }
 
