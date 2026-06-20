@@ -110,7 +110,12 @@ final class PhotoScanCoordinator: NSObject {
             .addingTimeInterval(-Self.overlapWindow)
 
         let assets = fetchRecentImageAssets(since: since)
+        ActivityLogger.shared.log(.telemetry, "[photo] scan start since=\(Self.fmt(since)) lastScanAt=\(lastScanAt.map(Self.fmt) ?? "nil") fetched=\(assets.count)")
         if assets.isEmpty {
+            // Diagnostic: nothing in the creationDate window. Log the library's newest
+            // image so we can see whether a just-synced glasses photo has an older
+            // creationDate (capture time) that fell outside the scan window.
+            ActivityLogger.shared.log(.telemetry, "[photo] scan complete (empty) since=\(Self.fmt(since)) checked=0 newest=\(Self.describeNewestAsset())")
             lastScanAt = scanStart
             UserDefaults.standard.set(scanStart, forKey: Self.lastScanKey)
             return
@@ -179,7 +184,11 @@ final class PhotoScanCoordinator: NSObject {
 
     private func fetchRecentImageAssets(since: Date) -> [PHAsset] {
         let options = PHFetchOptions()
-        options.predicate = NSPredicate(format: "mediaType == %d AND creationDate >= %@", PHAssetMediaType.image.rawValue, since as NSDate)
+        // Match on creationDate OR modificationDate: Meta glasses photos sync to the
+        // library with a capture-time creationDate that can be well in the past, so a
+        // creationDate-only window misses them. modificationDate reflects when the
+        // photo actually landed in the library. Dedup by localIdentifier keeps this safe.
+        options.predicate = NSPredicate(format: "mediaType == %d AND (creationDate >= %@ OR modificationDate >= %@)", PHAssetMediaType.image.rawValue, since as NSDate, since as NSDate)
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
         let fetched = PHAsset.fetchAssets(with: options)
         var assets: [PHAsset] = []
@@ -193,6 +202,18 @@ final class PhotoScanCoordinator: NSObject {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.string(from: date)
     }
+
+    /// Diagnostic: describe the library's newest image (capture time vs modify time)
+    /// to reveal whether a just-synced glasses photo lands outside the scan window.
+    private static func describeNewestAsset() -> String {
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.fetchLimit = 1
+        guard let asset = PHAsset.fetchAssets(with: .image, options: options).firstObject else { return "none" }
+        let created = asset.creationDate.map { fmt($0) } ?? "nil"
+        let modified = asset.modificationDate.map { fmt($0) } ?? "nil"
+        return "created=\(created) modified=\(modified) \(asset.pixelWidth)x\(asset.pixelHeight)"
+    }
 }
 
 extension PhotoScanCoordinator: PHPhotoLibraryChangeObserver {
@@ -203,6 +224,7 @@ extension PhotoScanCoordinator: PHPhotoLibraryChangeObserver {
     nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
         Task { @MainActor [weak self] in
             guard let self, self.isEnabled else { return }
+            ActivityLogger.shared.log(.telemetry, "[photo] library changed — observer fired, scanning")
             await self.scan()
         }
     }
