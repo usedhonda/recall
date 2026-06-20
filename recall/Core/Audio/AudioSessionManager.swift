@@ -39,6 +39,20 @@ final class AudioSessionManager {
         desiredMicMode = mode
     }
 
+    /// OSStatus -50 surfaced as an NSError code by AVAudioSession.setActive when the
+    /// session cannot interrupt another (non-mixable) active session — structurally
+    /// unrecoverable in the background. Recovery paths use this to back off instead
+    /// of hammering fresh activations that iOS will keep rejecting.
+    static let cannotInterruptOthersCode = 560557684
+
+    static func isCannotInterruptOthers(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.code == cannotInterruptOthersCode { return true }
+        if nsError.localizedDescription.contains("\(cannotInterruptOthersCode)") { return true }
+        if let avCode = AVAudioSession.ErrorCode(rawValue: nsError.code), avCode == .cannotInterruptOthers { return true }
+        return false
+    }
+
     func configure() throws {
         var options: AVAudioSession.CategoryOptions = [
             .mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP
@@ -157,14 +171,10 @@ final class AudioSessionManager {
                 .contains(.shouldResume)
             logger.info("Audio session interruption ended, shouldResume: \(shouldResume)")
 
-            if shouldResume {
-                do {
-                    try session.setActive(true, options: [])
-                    logger.info("Audio session reactivated after interruption")
-                } catch {
-                    logger.error("Failed to reactivate audio session: \(error.localizedDescription)")
-                }
-            }
+            // Activation is owned solely by the engine's configure() (where the
+            // result is observed and -50-classified). A redundant setActive here
+            // would be a second cold activation that races the engine and swallows
+            // its error.
             onInterruptionEnded?(shouldResume)
 
         @unknown default:

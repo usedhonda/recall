@@ -174,8 +174,6 @@ final class RecordingViewModel {
     /// Index 0..6, then stays at 1800 (30 min) forever.
     private static let retryBackoffSeconds: [Int] = [10, 30, 60, 120, 300, 900, 1800]
 
-    private static let cannotInterruptOthersOSStatus: Int = 560557684
-
     private func backoffDelay(attempt: Int) -> Int {
         let i = min(attempt, Self.retryBackoffSeconds.count - 1)
         return Self.retryBackoffSeconds[i]
@@ -215,8 +213,7 @@ final class RecordingViewModel {
                     return
                 } catch {
                     let desc = error.localizedDescription
-                    let isIntConflict = (error as NSError).code == Self.cannotInterruptOthersOSStatus
-                        || desc.contains("\(Self.cannotInterruptOthersOSStatus)")
+                    let isIntConflict = AudioSessionManager.isCannotInterruptOthers(error)
                     if isIntConflict {
                         intLaneAttempt += 1
                         ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: !int (cannotInterruptOthers) — long backoff lane=\(intLaneAttempt)")
@@ -227,6 +224,12 @@ final class RecordingViewModel {
                 }
             }
         }
+    }
+
+    /// Foreground/route nudge — ask the engine to retry a blocked background
+    /// activation now (no-ops unless the engine is actually blocked).
+    func resumeIfActivationBlocked() {
+        engine?.resumeWhenActivatable(reason: "foreground")
     }
 
     /// Upper-level health monitor — independent of engine's internal watchdog.
