@@ -72,7 +72,7 @@ final class MediaImporter {
             uti: metadata.uti,
             exifMake: metadata.make,
             exifModel: metadata.model,
-            source: .photos,
+            source: .glasses,
             matchConfidence: confidence,
             latitude: asset.location?.coordinate.latitude,
             longitude: asset.location?.coordinate.longitude
