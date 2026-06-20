@@ -320,29 +320,6 @@ struct RecordingView: View {
     private var contextStreamsBar: some View {
         HStack(spacing: 8) {
             CyberpunkStreamToggle(
-                icon: "sunglasses.fill",
-                label: glassesLabel,
-                isActive: telemetry.photoScanCoordinator.isEnabled,
-                neonColor: RecallTheme.Colors.neonAmber,
-                iconScale: .small
-            ) {
-                if telemetry.photoScanCoordinator.isEnabled {
-                    telemetry.photoScanCoordinator.stop()
-                    AppSettings.shared.glassesAutoImportEnabled = false
-                } else {
-                    Task {
-                        let status = await telemetry.photoLibraryAuthorizer.requestReadWrite()
-                        guard status == .authorized || status == .limited else { return }
-                        if let container = modelContainer {
-                            telemetry.photoScanCoordinator.setModelContainer(container)
-                        }
-                        telemetry.photoScanCoordinator.start()
-                        AppSettings.shared.glassesAutoImportEnabled = true
-                    }
-                }
-            }
-
-            CyberpunkStreamToggle(
                 icon: "music.note",
                 label: "Media",
                 isActive: telemetry.nowPlayingManager.isEnabled,
@@ -359,12 +336,6 @@ struct RecordingView: View {
 
             micSelectorSlot
         }
-    }
-
-    private var glassesLabel: String {
-        guard telemetry.photoScanCoordinator.isEnabled else { return "Glasses" }
-        let count = telemetry.photoScanCoordinator.recentImportCount
-        return count > 0 ? "Glasses (\(count))" : "Glasses"
     }
 
     // MARK: - Mic Selector
