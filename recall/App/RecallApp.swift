@@ -128,6 +128,12 @@ struct RecallApp: App {
                 ActivityLogger.shared.log(.error, "[photo] startup blocked — cannot read library")
             }
         }
+
+        // Glasses photo handoff from vibeterm (App Group drop folder). No permission
+        // prerequisite, so started unconditionally. Dormant until vibeterm drops files.
+        TelemetryService.shared.glassesHandoffReceiver.setModelContainer(sharedModelContainer)
+        TelemetryService.shared.glassesHandoffReceiver.start()
+        MediaUploadManager.shared.startProcessing(modelContainer: sharedModelContainer)
     }
 
     @MainActor

@@ -12,6 +12,7 @@ final class TelemetryService {
     let nowPlayingManager = NowPlayingManager()
     let photoLibraryAuthorizer: PhotoLibraryAuthorizer
     let photoScanCoordinator: PhotoScanCoordinator
+    let glassesHandoffReceiver = GlassesHandoffReceiver()
 
     private(set) var isActive = false
 
