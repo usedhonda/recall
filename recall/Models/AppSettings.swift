@@ -17,6 +17,26 @@ enum DataPolicy: String, CaseIterable {
     }
 }
 
+/// Stance recall asks Chi to take when reacting to surrounding conversation.
+/// Travels per-chunk in upload metadata (`reaction_mode`); the Gateway applies
+/// the latest chunk's mode at react time. `auto` keeps the server-side
+/// basic/combat auto-detection (existing behavior, default).
+enum ReactionMode: String, CaseIterable {
+    case auto       // server-side auto-detect (basic/combat) — default
+    case question   // ask pointed, probing questions
+    case rebut      // counter-argue
+    case executive  // sharp, decisive executive opinions/counters
+
+    var displayLabel: String {
+        switch self {
+        case .auto: return "AUTO"
+        case .question: return "QUESTION"
+        case .rebut: return "REBUT"
+        case .executive: return "EXECUTIVE"
+        }
+    }
+}
+
 struct LocationAnchor: Codable, Identifiable, Equatable {
     let id: UUID
     var name: String
@@ -204,6 +224,13 @@ final class AppSettings {
             return UserDefaults.standard.bool(forKey: "vibetermDeliveryEnabled")
         }
         set { UserDefaults.standard.set(newValue, forKey: "vibetermDeliveryEnabled") }
+    }
+
+    /// Which stance Chi takes when reacting. Default `.auto` preserves the
+    /// existing server-side basic/combat auto-detection.
+    var reactionMode: ReactionMode {
+        get { ReactionMode(rawValue: UserDefaults.standard.string(forKey: "reactionMode") ?? "") ?? .auto }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "reactionMode") }
     }
 
     // MARK: - Context Data Settings
