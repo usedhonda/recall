@@ -57,7 +57,11 @@ final class PhotoScanCoordinator: NSObject {
         isEnabled = true
         ActivityLogger.shared.log(.telemetry, "[photo] scan coordinator started")
 
-        // PHPhotoLibraryChangeObserver registration is deferred to Phase 3.
+        // Instant pickup: react to photo-library mutations (e.g. the Meta AI app
+        // syncing a new glasses photo) so a shot is scanned within seconds instead
+        // of waiting up to 5 min for the poll. The poll below stays as a safety net
+        // for missed notifications / relaunch.
+        PHPhotoLibrary.shared().register(self)
 
         installForegroundObserver()
 
@@ -75,6 +79,7 @@ final class PhotoScanCoordinator: NSObject {
     func stop() {
         guard isEnabled else { return }
         isEnabled = false
+        PHPhotoLibrary.shared().unregisterChangeObserver(self)
         pollTask?.cancel()
         pollTask = nil
         if let token = foregroundObserver {
@@ -187,5 +192,18 @@ final class PhotoScanCoordinator: NSObject {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.string(from: date)
+    }
+}
+
+extension PhotoScanCoordinator: PHPhotoLibraryChangeObserver {
+    /// Called on a private background queue whenever the photo library mutates
+    /// (e.g. the Meta AI app syncs a new glasses photo). Hop to the main actor and
+    /// scan immediately so the shot is imported + uploaded within seconds. scan()
+    /// is lastScanAt-differential and deduped, so frequent callbacks stay cheap.
+    nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
+        Task { @MainActor [weak self] in
+            guard let self, self.isEnabled else { return }
+            await self.scan()
+        }
     }
 }
