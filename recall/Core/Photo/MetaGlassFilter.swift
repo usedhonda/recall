@@ -11,8 +11,10 @@ struct MetaGlassFilter {
     /// EXIF Make value Meta AI app writes for Ray-Ban Meta photos.
     static let expectedMake = "Meta AI"
 
-    /// EXIF Model substring (case-insensitive contains).
-    static let expectedModelSubstring = "Ray-Ban Meta"
+    /// EXIF Model substring (case-insensitive contains). Real device tag seen on
+    /// kana is "Meta Ray-Ban Display Glasses" (historically also "Ray-Ban Meta"),
+    /// so match the common "Ray-Ban" token — make == "Meta AI" already gates it.
+    static let expectedModelSubstring = "Ray-Ban"
 
     /// Known native sensor resolutions (portrait + landscape).
     static let knownResolutions: Set<Resolution> = [

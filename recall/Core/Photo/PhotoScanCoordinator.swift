@@ -131,8 +131,9 @@ final class PhotoScanCoordinator: NSObject {
                 } else {
                     skipped += 1
                 }
-            case .nonMatch:
+            case .nonMatch(let reason):
                 nonMatch += 1
+                ActivityLogger.shared.log(.telemetry, "[photo] nonMatch \(reason)")
             }
         }
 
