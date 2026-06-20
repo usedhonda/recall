@@ -12,12 +12,12 @@ struct SettingsView: View {
                 VStack(spacing: 16) {
                     telemetryServerSection
                     chiTriggersSection
+                    reactionModeSection
                     chiDeliverySection
                     networkSection
                     storageSection
                     healthSection
                     locationSection
-                    glassesSection
                     deviceSection
 #if DEBUG
                     debugSection
@@ -209,6 +209,25 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Reaction Mode
+
+    @ViewBuilder
+    private var reactionModeSection: some View {
+        VStack(spacing: 8) {
+            HUDSectionHeader(title: "Reaction Mode", color: RecallTheme.Colors.neonMagenta)
+            VStack(spacing: 12) {
+                Text("CHI STANCE")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(ReactionMode.allCases, id: \.self) { mode in
+                    hudReactionModeRow(mode: mode)
+                }
+            }
+            .hudCard()
+        }
+    }
+
     // MARK: - Reaction Delivery
 
     @ViewBuilder
@@ -350,57 +369,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Glasses (Ray-Ban Meta auto-import)
-
-    @ViewBuilder
-    private var glassesSection: some View {
-        VStack(spacing: 8) {
-            HUDSectionHeader(title: "Ray-Ban Meta", color: RecallTheme.Colors.neonAmber)
-            VStack(spacing: 12) {
-                hudToggle(label: "AUTO-IMPORT PHOTOS", isOn: $viewModel.glassesAutoImportEnabled)
-                    .onChange(of: viewModel.glassesAutoImportEnabled) { _, _ in
-                        let container = modelContext.container
-                        Task { await viewModel.applyGlassesToggle(modelContainer: container) }
-                    }
-
-                HStack {
-                    Text("PHOTO ACCESS")
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(RecallTheme.Colors.textSecondary)
-                    Spacer()
-                    Text(viewModel.photoLibraryStatusLabel)
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(viewModel.photoLibraryStatusColor)
-                }
-
-                if viewModel.glassesImportedCount > 0 {
-                    HStack {
-                        Text("IMPORTED (SESSION)")
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.textSecondary)
-                        Spacer()
-                        Text("\(viewModel.glassesImportedCount)")
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.neonAmber)
-                    }
-                }
-
-                if let last = viewModel.glassesLastImportAt {
-                    HStack {
-                        Text("LAST IMPORT")
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.textSecondary)
-                        Spacer()
-                        Text(last, style: .relative)
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.neonAmber.opacity(0.7))
-                    }
-                }
-            }
-            .hudCard()
-        }
-    }
-
     // MARK: - Device
 
     @ViewBuilder
@@ -521,6 +489,25 @@ struct SettingsView: View {
                     .foregroundStyle(viewModel.dataPolicy == policy ? RecallTheme.Colors.neonGreen : RecallTheme.Colors.textSecondary)
                 Spacer()
                 if viewModel.dataPolicy == policy {
+                    Image(systemName: "checkmark")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.neonGreen)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func hudReactionModeRow(mode: ReactionMode) -> some View {
+        Button {
+            viewModel.reactionMode = mode
+        } label: {
+            HStack {
+                Text(mode.displayLabel)
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(viewModel.reactionMode == mode ? RecallTheme.Colors.neonGreen : RecallTheme.Colors.textSecondary)
+                Spacer()
+                if viewModel.reactionMode == mode {
                     Image(systemName: "checkmark")
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(RecallTheme.Colors.neonGreen)
