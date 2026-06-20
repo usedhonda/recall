@@ -42,6 +42,9 @@ struct RecallApp: App {
                     guard phase == .active else { return }
                     LaunchContext.markUserForeground()
                     RecordingStateManager.shared.userStopIntent = false
+                    // Foreground is the moment iOS is most likely to grant setActive —
+                    // nudge the engine to retry any background-blocked (-50) activation.
+                    recordingViewModel.resumeIfActivationBlocked()
                     Task {
                         await runNormalStartup()
                         // Drain location samples queued while backgrounded.
