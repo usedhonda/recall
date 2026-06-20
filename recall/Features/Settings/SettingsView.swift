@@ -12,6 +12,7 @@ struct SettingsView: View {
                 VStack(spacing: 16) {
                     telemetryServerSection
                     chiTriggersSection
+                    reactionModeSection
                     chiDeliverySection
                     networkSection
                     storageSection
@@ -204,6 +205,25 @@ struct SettingsView: View {
                     range: 0...1000,
                     step: 50
                 )
+            }
+            .hudCard()
+        }
+    }
+
+    // MARK: - Reaction Mode
+
+    @ViewBuilder
+    private var reactionModeSection: some View {
+        VStack(spacing: 8) {
+            HUDSectionHeader(title: "Reaction Mode", color: RecallTheme.Colors.neonMagenta)
+            VStack(spacing: 12) {
+                Text("CHI STANCE")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(ReactionMode.allCases, id: \.self) { mode in
+                    hudReactionModeRow(mode: mode)
+                }
             }
             .hudCard()
         }
@@ -521,6 +541,25 @@ struct SettingsView: View {
                     .foregroundStyle(viewModel.dataPolicy == policy ? RecallTheme.Colors.neonGreen : RecallTheme.Colors.textSecondary)
                 Spacer()
                 if viewModel.dataPolicy == policy {
+                    Image(systemName: "checkmark")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.neonGreen)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func hudReactionModeRow(mode: ReactionMode) -> some View {
+        Button {
+            viewModel.reactionMode = mode
+        } label: {
+            HStack {
+                Text(mode.displayLabel)
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(viewModel.reactionMode == mode ? RecallTheme.Colors.neonGreen : RecallTheme.Colors.textSecondary)
+                Spacer()
+                if viewModel.reactionMode == mode {
                     Image(systemName: "checkmark")
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(RecallTheme.Colors.neonGreen)
