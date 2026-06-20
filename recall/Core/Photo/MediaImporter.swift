@@ -37,6 +37,11 @@ final class MediaImporter {
         if let existing = try? modelContext.fetch(descriptor), !existing.isEmpty {
             return nil
         }
+        // Cross-path dedup: the same shutter may already be imported via the handoff
+        // (dat:<captureId>) before PhotoKit syncs ~1h later. Skip if so.
+        if hasDuplicate(capturedAt: asset.creationDate ?? Date(), pixelWidth: metadata.pixelWidth, pixelHeight: metadata.pixelHeight, modelContext: modelContext) {
+            return nil
+        }
 
         guard let resource = bestImageResource(for: asset) else {
             throw ImportError.noResources
@@ -116,5 +121,98 @@ final class MediaImporter {
         case "public.mpeg-4", "com.apple.quicktime-movie": return "mov"
         default: return nil
         }
+    }
+
+    // MARK: - Glasses Handoff (byte-based, no PHAsset)
+
+    /// Imports a photo handed off by vibeterm (received from the glasses via DAT).
+    /// Takes raw bytes + a stable captureId instead of a PHAsset — no photo library
+    /// involved. Returns the created MediaChunk, or nil if a chunk with this captureId
+    /// (or a same-shutter duplicate already imported via PhotoKit) already exists.
+    func importGlassesPhoto(
+        data: Data,
+        capturedAt: Date,
+        captureId: String,
+        pixelWidth: Int = 0,
+        pixelHeight: Int = 0,
+        uti: String = "public.jpeg",
+        latitude: Double? = nil,
+        longitude: Double? = nil,
+        modelContext: ModelContext
+    ) throws -> MediaChunk? {
+        // Stable, namespaced dedup key — identical across re-deliveries of the same
+        // shutter event, so a re-drop dedupes instead of double-importing.
+        let stableId = "dat:\(captureId)"
+        let descriptor = FetchDescriptor<MediaChunk>(
+            predicate: #Predicate { $0.photoLocalIdentifier == stableId }
+        )
+        if let existing = try? modelContext.fetch(descriptor), !existing.isEmpty {
+            return nil
+        }
+        // Cross-path dedup: the SAME physical photo may also arrive via PhotoKit
+        // (~1h later) under a PHAsset id. Skip if a same-shutter chunk already exists.
+        if hasDuplicate(capturedAt: capturedAt, pixelWidth: pixelWidth, pixelHeight: pixelHeight, modelContext: modelContext) {
+            return nil
+        }
+
+        let ext = extensionFromUTI(uti) ?? "jpg"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let timestamp = formatter.string(from: capturedAt)
+        let safeId = captureId.components(separatedBy: CharacterSet(charactersIn: "/.:")).joined(separator: "_").prefix(24)
+        let fileName = "glasses_\(timestamp)_\(safeId).\(ext)"
+        let destination = mediaDirectory.appendingPathComponent(fileName)
+
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try data.write(to: destination, options: .atomic)
+
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? Int64(data.count)
+
+        let chunk = MediaChunk(
+            filePath: destination.path,
+            fileName: fileName,
+            mediaType: .image,
+            capturedAt: capturedAt,
+            photoLocalIdentifier: stableId,
+            fileSize: fileSize,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            uti: uti,
+            exifMake: "Meta AI",
+            exifModel: "Ray-Ban Meta",
+            source: .glasses,
+            matchConfidence: .confirmed,
+            latitude: latitude,
+            longitude: longitude
+        )
+
+        modelContext.insert(chunk)
+        try modelContext.save()
+
+        Self.logger.info("Imported glasses photo (handoff): \(fileName) captureId=\(captureId)")
+        ActivityLogger.shared.log(.telemetry, "[photo] imported (handoff) \(fileName) captureId=\(captureId) bytes=\(data.count)")
+        return chunk
+    }
+
+    /// Cross-path dedup: the same shutter event can arrive via both the handoff
+    /// (`dat:<captureId>`) and PhotoKit (PHAsset id). Match on `capturedAt ±3s` AND
+    /// exact pixel dimensions. fileSize is unreliable across HEIC/JPEG transcode, so
+    /// it is intentionally NOT used. No-ops when dimensions are unknown (0).
+    private func hasDuplicate(capturedAt: Date, pixelWidth: Int, pixelHeight: Int, modelContext: ModelContext) -> Bool {
+        guard pixelWidth > 0, pixelHeight > 0 else { return false }
+        let lo = capturedAt.addingTimeInterval(-3)
+        let hi = capturedAt.addingTimeInterval(3)
+        let descriptor = FetchDescriptor<MediaChunk>(
+            predicate: #Predicate {
+                $0.capturedAt >= lo && $0.capturedAt <= hi
+                    && $0.pixelWidth == pixelWidth && $0.pixelHeight == pixelHeight
+            }
+        )
+        if let existing = try? modelContext.fetch(descriptor), !existing.isEmpty {
+            return true
+        }
+        return false
     }
 }
