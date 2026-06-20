@@ -110,24 +110,9 @@ struct RecallApp: App {
         // Start telemetry (health + location)
         TelemetryService.shared.start()
 
-        // Auto-start Ray-Ban Meta photo import if enabled
-        ActivityLogger.shared.log(.telemetry, "[photo] startup gate: enabled=\(AppSettings.shared.glassesAutoImportEnabled)")
-        if AppSettings.shared.glassesAutoImportEnabled {
-            let authorizer = TelemetryService.shared.photoLibraryAuthorizer
-            authorizer.refresh()
-            ActivityLogger.shared.log(.telemetry, "[photo] auth status (initial): \(PhotoLibraryAuthorizer.statusName(authorizer.status))")
-            if !authorizer.canRead {
-                _ = await authorizer.requestReadWrite()
-                ActivityLogger.shared.log(.telemetry, "[photo] auth status (after request): \(PhotoLibraryAuthorizer.statusName(authorizer.status))")
-            }
-            if authorizer.canRead {
-                TelemetryService.shared.photoScanCoordinator.setModelContainer(sharedModelContainer)
-                TelemetryService.shared.photoScanCoordinator.start()
-                MediaUploadManager.shared.startProcessing(modelContainer: sharedModelContainer)
-            } else {
-                ActivityLogger.shared.log(.error, "[photo] startup blocked — cannot read library")
-            }
-        }
+        // Photo-library scan (PhotoScanCoordinator) retired: glasses photos now arrive
+        // via the App Group handoff below (~0.3s) instead of the ~1h Photos-app sync
+        // lag. The library scan is intentionally no longer started.
 
         // Glasses photo handoff from vibeterm (App Group drop folder). No permission
         // prerequisite, so started unconditionally. Dormant until vibeterm drops files.

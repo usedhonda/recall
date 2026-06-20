@@ -251,6 +251,7 @@ final class UploadManager {
         metadata["is_speech"] = "true" // iOS VAD confirmed speech — server can skip VAD
         metadata["chunk_start_utc"] = formatter.string(from: chunk.startedAt) // absolute timestamp for offset
         metadata["language"] = "ja" // language hint — server can skip detection
+        metadata["reaction_mode"] = settings.reactionMode.rawValue // Chi reaction stance (auto/question/rebut/executive); latest chunk wins server-side
 
         // Location metadata (attach current position to audio chunk)
         if let location = TelemetryService.shared.locationManager.currentLocation {

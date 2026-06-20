@@ -227,6 +227,7 @@ final class TelemetryService {
             "lineDeliveryEnabled": AppSettings.shared.lineDeliveryEnabled,
             "vibetermDeliveryEnabled": AppSettings.shared.vibetermDeliveryEnabled,
             "webMinContentChars": AppSettings.shared.webMinContentChars,
+            "reactionMode": AppSettings.shared.reactionMode.rawValue,
         ]
 
         do {

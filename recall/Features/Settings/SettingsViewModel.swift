@@ -223,6 +223,16 @@ final class SettingsViewModel {
         }
     }
 
+    // Stored (not computed) so @Observable tracks the picker selection — same
+    // reason as dataPolicy above (computed UserDefaults pass-throughs emit no
+    // observation events, freezing the checkmark).
+    var reactionMode: ReactionMode = AppSettings.shared.reactionMode {
+        didSet {
+            settings.reactionMode = reactionMode
+            Task { await telemetry.syncReactionSettings() }
+        }
+    }
+
     // MARK: - QR Code
 
     var showQRScanner = false
