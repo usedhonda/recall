@@ -18,7 +18,6 @@ struct SettingsView: View {
                     storageSection
                     healthSection
                     locationSection
-                    glassesSection
                     deviceSection
 #if DEBUG
                     debugSection
@@ -364,57 +363,6 @@ struct SettingsView: View {
                     }
                     .opacity(viewModel.currentLocation == nil ? 0.4 : 1.0)
                     .disabled(viewModel.currentLocation == nil)
-                }
-            }
-            .hudCard()
-        }
-    }
-
-    // MARK: - Glasses (Ray-Ban Meta auto-import)
-
-    @ViewBuilder
-    private var glassesSection: some View {
-        VStack(spacing: 8) {
-            HUDSectionHeader(title: "Ray-Ban Meta", color: RecallTheme.Colors.neonAmber)
-            VStack(spacing: 12) {
-                hudToggle(label: "AUTO-IMPORT PHOTOS", isOn: $viewModel.glassesAutoImportEnabled)
-                    .onChange(of: viewModel.glassesAutoImportEnabled) { _, _ in
-                        let container = modelContext.container
-                        Task { await viewModel.applyGlassesToggle(modelContainer: container) }
-                    }
-
-                HStack {
-                    Text("PHOTO ACCESS")
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(RecallTheme.Colors.textSecondary)
-                    Spacer()
-                    Text(viewModel.photoLibraryStatusLabel)
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(viewModel.photoLibraryStatusColor)
-                }
-
-                if viewModel.glassesImportedCount > 0 {
-                    HStack {
-                        Text("IMPORTED (SESSION)")
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.textSecondary)
-                        Spacer()
-                        Text("\(viewModel.glassesImportedCount)")
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.neonAmber)
-                    }
-                }
-
-                if let last = viewModel.glassesLastImportAt {
-                    HStack {
-                        Text("LAST IMPORT")
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.textSecondary)
-                        Spacer()
-                        Text(last, style: .relative)
-                            .font(RecallTheme.Fonts.hudCaption)
-                            .foregroundStyle(RecallTheme.Colors.neonAmber.opacity(0.7))
-                    }
                 }
             }
             .hudCard()
