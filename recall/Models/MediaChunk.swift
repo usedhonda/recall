@@ -106,6 +106,10 @@ enum MediaType: String, Codable {
 enum MediaImportSource: String, Codable {
     case photos
     case shareExtension = "share_extension"
+    // Photo-library photo confirmed as Meta-glass capture. Sent as "glasses_dat"
+    // so the VoiceLog/Gateway glasses gate routes it to Chi vision identically to
+    // the DAT path — same delivery contract, no server-side change.
+    case glasses = "glasses_dat"
 }
 
 enum MediaMatchConfidence: String, Codable {

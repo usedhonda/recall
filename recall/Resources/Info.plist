@@ -22,6 +22,16 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>MWDAT</key>
+	<dict>
+		<key>Analytics</key>
+		<dict>
+			<key>OptOut</key>
+			<true/>
+		</dict>
+		<key>DAMEnabled</key>
+		<true/>
+	</dict>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -41,6 +51,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>recall connects to Meta AI glasses for local wearable experiments.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>recall uses the camera to scan QR codes for server configuration.</string>
 	<key>NSHealthShareUsageDescription</key>
