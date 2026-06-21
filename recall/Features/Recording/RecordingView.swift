@@ -320,6 +320,25 @@ struct RecordingView: View {
     private var contextStreamsBar: some View {
         HStack(spacing: 8) {
             CyberpunkStreamToggle(
+                icon: "sunglasses.fill",
+                label: glassesLabel,
+                isActive: telemetry.glassesHandoffReceiver.isEnabled,
+                neonColor: RecallTheme.Colors.neonAmber,
+                iconScale: .small
+            ) {
+                if telemetry.glassesHandoffReceiver.isEnabled {
+                    telemetry.glassesHandoffReceiver.stop()
+                    AppSettings.shared.glassesAutoImportEnabled = false
+                } else {
+                    if let container = modelContainer {
+                        telemetry.glassesHandoffReceiver.setModelContainer(container)
+                    }
+                    telemetry.glassesHandoffReceiver.start()
+                    AppSettings.shared.glassesAutoImportEnabled = true
+                }
+            }
+
+            CyberpunkStreamToggle(
                 icon: "music.note",
                 label: "Media",
                 isActive: telemetry.nowPlayingManager.isEnabled,
@@ -336,6 +355,12 @@ struct RecordingView: View {
 
             micSelectorSlot
         }
+    }
+
+    private var glassesLabel: String {
+        guard telemetry.glassesHandoffReceiver.isEnabled else { return "Glasses" }
+        let count = telemetry.glassesHandoffReceiver.totalImported
+        return count > 0 ? "Glasses (\(count))" : "Glasses"
     }
 
     // MARK: - Mic Selector
