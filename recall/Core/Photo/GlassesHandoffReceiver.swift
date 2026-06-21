@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import Observation
 import SwiftData
@@ -131,6 +132,18 @@ final class GlassesHandoffReceiver {
                 continue  // image missing/partial — retry on next drain
             }
             let capturedAt = ISO8601DateFormatter().date(from: manifest.capturedAt) ?? Date()
+            // Geotag: prefer the sidecar's own coordinates (future-proofing); when
+            // vibeterm ships nil (it dropped its location capability for App Store
+            // privacy review), fall back to recall's current fix — recall is an
+            // always-on location app and already geotags audio chunks the same way.
+            let geo: (lat: Double, lon: Double)?
+            if let slat = manifest.latitude, let slon = manifest.longitude {
+                geo = (slat, slon)
+            } else if let fix = TelemetryService.shared.locationManager.currentLocation {
+                geo = (fix.coordinate.latitude, fix.coordinate.longitude)
+            } else {
+                geo = nil
+            }
             do {
                 let chunk = try importer.importGlassesPhoto(
                     data: bytes,
@@ -139,11 +152,15 @@ final class GlassesHandoffReceiver {
                     pixelWidth: manifest.pixelWidth,
                     pixelHeight: manifest.pixelHeight,
                     uti: mimeUTI(manifest.mimeType),
-                    latitude: manifest.latitude,
-                    longitude: manifest.longitude,
+                    latitude: geo?.lat,
+                    longitude: geo?.lon,
                     modelContext: context
                 )
-                if chunk != nil { imported += 1 }
+                if chunk != nil {
+                    imported += 1
+                    let src = manifest.latitude != nil ? "sidecar" : (geo != nil ? "recall-fix" : "none")
+                    ActivityLogger.shared.log(.telemetry, "[handoff] geotag=\(src) captureId=\(manifest.captureId)")
+                }
                 // Import success OR dedup-nil both mean "recall owns it now" — delete.
                 try? fm.removeItem(at: imageURL)
                 try? fm.removeItem(at: sidecar)
