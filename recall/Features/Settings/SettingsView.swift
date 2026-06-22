@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @Environment(\.modelContext) private var modelContext
     @State private var viewModel = SettingsViewModel()
 
     var body: some View {
