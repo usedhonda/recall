@@ -57,7 +57,7 @@ final class ActivityLogger {
 
     // Remote log via UDP broadcast
     private let udpQueue = DispatchQueue(label: "com.recall.udplog", qos: .utility)
-    private nonisolated(unsafe) var udpConnection: NWConnection?
+    private var udpConnection: NWConnection?
     private let udpPort: UInt16 = 9199
 
     // File persistence
@@ -133,7 +133,7 @@ final class ActivityLogger {
         udpConnection = conn
     }
 
-    private nonisolated func sendUDP(_ text: String) {
+    private func sendUDP(_ text: String) {
         guard let data = text.data(using: .utf8) else { return }
         udpConnection?.send(content: data, completion: .idempotent)
     }
