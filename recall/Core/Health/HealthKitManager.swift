@@ -169,7 +169,7 @@ final class HealthKitManager {
             teardownObserverQueries()
             healthStore.disableAllBackgroundDelivery { success, error in
                 if let error {
-                    ActivityLogger.shared.logFromBackground(.health, "disableAllBackgroundDelivery error: \(error.localizedDescription)")
+                    Self.logHealthFromBackground("disableAllBackgroundDelivery error: \(error.localizedDescription)")
                 }
             }
         }
@@ -203,7 +203,7 @@ final class HealthKitManager {
             // Enable background delivery — iOS wakes the app on new data
             healthStore.enableBackgroundDelivery(for: sampleType, frequency: .immediate) { success, error in
                 if let error {
-                    ActivityLogger.shared.logFromBackground(.health, "BG delivery failed for \(typeId): \(error.localizedDescription)")
+                    Self.logHealthFromBackground("BG delivery failed for \(typeId): \(error.localizedDescription)")
                 }
             }
 
@@ -228,7 +228,7 @@ final class HealthKitManager {
         if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { _, error in
                 if let error {
-                    ActivityLogger.shared.logFromBackground(.health, "BG delivery failed for sleep: \(error.localizedDescription)")
+                    Self.logHealthFromBackground("BG delivery failed for sleep: \(error.localizedDescription)")
                 }
             }
 
@@ -249,7 +249,7 @@ final class HealthKitManager {
         let workoutType = HKWorkoutType.workoutType()
         healthStore.enableBackgroundDelivery(for: workoutType, frequency: .immediate) { _, error in
             if let error {
-                ActivityLogger.shared.logFromBackground(.health, "BG delivery failed for workout: \(error.localizedDescription)")
+                Self.logHealthFromBackground("BG delivery failed for workout: \(error.localizedDescription)")
             }
         }
         let workoutKey = workoutType.identifier
@@ -340,9 +340,9 @@ final class HealthKitManager {
         stopTimer()
         healthStore.disableAllBackgroundDelivery { success, error in
             if let error {
-                ActivityLogger.shared.logFromBackground(.health, "BG delivery disable failed: \(error.localizedDescription)")
+                Self.logHealthFromBackground("BG delivery disable failed: \(error.localizedDescription)")
             } else {
-                ActivityLogger.shared.logFromBackground(.health, "BG delivery disabled: \(success)")
+                Self.logHealthFromBackground("BG delivery disabled: \(success)")
             }
         }
     }
@@ -1024,7 +1024,13 @@ private extension HealthKitManager {
     /// Nonisolated log helper — safe to call from HKSampleQuery/HKStatisticsQuery
     /// completion handlers which run on background queues.
     nonisolated static func logHK(_ message: String) {
-        ActivityLogger.shared.logFromBackground(.health, "HK " + message)
+        logHealthFromBackground("HK " + message)
+    }
+
+    nonisolated static func logHealthFromBackground(_ message: String) {
+        Task { @MainActor in
+            ActivityLogger.shared.log(.health, message)
+        }
     }
 }
 
