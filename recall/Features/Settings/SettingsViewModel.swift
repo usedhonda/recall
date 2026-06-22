@@ -1,8 +1,6 @@
 import Foundation
 import CoreLocation
 import Observation
-import SwiftData
-import SwiftUI
 
 @Observable
 @MainActor
@@ -136,49 +134,6 @@ final class SettingsViewModel {
 
     var nowPlayingArtist: String? {
         telemetry.nowPlayingManager.artist
-    }
-
-    // MARK: - Glasses (Ray-Ban Meta auto-import)
-
-    var glassesAutoImportEnabled: Bool {
-        get { settings.glassesAutoImportEnabled }
-        set { settings.glassesAutoImportEnabled = newValue }
-    }
-
-    var photoLibraryStatusLabel: String {
-        PhotoLibraryAuthorizer.statusName(telemetry.photoLibraryAuthorizer.status).uppercased()
-    }
-
-    var photoLibraryStatusColor: Color {
-        switch telemetry.photoLibraryAuthorizer.status {
-        case .authorized: return RecallTheme.Colors.neonGreen
-        case .limited: return RecallTheme.Colors.neonAmber
-        default: return RecallTheme.Colors.textSecondary
-        }
-    }
-
-    var glassesImportedCount: Int {
-        telemetry.photoScanCoordinator.totalImported
-    }
-
-    var glassesLastImportAt: Date? {
-        telemetry.photoScanCoordinator.lastImportedAt
-    }
-
-    func applyGlassesToggle(modelContainer: ModelContainer) async {
-        if settings.glassesAutoImportEnabled {
-            let status = await telemetry.photoLibraryAuthorizer.requestReadWrite()
-            guard status == .authorized || status == .limited else {
-                settings.glassesAutoImportEnabled = false
-                return
-            }
-            telemetry.photoScanCoordinator.setModelContainer(modelContainer)
-            telemetry.photoScanCoordinator.start()
-            MediaUploadManager.shared.startProcessing(modelContainer: modelContainer)
-        } else {
-            telemetry.photoScanCoordinator.stop()
-            MediaUploadManager.shared.stopProcessing()
-        }
     }
 
     // MARK: - Reactions
