@@ -198,7 +198,7 @@ final class HealthKitInspector {
         }
     }
 
-    private func formatLatestValue(sample: HKSample, descriptor: Descriptor) -> String? {
+    private nonisolated func formatLatestValue(sample: HKSample, descriptor: Descriptor) -> String? {
         switch descriptor {
         case .quantity(let identifier):
             guard let quantitySample = sample as? HKQuantitySample else { return nil }
@@ -214,14 +214,14 @@ final class HealthKitInspector {
         }
     }
 
-    private func formatExample(sample: HKSample, descriptor: Descriptor) -> String {
+    private nonisolated func formatExample(sample: HKSample, descriptor: Descriptor) -> String {
         let value = formatLatestValue(sample: sample, descriptor: descriptor) ?? "n/a"
         let source = sample.sourceRevision.source.name
         let time = sample.endDate.formatted(.dateTime.month().day().hour().minute())
         return "\(time) · \(value) · \(source)"
     }
 
-    private func formatQuantity(_ quantity: HKQuantity, identifier: HKQuantityTypeIdentifier) -> String? {
+    private nonisolated func formatQuantity(_ quantity: HKQuantity, identifier: HKQuantityTypeIdentifier) -> String? {
         guard let unit = unit(for: identifier) else { return nil }
         let value = quantity.doubleValue(for: unit)
 
@@ -255,7 +255,7 @@ final class HealthKitInspector {
         }
     }
 
-    private func unit(for identifier: HKQuantityTypeIdentifier) -> HKUnit? {
+    private nonisolated func unit(for identifier: HKQuantityTypeIdentifier) -> HKUnit? {
         switch identifier {
         case .stepCount, .flightsClimbed:
             return .count()
@@ -286,7 +286,7 @@ final class HealthKitInspector {
         }
     }
 
-    private func formatSleepCategory(value: Int) -> String {
+    private nonisolated func formatSleepCategory(value: Int) -> String {
         switch value {
         case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
             return "asleepREM"
@@ -305,7 +305,7 @@ final class HealthKitInspector {
         }
     }
 
-    private func formatWorkout(_ workout: HKWorkout) -> String {
+    private nonisolated func formatWorkout(_ workout: HKWorkout) -> String {
         let activity = workoutActivityName(workout.workoutActivityType)
         let duration = "\(Int(workout.duration.rounded()))s"
         let energy = workout.totalEnergyBurned.map { String(format: "%.0f kcal", $0.doubleValue(for: .kilocalorie())) } ?? "-"
@@ -313,7 +313,7 @@ final class HealthKitInspector {
         return "\(activity) · \(duration) · energy=\(energy) · dist=\(distance)"
     }
 
-    private func workoutActivityName(_ type: HKWorkoutActivityType) -> String {
+    private nonisolated func workoutActivityName(_ type: HKWorkoutActivityType) -> String {
         switch type {
         case .running: return "running"
         case .walking: return "walking"
