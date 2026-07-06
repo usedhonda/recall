@@ -327,9 +327,13 @@ struct RecordingView: View {
                 iconScale: .small
             ) {
                 if telemetry.glassesHandoffReceiver.isEnabled {
+                    // Distinguishes user-driven stops from any other path when an
+                    // isolated "[handoff] receiver stopped" appears in the logs
+                    ActivityLogger.shared.log(.telemetry, "[handoff] glasses toggle tapped by user: stop")
                     telemetry.glassesHandoffReceiver.stop()
                     AppSettings.shared.glassesAutoImportEnabled = false
                 } else {
+                    ActivityLogger.shared.log(.telemetry, "[handoff] glasses toggle tapped by user: start")
                     if let container = modelContainer {
                         telemetry.glassesHandoffReceiver.setModelContainer(container)
                     }
