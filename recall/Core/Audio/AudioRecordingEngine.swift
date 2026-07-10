@@ -99,6 +99,9 @@ final class AudioRecordingEngine {
     /// stops hammering fresh activations and waits for an activatable trigger (route
     /// change / foreground / watchdog) instead. Cleared on any successful resume.
     private var activationBlocked = false
+    private var cannotInterruptOthersFailures = 0
+    private var nextActivationRetryAt: Date = .distantPast
+    private let activationRetryBackoff: [TimeInterval] = [10, 30, 60, 120, 300]
 
     /// Set true when `installTap` raises NSException — engine instance is poisoned and
     /// internal `audioEngine.reset()` + retry cannot recover. HealthMonitor reads this
@@ -985,7 +988,7 @@ final class AudioRecordingEngine {
             state = .listening
             engineStartTime = Date()
             zombieSilenceCount = 0
-            activationBlocked = false
+            clearActivationBlock()
             startProcessingLoop()
             BackgroundKeepAlive.shared.resumePlayback()
             activity.log(.state, "Resumed after interruption — Listening (attempt \(attempt))")
@@ -996,10 +999,8 @@ final class AudioRecordingEngine {
                 // .paused (NOT .idle — that would trip HealthMonitor into a
                 // recreate -> cold-activate loop) and wait for an activatable trigger;
                 // the immortal watchdog's .paused branch is the guaranteed floor.
-                activationBlocked = true
-                state = .paused
+                markActivationBlocked(context: "resume")
                 logger.warning("Resume blocked — cannotInterruptOthers (background)")
-                activity.log(.state, "resume blocked — cannotInterruptOthers (bg), waiting for activatable trigger")
                 return
             }
             logger.error("Resume attempt \(attempt) failed: \(error.localizedDescription)")
@@ -1031,8 +1032,35 @@ final class AudioRecordingEngine {
     /// actually blocked, so it can be called liberally without storming.
     func resumeWhenActivatable(reason: String) {
         guard activationBlocked, state == .paused, !userStopped else { return }
+
+        if reason == "routeChange" || reason == "foreground" {
+            resetActivationBackoff()
+        } else if Date() < nextActivationRetryAt {
+            return
+        }
+
         activity.log(.state, "resume trigger (\(reason)) — retrying activation")
         resumeAfterInterruption(attempt: 1)
+    }
+
+    private func markActivationBlocked(context: String) {
+        activationBlocked = true
+        state = .paused
+        cannotInterruptOthersFailures += 1
+        let index = min(cannotInterruptOthersFailures - 1, activationRetryBackoff.count - 1)
+        let delay = activationRetryBackoff[index]
+        nextActivationRetryAt = Date().addingTimeInterval(delay)
+        activity.log(.state, "\(context) blocked — cannotInterruptOthers (bg), retry in \(Int(delay))s (failure=\(cannotInterruptOthersFailures))")
+    }
+
+    private func resetActivationBackoff() {
+        cannotInterruptOthersFailures = 0
+        nextActivationRetryAt = .distantPast
+    }
+
+    private func clearActivationBlock() {
+        activationBlocked = false
+        resetActivationBackoff()
     }
 
     // MARK: - Engine Restart (shared by route change + watchdog)
@@ -1083,7 +1111,7 @@ final class AudioRecordingEngine {
             BackgroundKeepAlive.shared.resumePlayback()
 
             consecutiveRestartFailures = 0
-            activationBlocked = false
+            clearActivationBlock()
             activity.log(.state, "Engine restarted — Listening (\(Int(hwSampleRate))Hz)")
             activity.log(.state, snapshotAudioState(prefix: "restart done"))
         } catch AudioFormatError.installTapException(let reason) {
@@ -1101,9 +1129,7 @@ final class AudioRecordingEngine {
             if AudioSessionManager.isCannotInterruptOthers(error) {
                 // -50 in background is not a poisoned engine — don't hard-reset or
                 // count it toward recreate. Park .paused and wait for a trigger.
-                activationBlocked = true
-                state = .paused
-                activity.log(.state, "restart blocked — cannotInterruptOthers (bg), waiting for activatable trigger")
+                markActivationBlocked(context: "restart")
                 return
             }
             // If stop+start fails, try with full reset as last resort
@@ -1125,7 +1151,7 @@ final class AudioRecordingEngine {
                 startProcessingLoop()
                 BackgroundKeepAlive.shared.resumePlayback()
                 consecutiveRestartFailures = 0
-                activationBlocked = false
+                clearActivationBlock()
                 activity.log(.state, "Engine restarted (hard) — Listening (\(Int(hwSampleRate))Hz)")
                 activity.log(.state, snapshotAudioState(prefix: "restart done (hard)"))
             } catch AudioFormatError.installTapException(let reason) {
@@ -1138,9 +1164,7 @@ final class AudioRecordingEngine {
             } catch {
                 if AudioSessionManager.isCannotInterruptOthers(error) {
                     // -50 in background — park .paused, don't escalate to recreate.
-                    activationBlocked = true
-                    state = .paused
-                    activity.log(.state, "restart blocked — cannotInterruptOthers (bg), waiting for activatable trigger")
+                    markActivationBlocked(context: "restart")
                     return
                 }
                 consecutiveRestartFailures += 1
