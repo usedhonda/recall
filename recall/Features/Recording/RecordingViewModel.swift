@@ -31,6 +31,7 @@ final class RecordingViewModel {
     func switchMicMode(_ mode: MicMode) async {
         let mgr = AudioSessionManager.shared
         mgr.setDesiredMicMode(mode)
+        var appliedMode = mode
 
         do {
             // a. Reconfigure session with new mode
@@ -54,6 +55,7 @@ final class RecordingViewModel {
                     try mgr.setPreferredInput(btPort)
                 } else {
                     // BT mic not found — fall back to built-in
+                    appliedMode = .builtIn
                     mgr.setDesiredMicMode(.builtIn)
                     try mgr.configure()
                     let builtIn = mgr.availableInputs.first { $0.portType == .builtInMic }
@@ -63,7 +65,7 @@ final class RecordingViewModel {
             }
 
             // c. Persist
-            AppSettings.shared.preferredMicMode = mode.rawValue
+            AppSettings.shared.preferredMicMode = appliedMode.rawValue
 
             // d. Recreate engine to pick up new route
             if let container = lastModelContainer {
