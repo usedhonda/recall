@@ -210,8 +210,8 @@ final class LocationManager: NSObject {
 
     private func handleLocationUpdate(_ location: CLLocation) async {
         currentLocation = location
-        guard !LaunchContext.shouldStaySilent else {
-            ActivityLogger.shared.log(.location, "Silent launch: location send skipped")
+        guard !RecordingStateManager.shared.userStopIntent else {
+            ActivityLogger.shared.log(.location, "location send skipped (user stop)")
             return
         }
 
@@ -466,8 +466,8 @@ final class LocationManager: NSObject {
     }
 
     private func sendHeartbeat() {
-        guard !LaunchContext.shouldStaySilent else {
-            ActivityLogger.shared.log(.location, "Silent launch: heartbeat skipped")
+        guard !RecordingStateManager.shared.userStopIntent else {
+            ActivityLogger.shared.log(.location, "heartbeat skipped (user stop)")
             return
         }
         guard let location = lastGoodLocation ?? currentLocation else { return }
@@ -629,8 +629,8 @@ extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         Task { @MainActor in
             ActivityLogger.shared.log(.location, "Region enter: \(anchorName(for: region))")
-            guard !LaunchContext.shouldStaySilent else {
-                ActivityLogger.shared.log(.location, "Silent launch: region enter send skipped")
+            guard !RecordingStateManager.shared.userStopIntent else {
+                ActivityLogger.shared.log(.location, "region enter send skipped (user stop)")
                 return
             }
             forceNextSend()
@@ -641,8 +641,8 @@ extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         Task { @MainActor in
             ActivityLogger.shared.log(.location, "Region exit: \(anchorName(for: region))")
-            guard !LaunchContext.shouldStaySilent else {
-                ActivityLogger.shared.log(.location, "Silent launch: region exit send skipped")
+            guard !RecordingStateManager.shared.userStopIntent else {
+                ActivityLogger.shared.log(.location, "region exit send skipped (user stop)")
                 return
             }
             forceNextSend()
