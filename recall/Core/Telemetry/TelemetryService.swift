@@ -25,6 +25,7 @@ final class TelemetryService {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
+        config.allowsConstrainedNetworkAccess = true
         return URLSession(configuration: config)
     }()
 
