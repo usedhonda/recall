@@ -37,6 +37,7 @@ final class TelemetryUploader: NSObject {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
+        config.allowsConstrainedNetworkAccess = true
         return URLSession(configuration: config)
     }()
 
