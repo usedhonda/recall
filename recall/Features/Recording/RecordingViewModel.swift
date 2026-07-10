@@ -252,6 +252,11 @@ final class RecordingViewModel {
                 }
 
                 if engine.engineNeedsRecreate && !engine.userStopped {
+                    if !ConnectivityMonitor.shared.isAppActive,
+                       let notBefore = engine.engineRecreateNotBefore,
+                       Date() < notBefore {
+                        continue
+                    }
                     ActivityLogger.shared.log(.error, "HealthMonitor: engine poisoned (installTap NSException) — full recreate")
                     self.engine?.stop()
                     self.engine = nil

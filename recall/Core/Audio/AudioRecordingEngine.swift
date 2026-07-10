@@ -105,6 +105,10 @@ final class AudioRecordingEngine {
     /// flag and triggers full engine recreate via `RecordingViewModel`.
     private(set) var engineNeedsRecreate: Bool = false
 
+    /// Earliest time HealthMonitor may recreate after a background media-services reset.
+    /// Foreground recovery ignores this deadline.
+    private(set) var engineRecreateNotBefore: Date?
+
     // MARK: - Consecutive Voice Frame Guard
 
     private var consecutiveVoiceFrames: Int = 0
@@ -894,6 +898,13 @@ final class AudioRecordingEngine {
         // a fresh one instead of trusting a stale isPlaying from a dead instance.
         BackgroundKeepAlive.shared.stop()
 
+        if ConnectivityMonitor.shared.isAppActive {
+            engineRecreateNotBefore = nil
+        } else {
+            let delay = Double.random(in: 30...60)
+            engineRecreateNotBefore = Date().addingTimeInterval(delay)
+            activity.log(.state, "Media services reset in background — delaying recreate by \(Int(delay))s")
+        }
         engineNeedsRecreate = true
         state = .idle
     }
