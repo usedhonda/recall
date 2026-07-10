@@ -279,6 +279,7 @@ final class RecordingViewModel {
         retryTask?.cancel()
         retryTask = nil
         engine?.stop(intentional: true)
+        AudioSessionManager.shared.deactivate()
         UploadManager.shared.stopProcessing()
         logger.info("Recording stopped")
         syncSharedState()
