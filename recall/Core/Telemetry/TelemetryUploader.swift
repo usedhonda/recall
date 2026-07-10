@@ -78,8 +78,8 @@ final class TelemetryUploader: NSObject {
     /// Upload location samples via background URLSession (Lane B fallback)
     func upload(samples: [LocationSample], healthPayload: HealthPayload? = nil) async throws {
         guard !samples.isEmpty || healthPayload != nil else { return }
-        guard await MainActor.run(body: { !LaunchContext.shouldStaySilent }) else {
-            Self.log("silent launch: telemetry laneB skipped")
+        guard await MainActor.run(body: { !RecordingStateManager.shared.userStopIntent }) else {
+            Self.log("user stop: telemetry laneB skipped")
             return
         }
         guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
@@ -176,8 +176,8 @@ final class TelemetryUploader: NSObject {
     /// Hybrid: immediate upload first, falls back to background URLSession on failure
     @MainActor
     func triggerUpload() async {
-        guard !LaunchContext.shouldStaySilent else {
-            TelemetryUploader.log("silent launch: triggerUpload skipped")
+        guard !RecordingStateManager.shared.userStopIntent else {
+            TelemetryUploader.log("user stop: triggerUpload skipped")
             return
         }
         guard ConnectivityMonitor.shared.canSendLocation else {
@@ -259,8 +259,8 @@ final class TelemetryUploader: NSObject {
         serverURL: String,
         token: String
     ) async throws {
-        guard await MainActor.run(body: { !LaunchContext.shouldStaySilent }) else {
-            TelemetryUploader.log("silent launch: telemetry immediate skipped")
+        guard await MainActor.run(body: { !RecordingStateManager.shared.userStopIntent }) else {
+            TelemetryUploader.log("user stop: telemetry immediate skipped")
             return
         }
         guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
