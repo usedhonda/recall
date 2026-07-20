@@ -148,9 +148,6 @@ final class TelemetryService {
     // MARK: - Health Send
 
     func sendHealth(_ payload: HealthPayload) async -> HealthSendResult {
-        guard !LaunchContext.shouldStaySilent else {
-            return .error("silent launch")
-        }
         guard ConnectivityMonitor.shared.canSendHealth else {
             return .error("waiting for WiFi (health wifi-only)")
         }
