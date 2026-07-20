@@ -99,6 +99,17 @@ Build config is stored in `.local/project.yml` (gitignored).
 
 ## Technical Notes
 
+### Stream Independence Contract (BINDING — owner ruling 2026-07-20)
+
+Every top-screen toggle (Audio / Location / Health / Glasses / Media) is an independent
+stream, and each toggle is the SOLE authority over its own stream. Stopping one stream must
+never stop, gate, defer, or degrade another. `userStopIntent` and `LaunchContext.shouldStaySilent`
+belong to the recording lane only; location/health/media/glasses/upload code must never
+reference them. Silent (background) launch suppresses recording auto-start only — all
+independent streams start on every launch. Full contract, incident history, and review
+checklist: `docs/stream-independence.md`. Changing this contract requires explicit owner
+approval; never alter it as a side effect of another task.
+
 ### Operating Model: Always-On Recording
 
 - App launch = recording starts. Runs until explicitly stopped.
