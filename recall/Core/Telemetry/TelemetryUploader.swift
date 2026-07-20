@@ -125,10 +125,6 @@ final class TelemetryUploader: NSObject {
     /// Carries the self-describing records (with measuredAt + source) under `health2`.
     @MainActor
     func uploadHealthOnly(_ payload: HealthPayload) async {
-        guard !LaunchContext.shouldStaySilent else {
-            TelemetryUploader.log("silent launch: healthOnly skipped")
-            return
-        }
         guard ConnectivityMonitor.shared.canSendHealth else {
             TelemetryUploader.log("network policy: healthOnly skipped")
             return
