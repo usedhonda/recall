@@ -7,6 +7,7 @@ struct RecallApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var recordingViewModel = RecordingViewModel()
     @State private var normalStartupStarted = false
+    @State private var independentStreamsStarted = false
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([AudioChunk.self, MediaChunk.self])
@@ -27,7 +28,11 @@ struct RecallApp: App {
                         LaunchContext.markUserForeground()
                     }
                     guard !LaunchContext.shouldStaySilent else {
+                        // Recording auto-start is suppressed while silent, but the
+                        // independent streams (location, health, upload, media/glasses)
+                        // follow only their own toggles and must still start.
                         QuietLaunchHandler.teardownForSilentLaunch()
+                        await startIndependentStreams()
                         return
                     }
                     await runNormalStartup()
@@ -65,9 +70,22 @@ struct RecallApp: App {
         normalStartupStarted = true
         RecordingStateManager.shared.userStopIntent = false
 
-        // Auto-start recording on launch
+        // Auto-start recording on launch (recording lane).
         RecordingStateManager.shared.isRecording = true
         await recordingViewModel.start(modelContainer: sharedModelContainer)
+
+        // Independent streams (location, health, upload, media/glasses) run
+        // regardless of the recording lane.
+        await startIndependentStreams()
+    }
+
+    /// Start the independent data streams (upload queue, connectivity, server
+    /// health, telemetry, glasses handoff). These follow only their own toggles
+    /// and run on both normal and silent launches — never gated by recording state.
+    @MainActor
+    private func startIndependentStreams() async {
+        guard !independentStreamsStarted else { return }
+        independentStreamsStarted = true
 
         // Auto-start upload queue on app launch
         let context = ModelContext(sharedModelContainer)
