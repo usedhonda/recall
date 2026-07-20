@@ -85,9 +85,6 @@ final class TelemetryService {
     // MARK: - Location Send
 
     func sendLocation(_ payload: LocationPayload) async -> LocationSendResult {
-        guard !RecordingStateManager.shared.userStopIntent else {
-            return .httpError("user stop")
-        }
         guard ConnectivityMonitor.shared.canSendLocation else {
             return .httpError("waiting for WiFi (location wifi-only)")
         }
@@ -144,7 +141,6 @@ final class TelemetryService {
     // MARK: - Background Location Queue + Upload
 
     func queueAndUploadBackground(_ sample: LocationSample) async {
-        guard !RecordingStateManager.shared.userStopIntent else { return }
         await LocationQueue.shared.enqueue(sample)
         await TelemetryUploader.shared.triggerUpload()
     }

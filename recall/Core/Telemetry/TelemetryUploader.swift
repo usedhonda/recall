@@ -79,10 +79,6 @@ final class TelemetryUploader: NSObject {
     /// Upload location samples via background URLSession (Lane B fallback)
     func upload(samples: [LocationSample], healthPayload: HealthPayload? = nil) async throws {
         guard !samples.isEmpty || healthPayload != nil else { return }
-        guard await MainActor.run(body: { !RecordingStateManager.shared.userStopIntent }) else {
-            Self.log("user stop: telemetry laneB skipped")
-            return
-        }
         guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
             Self.log("network policy: telemetry laneB skipped")
             throw URLError(.notConnectedToInternet)
@@ -177,10 +173,6 @@ final class TelemetryUploader: NSObject {
     /// Hybrid: immediate upload first, falls back to background URLSession on failure
     @MainActor
     func triggerUpload() async {
-        guard !RecordingStateManager.shared.userStopIntent else {
-            TelemetryUploader.log("user stop: triggerUpload skipped")
-            return
-        }
         guard ConnectivityMonitor.shared.canSendLocation else {
             TelemetryUploader.log("network policy: triggerUpload skipped before drain")
             return
@@ -260,10 +252,6 @@ final class TelemetryUploader: NSObject {
         serverURL: String,
         token: String
     ) async throws {
-        guard await MainActor.run(body: { !RecordingStateManager.shared.userStopIntent }) else {
-            TelemetryUploader.log("user stop: telemetry immediate skipped")
-            return
-        }
         guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
             TelemetryUploader.log("network policy: telemetry immediate skipped")
             throw URLError(.notConnectedToInternet)
