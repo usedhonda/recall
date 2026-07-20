@@ -137,6 +137,10 @@ struct RecallApp: App {
         TelemetryService.shared.glassesHandoffReceiver.setModelContainer(sharedModelContainer)
         TelemetryService.shared.glassesHandoffReceiver.start()
         MediaUploadManager.shared.startProcessing(modelContainer: sharedModelContainer)
+
+        // Report per-channel on/off intent so the server can tell "user gated a
+        // stream" from "device dead" (runs on both normal and silent launches).
+        ChannelStatusReporter.shared.start()
     }
 
     @MainActor
