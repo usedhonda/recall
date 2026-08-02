@@ -23,7 +23,8 @@ Stopping one stream must never stop, gate, defer, or degrade another. Concretely
   session activation, and recording auto-start on launch. Nothing else.
 - Location, health, media, glasses, and the upload queues must never reference
   `userStopIntent` or `shouldStaySilent`. (Enforcement check: `grep -rn userStopIntent recall/`
-  must only hit RecordingViewModel / RecordingStateManager / LaunchContext / RecallApp;
+  must only hit RecordingViewModel / RecordingStateManager / LaunchContext / RecallApp /
+  ChannelStatusReporter.swift (read-only observer for the channel-status heartbeat);
   same idea for `shouldStaySilent`.)
 - A background (silent) launch suppresses **recording auto-start only**. All independent
   streams start on every launch, silent or not (`RecallApp.startIndependentStreams()`).
