@@ -1,219 +1,121 @@
-# recall — CLAUDE.md
+# recall — Project Contract (AGENTS.md)
 
-## Project Overview
+This is the single source of truth for how agents work in this repo. Claude Code loads it via
+the `@AGENTS.md` import in CLAUDE.md; Codex reads it natively. Keep it under ~200 lines / 32 KiB
+— it is the contract, not the manual. Detailed, code-verified facts live in `docs/` (notably
+`docs/pipeline.md` and `docs/stream-independence.md`); link to them instead of restating them.
 
-**recall** is an always-on voice recording iOS app for lifelogging.
+## 1. Purpose & scope
 
-- Always-on recording — starts on app launch, continues in background
-- Voice Activity Detection (VAD) — only saves segments with actual speech, skips silence
-- Chunk-based upload — compressed audio chunks uploaded to Tailscale peers via HTTP
+**recall** is an always-on voice-recording iOS app for lifelogging (Rewind / Limitless style):
+record everything, keep only what matters (voice segments), upload chunks to a Tailscale peer.
 
-Concept: Rewind / Limitless style lifelogging. Record everything, keep only what matters.
+- `recall/` — the iOS app. Swift / SwiftUI, iOS 17+, MVVM, Swift Concurrency (async/await,
+  actors). Views stay thin; logic lives in `@Observable` ViewModels.
+- `openclaw-plugin/` — a Chrome extension (OpenClaw telemetry ingestion). **Bump
+  `manifest.json` version on EVERY change** to the extension.
+- Language: development conversation in Japanese; UI / code / comments / docs in English.
 
-## Language Policy
+## 2. Architecture (summary — details: docs/pipeline.md)
 
-- Development conversation: Japanese
-- UI / code / comments / docs: English
+Layers: `Features/` (Recording, Upload, Settings) → `Core/` (Audio, Upload, Storage, Network,
+Telemetry) → `Models/` (SwiftData). Audio path: `AVAudioEngine` tap → RMS gate → Silero VAD
+(ANE) → chunk writer → upload queue → VoiceLog `/ingest` → Gateway reaction.
 
-## Tech Stack
+**Verified facts (code is truth — do not "correct" these back to old claims):**
 
-| Item | Choice |
-|------|--------|
-| Language | Swift |
-| UI | SwiftUI |
-| Min iOS | 17.0+ |
-| Architecture | MVVM |
-| Audio Recording | AVAudioEngine (realtime audio analysis for VAD) |
-| Voice Detection | 2-stage VAD: RMS power gate + Silero VAD via FluidAudio (CoreML/ANE) |
-| Data Storage | SwiftData (metadata) + FileManager (audio files) |
-| Audio Format | AAC-LC (.m4a) — 16kHz / 32kbps / mono |
-| Background | Background Modes (audio) + BGTaskScheduler |
-| Network | URLSession / Network.framework |
+- Audio: **Opus in a `.caf` container, 48 kbps, 16 kHz, mono** (`Core/Audio/ChunkWriter.swift`).
+  Earlier docs claimed a lossy container at a lower bitrate — that was stale; trust the code.
+- Chunking: `1.5 s` silence ends a chunk; `30 s` max forces a split; `3 s` pre-margin from the
+  ring buffer. Filename `yyyyMMdd_HHmmss.caf`. No user-facing chunk settings.
+- `AVAudioSession`: `.playAndRecord` with `[.mixWithOthers, .defaultToSpeaker,
+  .allowBluetoothA2DP]`. `.allowBluetooth` (HFP) is inserted **only when the user selects HFP
+  mic mode** — HFP forces 16 kHz mono system-wide and degrades other apps, so it is opt-in.
+- **There is no test target.** Verification = build + on-device behavior + logs (see §4).
 
-## Architecture
+## 3. Roles (tool-agnostic)
 
-```
-┌─────────────────────────────────────────┐
-│                   App                    │
-├─────────────────────────────────────────┤
-│  Features                               │
-│  ├── Recording/   (record UI & control) │
-│  ├── Upload/      (upload queue & status)│
-│  └── Settings/    (thresholds, peers)   │
-├─────────────────────────────────────────┤
-│  Core                                   │
-│  ├── Audio/    (AVAudioEngine, VAD)     │
-│  ├── Upload/   (HTTP upload, retry)     │
-│  ├── Storage/  (file & metadata mgmt)   │
-│  └── Network/  (connectivity monitor)   │
-├─────────────────────────────────────────┤
-│  Models        (SwiftData entities)     │
-└─────────────────────────────────────────┘
-```
+Any agent (Claude Code, Codex, a subagent, a future tool) may act as orchestrator, coder, or
+reviewer, and roles may swap mid-task. What matters is the shared state, not who holds it.
 
-## Directory Structure
+- **Orchestrator:** fixes the Task Intent and scope, routes work, verifies results against a
+  primary source, owns the final decision.
+- **Coder:** implements exactly the scoped change, runs the verification in §4, commits.
+- **Reviewer:** checks the diff against this contract and the binding constraints in §5.
 
-```
-recall/
-├── project.yml                # XcodeGen project spec
-├── recall/
-│   ├── App/                   # App entry point, lifecycle
-│   ├── Features/
-│   │   ├── Recording/         # Recording UI & view models
-│   │   ├── Upload/            # Upload queue UI & view models
-│   │   └── Settings/          # Settings UI & view models
-│   ├── Core/
-│   │   ├── Audio/             # AVAudioEngine, VAD, chunk writer
-│   │   ├── Upload/            # HTTP upload manager, retry logic
-│   │   ├── Storage/           # File management, cleanup
-│   │   └── Network/           # NWPathMonitor, connectivity
-│   ├── Models/                # SwiftData models
-│   └── Resources/             # Assets, Info.plist
-├── Tests/
-└── docs/
-```
+Shared state lives in files, not conversation: `docs/handoff/` (copy `TEMPLATE.md` →
+`NNN-slug.md`, keep it current). **If it is not in the handoff file or the repo, it does not
+exist for the next agent.**
 
-## Coding Standards
+## 4. Commands & verification
 
-- **Architecture**: MVVM — View ↔ ViewModel ↔ Service/Manager
-- **Naming**: PascalCase (types), camelCase (properties/methods)
-- **State**: `@Observable` macro for ViewModels
-- **Views**: Keep views thin, logic in ViewModels
-- **Concurrency**: Swift Concurrency (async/await, actors)
-
-## Build
-
-XcodeGen-based. Use `/ios-build` skill.
+Build is XcodeGen-based. Regenerate the project, then build:
 
 ```bash
-# Generate & build (simulator)
-/ios-build
-
-# Device build
-/ios-build --device
+xcodegen generate           # overlays .local/project.yml (gitignored) when present
+xcodebuild -project recall.xcodeproj -scheme recall -configuration Debug \
+  -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.5' build
 ```
 
-Build config is stored in `.local/project.yml` (gitignored).
+Device build / deploy to kana (real iPhone):
 
-## Technical Notes
+```bash
+~/.claude/apple-dev/bin/ios-build.sh device
+```
 
-### Stream Independence Contract (BINDING — owner ruling 2026-07-20)
+**Delivery truth = on-device logs, not a green build.** The authoritative record is the
+on-device Documents log: `activity_YYYY-MM-DD.log` (UTC timestamps, 7-day retention). Pull it:
 
-Every top-screen toggle (Audio / Location / Health / Glasses / Media) is an independent
-stream, and each toggle is the SOLE authority over its own stream. Stopping one stream must
-never stop, gate, defer, or degrade another. `userStopIntent` and `LaunchContext.shouldStaySilent`
-belong to the recording lane only; location/health/media/glasses/upload code must never
-reference them. Silent (background) launch suppresses recording auto-start only — all
-independent streams start on every launch. Full contract, incident history, and review
-checklist: `docs/stream-independence.md`. Changing this contract requires explicit owner
-approval; never alter it as a side effect of another task.
+```bash
+xcrun devicectl device copy from --domain-type appDataContainer \
+  --domain-identifier com.example.recall ...   # copies the app Documents container
+```
 
-### Operating Model: Always-On Recording
+A remote mirror exists at `~/logs/recall-udp/` on the macmini (`ssh macmini`), but the
+on-device file is authoritative — the mirror can lag or drop. A 200 / PASS / healthcheck is a
+hint, not proof; confirm end-to-end from the on-device log.
 
-- App launch = recording starts. Runs until explicitly stopped.
-- Microphone input is continuously monitored via AVAudioEngine tap.
-- **Silent segments**: Not saved (saves disk & battery).
-- **Voice segments**: Saved as chunk files → queued for upload.
-- Pre/post margin (default 2s) ensures speech beginnings/endings are not clipped.
+**Before commit: run `scripts/check-contract.sh` (must pass).**
 
-### VAD (Voice Activity Detection) — 2-Stage Design
+## 5. Binding constraints (owner-ruled; changing any of these needs explicit owner approval)
 
-Two-stage pipeline distinguishes human speech from environmental sounds (TV, music, traffic).
+1. **Stream independence.** Every top-screen toggle (Audio / Location / Health / Glasses /
+   Media) is an independent stream and the sole authority over itself; stopping one must never
+   stop, gate, defer, or degrade another. `userStopIntent` / `shouldStaySilent` belong to the
+   recording lane only. Full contract, incident history, and review checklist:
+   `docs/stream-independence.md` (BINDING).
+2. **NowPlaying prohibition.** recall must NEVER write `MPNowPlayingInfoCenter.nowPlayingInfo`
+   with content, nor register `MPRemoteCommandCenter` handlers. Defensive `nowPlayingInfo = nil`
+   cleanup on stop is allowed. vibeterm owns the lock screen (Live Activity). Background
+   survival relies solely on `UIBackgroundModes: audio` + the `AVAudioEngine` tap — no
+   NowPlaying tricks.
+3. **Visible UI changes require owner approval.** Never remove or alter a user-visible element
+   (a toggle, a screen) as a side effect of another task, and never let a "remove this route"
+   instruction bleed into deleting UI.
+4. **Location accuracy filter is fixed:** background 200 m / foreground 100 m. Do not relax it.
+5. **Direct pushes to `main` are allowed;** the branch-protection bypass warning is normal.
+   Commits are conventional and in English (`feat:`, `fix:`, `docs:`, …); no `Co-Authored-By`.
 
-**Stage 1: RMS Power Gate (always-on, ultra-lightweight)**
-- `AVAudioEngine.installTap` provides realtime audio power levels.
-- RMS below threshold → immediate skip (no ML inference).
-- Saves battery during silence (night, quiet rooms).
+## 6. Completion & docs
 
-**Stage 2: Silero VAD via FluidAudio (CoreML/ANE)**
-- Neural VAD classifies "human voice" vs "non-voice" (TV, music, ambient noise).
-- FluidAudio: Silero VAD CoreML Swift Package (MIT, ~2MB).
-- Runs on ANE (Apple Neural Engine) → near-zero CPU load.
-- 256ms batch processing (8x32ms frames) for efficient inference.
-- Designed for always-on workloads / ambient computing.
-- iOS 17.0+ compatible.
-- Precision: TPR 87.7% @ 5% FPR (far superior to RMS-only or WebRTC VAD).
+A task is **done** only when: the simulator build passes; the change is deployed/verified where
+it actually matters (on-device behavior + log for anything runtime); `scripts/check-contract.sh`
+prints PASS; and the report is factual (reflect + minimal verification + result).
 
-**Ring Buffer Design**
-- AVAudioEngine tap continuously writes to a 3-second ring buffer.
-- Stage 2 detects voice → retrieve 2s of audio from ring buffer (pre-margin).
-- Ensures conversation beginnings are never clipped.
+**Update docs in the same change that alters them** when the change touches: audio format /
+chunking / session options (→ `docs/pipeline.md` + §2 here); the server/upload contract (→
+`docs/pipeline.md` §5); a binding constraint (→ the relevant doc + §5, owner approval required);
+or a hard-won sharp edge (→ §7).
 
-**State Machine**
-- `Listening` (silent) → Stage 1 passes → Stage 2 confirms voice → `Recording`
-- `Recording` → silence for N seconds (default 3s) → `Listening`
-- Voice start → begin file write (+ pre-margin from ring buffer).
-- Voice end → end file write (+ post-margin).
+## 7. Sharp edges (hard-won; do not rediscover)
 
-### Background Operation (Critical Requirement)
-
-- **Must record in both foreground and background continuously.**
-- Background Modes: `audio` enabled in Info.plist (`UIBackgroundModes`).
-- AVAudioSession category: `.playAndRecord`, options: `.defaultToSpeaker`, `.allowBluetooth`.
-- `AVAudioSession.setActive(true)` on launch, maintained until explicit stop.
-- Interruption handling: observe `AVAudioSession.interruptionNotification`, auto-resume after interruption ends.
-- Lock screen recording guaranteed by `audio` background mode.
-- Low battery option: reduce recording quality below 20%.
-
-### Power Efficiency
-
-- AVAudioEngine tap is always active, but file I/O only during voice (VAD-gated).
-- Minimize screen updates during recording.
-- Stop all UI updates when backgrounded.
-- Upload only on WiFi (avoid cellular drain).
-
-### Audio Compression
-
-Voice-only content allows aggressive compression:
-
-- **Format**: AAC-LC (.m4a) — hardware encoder, power-efficient
-- **Sample rate**: 16kHz (sufficient for voice, ~1/3 size of 44.1kHz)
-- **Bitrate**: 32kbps
-- **Channels**: Mono
-- **Result**: ~1.4MB/5min, ~17MB/hour
-- Future candidate: Opus (higher compression, but no native iOS support)
-
-### Chunk Management
-
-- Configurable interval (default 5 min) splits audio into chunk files.
-- Filename format: `YYYYMMDD_HHmmss.m4a`
-- Double-buffering to minimize gaps during chunk transitions.
-
-### Upload Design
-
-- **WiFi only**: Default — uses `NWPathMonitor` to detect connectivity.
-- **Target**: Tailscale peer via HTTP POST.
-- **Retry**: Exponential backoff on failure, managed via upload queue.
-- **Concurrency**: Max 1 parallel upload (default). Background: `URLSession` background transfer.
-- **Order**: Timestamp-ordered upload.
-
-### Storage Management
-
-- Auto-delete local files after successful upload.
-- Storage cap (default 1GB) — oldest files deleted first on overflow.
-- Upload-pending files are protected from cleanup.
-
-### Privacy & Permissions
-
-- `NSMicrophoneUsageDescription` required.
-- iOS system recording indicator (orange dot) is always visible during recording.
-- Local network permission required for Tailscale peer connections.
-
-### Multilingual Support
-
-- STT handled server-side by faster-whisper — natively supports 99 languages including Japanese and English.
-- VoiceLog server uses `language: auto` — automatic language detection per segment.
-- Handles Japanese-English mixed conversations (Japanese base with English technical terms).
-- recall iOS is language-agnostic — sends raw audio without language metadata.
-
-### Server Integration (VoiceLog)
-
-- recall uploads audio chunks via HTTP POST to VoiceLog server on Mac mini (Tailscale peer).
-- Endpoint: `POST /ingest` (multipart/form-data).
-- Payload: audio file (.m4a) + metadata JSON (device_id, started_at, timezone).
-- Response: `{ "recording_id": "..." }`.
-- Health check: `GET /health`.
-- No TLS required (Tailscale WireGuard encryption).
-- VoiceLog project: ~/projects/Mac/voicelog/ (independent service).
-- VoiceLog processes: STT (faster-whisper) + speaker diarization + speaker ID.
-- Output: searchable text in SQLite + FTS5.
+- **`installTap` throws an uncatchable Obj-C `NSException`** (not a Swift error) on format
+  mismatch. Validate the tap format *before* installing; you cannot `try/catch` your way out.
+- **SwiftData `#Predicate` cannot resolve nested enum members.** Store a raw `String`
+  (`uploadStatusRaw`) and expose a computed enum wrapper (`uploadStatus`).
+- **FluidAudio is pinned to exactly `0.12.6`** (Swift 6 concurrency fix). Do not float it.
+- **VoiceLog `/ingest` never returns 429 and transcripts are never discarded** — only upload
+  chunks may be dropped by newest-wins eviction, by design. Do not "fix" backpressure
+  client-side.
+- **Secrets never go in tracked files.** `.local/`, `.codex/`, `.claude/` are gitignored on
+  purpose — server URLs, tokens, and personas live there, not in the repo.
