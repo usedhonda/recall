@@ -6,7 +6,7 @@
 
 - Always-on background recording with `AVAudioEngine`
 - 2-stage voice activity detection (RMS gate + Silero VAD via FluidAudio)
-- AAC-LC chunking for efficient upload and storage
+- Opus (.caf) chunking, 48 kbps, for efficient upload and storage
 - Optional telemetry upload for location and HealthKit summaries
 - Optional `openclaw-plugin/` helper for OpenClaw telemetry ingestion
 
