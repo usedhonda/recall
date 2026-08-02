@@ -49,6 +49,7 @@ Pods/
 # Docs
 docs/log/
 docs/ask/
+!docs/handoff/
 
 .codex/config.toml
 .cc-status-bar*
