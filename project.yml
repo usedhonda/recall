@@ -27,8 +27,13 @@ schemes:
     build:
       targets:
         recall: all
+        recallTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - recallTests
 
 targets:
   recall:
@@ -106,6 +111,22 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
               NSExceptionRequiresForwardSecrecy: false
               NSIncludesSubdomains: true
+
+  recallTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/recallTests
+    dependencies:
+      - target: recall
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.recallTests
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/recall.app/recall"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 
   RecordingControl:
     type: app-extension
