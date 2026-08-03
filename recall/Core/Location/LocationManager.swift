@@ -68,6 +68,7 @@ final class LocationManager: NSObject {
     private var lastSentLocation: CLLocation?
     private var lastGoodLocation: CLLocation?
     private var jumpRejectStreak = 0
+    private var lastKickAt: Date?
     private var updateTask: Task<Void, Never>?
     private var heartbeatTimer: Timer?
     private var backgroundActivitySession: CLBackgroundActivitySession?
@@ -351,6 +352,11 @@ final class LocationManager: NSObject {
                 break
             case .reject:
                 markFiltered("jump \(Int(result.impliedSpeed * 3.6))km/h")
+                // Streak building: the anchor may be a stale coarse reading
+                // holding motion back — kick a fresh high-accuracy fix.
+                if result.streak == 2 {
+                    kickFreshFix(reason: "jump streak building")
+                }
                 return false
             case .streakAccept:
                 ActivityLogger.shared.log(.location, "jump streak accepted as real motion (streak=\(JumpGate.streakLimit))")
@@ -372,6 +378,22 @@ final class LocationManager: NSObject {
         lastSentTime = nil
         lastHttpAcceptedAt = nil
         lastNewAcceptedAt = nil
+    }
+
+    /// Request one fresh high-accuracy fix (e.g. while a jump-reject streak is
+    /// building, or when connectivity is restored). The delegate's
+    /// `didUpdateLocations` already feeds `handleLocationUpdate`, so this only
+    /// nudges the OS. No-op when the stream is off or unauthorized; rate-limited
+    /// to at most once per 60 s.
+    func kickFreshFix(reason: String) {
+        guard isEnabled, hasAuthorization else { return }
+        let now = Date()
+        if let last = lastKickAt, now.timeIntervalSince(last) < 60 { return }
+        lastKickAt = now
+
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.requestLocation()
+        ActivityLogger.shared.log(.location, "[LOC] fresh-fix kick (\(reason))")
     }
 
     func sendCurrentLocationNow() async {
