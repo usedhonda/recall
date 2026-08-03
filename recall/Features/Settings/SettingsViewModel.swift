@@ -113,6 +113,13 @@ final class SettingsViewModel {
         didSet { settings.dataPolicy = dataPolicy }
     }
 
+    /// User-set home Wi-Fi network name. Empty disables home-Wi-Fi
+    /// reinforcement. Only the derived "home"/"away" state is transmitted.
+    var homeSSID: String {
+        get { settings.homeSSID }
+        set { settings.homeSSID = newValue }
+    }
+
     // MARK: - Context Data
 
     var nowPlayingEnabled: Bool {

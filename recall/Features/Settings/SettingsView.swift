@@ -48,6 +48,24 @@ struct SettingsView: View {
                 ForEach(DataPolicy.allCases, id: \.self) { policy in
                     hudPolicyRow(policy: policy)
                 }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("HOME WIFI SSID")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.textSecondary)
+                    TextField("", text: $viewModel.homeSSID)
+                        .font(RecallTheme.Fonts.hudBody)
+                        .foregroundStyle(RecallTheme.Colors.textPrimary)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .padding(8)
+                        .background(RecallTheme.Colors.surfaceAlt)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(RecallTheme.Colors.border, lineWidth: 1)
+                        )
+                }
             }
             .hudCard()
         }
