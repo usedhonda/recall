@@ -31,7 +31,10 @@ Telemetry) → `Models/` (SwiftData). Audio path: `AVAudioEngine` tap → RMS ga
 - `AVAudioSession`: `.playAndRecord` with `[.mixWithOthers, .defaultToSpeaker,
   .allowBluetoothA2DP]`. `.allowBluetooth` (HFP) is inserted **only when the user selects HFP
   mic mode** — HFP forces 16 kHz mono system-wide and degrades other apps, so it is opt-in.
-- **There is no test target.** Verification = build + on-device behavior + logs (see §4).
+- **A `recallTests` unit-test target exists** (XcodeGen, hosted by the `recall` app). It
+  currently covers `JumpGate` — the pure location speed/jump-decision logic (streak-accept
+  anti-lockup + the intl-flight bypass). On-device behavior + logs remain the primary
+  verification for everything runtime; the suite guards only the pure logic it names.
 
 ## 3. Roles (tool-agnostic)
 
@@ -61,6 +64,13 @@ Device build / deploy to kana (real iPhone):
 
 ```bash
 ~/.claude/apple-dev/bin/ios-build.sh device
+```
+
+Unit tests (`recallTests`, currently `JumpGate` only):
+
+```bash
+xcodebuild -project recall.xcodeproj -scheme recall \
+  -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.5' test
 ```
 
 **Delivery truth = on-device logs, not a green build.** The authoritative record is the
