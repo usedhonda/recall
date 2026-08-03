@@ -148,7 +148,7 @@ final class LocationManager: NSObject {
 
         if backgroundEnabled && hasAuthorization {
             locationManager.startMonitoringSignificantLocationChanges()
-            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            // Keep Best accuracy in the background; only throttle frequency.
             locationManager.distanceFilter = 10
             locationManager.activityType = .other
             locationManager.startUpdatingLocation()
@@ -214,13 +214,11 @@ final class LocationManager: NSObject {
         currentLocation = location
 
         let isInForeground = UIApplication.shared.applicationState == .active
-        if isInForeground {
-            locationManager.desiredAccuracy = kCLLocationAccuracyBest
-            locationManager.distanceFilter = kCLDistanceFilterNone
-        } else {
-            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-            locationManager.distanceFilter = 10
-        }
+        // Accuracy stays Best in both FG and BG (a coarse BG fix was the stale
+        // anchor that let the jump filter lock up). Only distanceFilter throttles
+        // BG update frequency.
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = isInForeground ? kCLDistanceFilterNone : 10
 
         guard shouldAcceptLocation(location) else { return }
 
