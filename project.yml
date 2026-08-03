@@ -47,6 +47,7 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.background-delivery: true
+        com.apple.developer.networking.wifi-info: true
         com.apple.security.application-groups:
           - group.com.example.recall
     attributes:
