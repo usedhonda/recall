@@ -15,6 +15,11 @@ struct LocationSample: Codable, Identifiable {
     /// field existed decode as nil thanks to the optional declaration.
     var quality: String?
 
+    /// Derived home-Wi-Fi state: "home" / "away" / nil. Mirrors
+    /// `LocationPayload.wifi` so the signal survives the queue path. Optional so
+    /// samples persisted before this field existed still decode as nil.
+    var wifi: String?
+
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04).
     // All optional so samples persisted before this field existed still decode.
     var speedAccuracy: Double?
@@ -34,6 +39,7 @@ struct LocationSample: Codable, Identifiable {
         self.speed = speed
         self.timestamp = timestamp
         self.quality = quality
+        self.wifi = ConnectivityMonitor.shared.wifiContext
     }
 
     init(from location: CLLocation, quality: String? = nil) {
@@ -45,6 +51,7 @@ struct LocationSample: Codable, Identifiable {
         self.speed = location.speed >= 0 ? location.speed : nil
         self.timestamp = location.timestamp
         self.quality = quality
+        self.wifi = ConnectivityMonitor.shared.wifiContext
 
         self.speedAccuracy = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
         self.course = location.course >= 0 ? location.course : nil

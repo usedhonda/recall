@@ -25,6 +25,11 @@ struct TelemetrySample: Encodable {
     /// about reduced-accuracy fixes.
     let quality: String?
 
+    /// Derived home-Wi-Fi state: "home" / "away" / nil. Derived on device from
+    /// the user-set home SSID (ConnectivityMonitor.wifiContext); the raw SSID
+    /// never leaves the device.
+    let wifi: String?
+
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04)
     let speedAccuracy: Double?
     let course: Double?
@@ -43,6 +48,7 @@ struct TelemetrySample: Encodable {
         speed: Double?,
         timestamp: Date,
         quality: String?,
+        wifi: String? = nil,
         speedAccuracy: Double? = nil,
         course: Double? = nil,
         courseAccuracy: Double? = nil,
@@ -59,6 +65,7 @@ struct TelemetrySample: Encodable {
         self.speed = speed
         self.timestamp = timestamp
         self.quality = quality
+        self.wifi = wifi
         self.speedAccuracy = speedAccuracy
         self.course = course
         self.courseAccuracy = courseAccuracy
@@ -78,6 +85,7 @@ struct TelemetrySample: Encodable {
             speed: sample.speed,
             timestamp: sample.timestamp,
             quality: sample.quality,
+            wifi: sample.wifi,
             speedAccuracy: sample.speedAccuracy,
             course: sample.course,
             courseAccuracy: sample.courseAccuracy,
@@ -98,6 +106,7 @@ struct TelemetrySample: Encodable {
             speed: payload.speed,
             timestamp: payload.timestamp,
             quality: payload.quality,
+            wifi: payload.wifi,
             speedAccuracy: payload.speedAccuracy,
             course: payload.course,
             courseAccuracy: payload.courseAccuracy,
@@ -125,6 +134,10 @@ struct LocationPayload: Codable {
     let timestamp: Date
     let quality: String
 
+    /// Derived home-Wi-Fi state: "home" / "away" / nil. Derived on device from
+    /// the user-set home SSID; the raw SSID never leaves the device.
+    let wifi: String?
+
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04)
     let speedAccuracy: Double?
     let course: Double?
@@ -142,6 +155,7 @@ struct LocationPayload: Codable {
         self.speed = location.speed >= 0 ? location.speed : nil
         self.timestamp = location.timestamp
         self.quality = quality
+        self.wifi = ConnectivityMonitor.shared.wifiContext
 
         self.speedAccuracy = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
         self.course = location.course >= 0 ? location.course : nil
