@@ -67,6 +67,7 @@ final class LocationManager: NSObject {
     private let locationManager = CLLocationManager()
     private var lastSentLocation: CLLocation?
     private var lastGoodLocation: CLLocation?
+    private var jumpRejectStreak = 0
     private var updateTask: Task<Void, Never>?
     private var heartbeatTimer: Timer?
     private var backgroundActivitySession: CLBackgroundActivitySession?
@@ -335,17 +336,25 @@ final class LocationManager: NSObject {
         }
 
         if let prev = lastGoodLocation {
-            let distance = location.distance(from: prev)
-            let dt = location.timestamp.timeIntervalSince(prev.timestamp)
-            // Only apply the jump guard when prev is recent (<5min). A stale prev
-            // (e.g. departure-airport fix after an intl flight) makes distance/dt
-            // meaningless and would reject every valid post-arrival fix.
-            if dt > 0 && dt < 300 {
-                let speed = distance / dt
-                if speed > 55.6 {  // 200km/h
-                    markFiltered("jump \(Int(speed * 3.6))km/h")
-                    return false
-                }
+            // JumpGate owns the speed/jump decision: a stale prev (e.g. a
+            // departure-airport fix after an intl flight, dt >= 300s) bypasses
+            // the guard, an isolated glitch is rejected, but a sustained streak
+            // of rejections is accepted as real motion (anti-lockup).
+            let result = JumpGate.evaluate(
+                candidate: (location.coordinate, location.timestamp),
+                anchor: (prev.coordinate, prev.timestamp),
+                streak: jumpRejectStreak
+            )
+            jumpRejectStreak = result.streak
+            switch result.decision {
+            case .accept:
+                break
+            case .reject:
+                markFiltered("jump \(Int(result.impliedSpeed * 3.6))km/h")
+                return false
+            case .streakAccept:
+                ActivityLogger.shared.log(.location, "jump streak accepted as real motion (streak=\(JumpGate.streakLimit))")
+                forceNextSend()
             }
         }
 
