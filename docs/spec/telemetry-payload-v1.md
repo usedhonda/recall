@@ -65,7 +65,8 @@ recall iOS の現状の送信先は **Gateway (`:18789`)** であり、VoiceLog 
     "altitude": 30.0,        // optional
     "speed": 1.2,            // optional (m/s)
     "timestamp": "2026-04-28T11:30:00Z",
-    "quality": "good"        // ★ v1 で新規追加 — "good" / "approx" / null
+    "quality": "good",       // ★ v1 で新規追加 — "good" / "approx" / null
+    "wifi": "home"           // ★ 追加 — "home" / "away" / null (端末側で導出)
   }
 ]
 ```
@@ -79,6 +80,7 @@ recall iOS の現状の送信先は **Gateway (`:18789`)** であり、VoiceLog 
 | `speed` | number | optional | 移動速度 (m/s) |
 | `timestamp` | ISO8601 (UTC) | yes | 取得時刻 |
 | `quality` | string \| null | optional | `LocationManager.qualityFor` 由来。`"good"` = 通常精度、`"approx"` = reduced-accuracy fix、`null` = 判定不能 |
+| `wifi` | string \| null | optional | `"home"` / `"away"` / `null`。ユーザー設定の home SSID から**端末側で導出**した状態。生 SSID は送信されない (`ConnectivityMonitor.wifiContext` 由来)。GPS が source of truth、Wi-Fi は補強のみ |
 
 **サーバー側の活用**:
 - `quality = "approx"` の sample は accuracy が大きく劣化している可能性。集計・地図表示時に warning 出すか、別レイヤーに分離するか判断材料にできる
