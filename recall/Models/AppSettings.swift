@@ -106,6 +106,14 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "debugLogHost") }
     }
 
+    /// User-set home Wi-Fi network name. Empty ("") disables home-Wi-Fi
+    /// reinforcement entirely. Only a derived `wifi` state ("home"/"away")
+    /// leaves the device — the raw SSID never appears in telemetry.
+    var homeSSID: String {
+        get { UserDefaults.standard.string(forKey: "homeSSID") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "homeSSID") }
+    }
+
     var preferredMicMode: String {
         get { UserDefaults.standard.string(forKey: "preferredMicMode") ?? MicMode.builtIn.rawValue }
         set { UserDefaults.standard.set(newValue, forKey: "preferredMicMode") }
