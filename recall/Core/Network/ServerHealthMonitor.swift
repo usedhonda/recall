@@ -18,7 +18,9 @@ final class ServerHealthMonitor {
 
     private static let logger = Logger(subsystem: "com.recall", category: "ServerHealthMonitor")
     private static let foregroundInterval: TimeInterval = 60
-    private static let backgroundInterval: TimeInterval = 120
+    private static let backgroundInterval: TimeInterval = 300
+    /// Interface flaps come in bursts (90-100/h overnight); probe at most once per window.
+    private static let networkChangeProbeMinGap: TimeInterval = 30
     private static let failureThreshold = 3
     private static let probeTimeout: TimeInterval = 10
 
@@ -67,6 +69,10 @@ final class ServerHealthMonitor {
     }
 
     func probeNow(reason: ProbeReason) {
+        if reason == .networkChange, let last = lastProbeAt,
+           Date().timeIntervalSince(last) < Self.networkChangeProbeMinGap {
+            return
+        }
         Task { await probe(reason: reason) }
     }
 
