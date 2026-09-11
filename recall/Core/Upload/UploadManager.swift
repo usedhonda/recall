@@ -22,6 +22,14 @@ final class UploadManager {
     private static let maxBackoffSeconds: TimeInterval = 300
     private var consecutiveFailures = 0
     private var lastHealthLog: Date = .distantPast
+    private var lastBlockedLog: Date = .distantPast
+
+    // Idle wait: instead of polling SwiftData every few seconds while there is
+    // nothing to do, the loop sleeps until `wake()` (chunk saved / network
+    // changed) or a 60 s fallback, whichever comes first.
+    private static let idleFallbackSeconds: Double = 60
+    private var idleWakeContinuation: CheckedContinuation<Void, Never>?
+    private var idleWaitGeneration = 0
 
     private let uploadService = BackgroundUploadService.shared
     private let activity = ActivityLogger.shared
@@ -45,6 +53,7 @@ final class UploadManager {
         shouldContinue = false
         processingTask?.cancel()
         processingTask = nil
+        wake()
         isUploading = false
         uploadProgress = ""
         Self.logger.info("Upload processing stopped")
@@ -94,7 +103,26 @@ final class UploadManager {
         }
     }
 
+    /// Wake an idle queue loop immediately (new chunk saved, network changed).
+    func wake() {
+        idleWakeContinuation?.resume()
+        idleWakeContinuation = nil
+    }
+
     // MARK: - Private
+
+    private func waitForWork() async {
+        idleWaitGeneration += 1
+        let generation = idleWaitGeneration
+        await withCheckedContinuation { continuation in
+            idleWakeContinuation = continuation
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.idleFallbackSeconds))
+                guard let self, self.idleWaitGeneration == generation else { return }
+                self.wake()
+            }
+        }
+    }
 
     private func processLoop(modelContext: ModelContext) async {
         while shouldContinue, !Task.isCancelled {
@@ -115,10 +143,11 @@ final class UploadManager {
                 }
                 uploadProgress = "Waiting: \(reason)"
                 // Log once per minute when blocked
-                if Int(Date().timeIntervalSince1970) % 60 == 0 {
+                if Date().timeIntervalSince(lastBlockedLog) >= 60 {
+                    lastBlockedLog = Date()
                     activity.log(.upload, "Upload blocked: \(reason) pending=\(pendingCount)")
                 }
-                try? await Task.sleep(for: .seconds(5))
+                await waitForWork()
                 continue
             }
 
@@ -152,7 +181,7 @@ final class UploadManager {
             // Fetch next pending chunk
             guard let chunk = fetchNextPending(modelContext: modelContext) else {
                 uploadProgress = pendingCount == 0 ? "All uploads complete" : ""
-                try? await Task.sleep(for: .seconds(3))
+                await waitForWork()
                 continue
             }
 

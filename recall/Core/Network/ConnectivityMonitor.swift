@@ -62,6 +62,7 @@ final class ConnectivityMonitor {
                     let suffix = flags.isEmpty ? "" : " [\(flags.joined(separator: ","))]"
                     let net = wifi ? "WiFi" : cellular ? "Cellular" : connected ? "Other" : "None"
                     ActivityLogger.shared.log(.network, "Network: \(net)\(suffix)")
+                    UploadManager.shared.wake()
                 }
 
                 // Detect network interface changes (important for Tailscale VPN)
