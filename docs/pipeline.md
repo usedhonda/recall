@@ -40,6 +40,12 @@ and queued for upload.
   exactly 0.12.6. It runs on the Apple Neural Engine (near-zero CPU), processes 256 ms batches
   (8×32 ms frames), and is designed for always-on / ambient workloads. iOS 17.0+.
   Precision: TPR 87.7% @ 5% FPR (far superior to RMS-only or WebRTC VAD).
+  **Feeding (`VADService.evaluate`)**: every 100 ms tick evaluates the latest contiguous 256 ms
+  window (4096 samples @ 16 kHz, the model's native input) from a fresh model state. Do not go
+  back to streaming 100 ms snapshots into one long-lived state: a short input is padded to
+  4096 samples and the never-reset recurrent state drifted until voice detection collapsed
+  1–3 h after each launch (server ingest history 8/30, 9/3, 9/11). RMS still uses the newest
+  100 ms. The watchdog line logs `rms` / `nf` (noise floor) / `vad` every 10 s.
 
 **Ring buffer.** The tap continuously writes to a 3-second ring buffer. When Stage 2 confirms
 voice, the pre-margin (3 s) is retrieved from the ring buffer so conversation beginnings are

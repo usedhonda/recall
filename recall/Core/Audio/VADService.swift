@@ -13,50 +13,29 @@ struct VADResult {
     let event: Event
 }
 
-/// Wraps FluidAudio's VadManager for streaming voice activity detection.
-/// Silero VAD runs on CoreML / ANE for efficient always-on inference.
+/// Wraps FluidAudio's VadManager. Silero VAD runs on CoreML / ANE for efficient
+/// always-on inference.
+///
+/// The model expects `windowSamples` contiguous samples (4096 = 256 ms at 16 kHz)
+/// per inference. recall evaluates the latest 256 ms window on every 100 ms tick,
+/// each from a fresh model state: overlapping windows cannot feed one recurrent
+/// state, and a shorter input gets padded. (Previously each call carried 100 ms of
+/// audio plus 156 ms of flat padding into a recurrent state that was never reset.)
 actor VADService {
+    static let windowSamples = VadManager.chunkSize
+
     private let logger = Logger(subsystem: "com.recall", category: "VAD")
     private let manager: VadManager
-    private var streamState: VadStreamState
 
     init() async throws {
         self.manager = try await VadManager()
-        self.streamState = await manager.makeStreamState()
         logger.info("VADService initialized")
     }
 
-    /// Process a chunk of 16kHz mono Float32 samples through Silero VAD.
-    func processChunk(_ samples: [Float]) async throws -> VADResult {
-        let result = try await manager.processStreamingChunk(
-            samples,
-            state: streamState,
-            config: .default,
-            returnSeconds: true,
-            timeResolution: 2
-        )
-        streamState = result.state
-
-        let event: VADResult.Event
-        if let vadEvent = result.event {
-            switch vadEvent.kind {
-            case .speechStart:
-                event = .speechStart
-                logger.debug("Speech start detected, prob: \(result.probability)")
-            case .speechEnd:
-                event = .speechEnd
-                logger.debug("Speech end detected, prob: \(result.probability)")
-            }
-        } else {
-            event = .none
-        }
-
-        return VADResult(probability: result.probability, event: event)
-    }
-
-    /// Reset the streaming state (e.g. after a long pause or interruption).
-    func reset() async {
-        streamState = await manager.makeStreamState()
-        logger.info("VAD stream state reset")
+    /// Speech probability of the most recent `windowSamples` of 16 kHz mono Float32 audio.
+    func evaluate(window samples: [Float]) async throws -> VADResult {
+        let window = samples.count > Self.windowSamples ? Array(samples.suffix(Self.windowSamples)) : samples
+        let results = try await manager.process(window)
+        return VADResult(probability: results.first?.probability ?? 0, event: .none)
     }
 }
