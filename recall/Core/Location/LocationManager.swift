@@ -74,7 +74,6 @@ final class LocationManager: NSObject {
     private var lastGoodLocation: CLLocation?
     private var jumpRejectStreak = 0
     private var lastKickAt: Date?
-    private var updateTask: Task<Void, Never>?
     private var heartbeatTimer: Timer?
     private var backgroundActivitySession: CLBackgroundActivitySession?
 
@@ -153,10 +152,6 @@ final class LocationManager: NSObject {
 
         if backgroundEnabled && hasAuthorization {
             locationManager.startMonitoringSignificantLocationChanges()
-            // Keep Best accuracy in the background; only throttle frequency.
-            locationManager.distanceFilter = 10
-            locationManager.activityType = .other
-            locationManager.startUpdatingLocation()
 
             if backgroundActivitySession == nil {
                 backgroundActivitySession = CLBackgroundActivitySession()
@@ -164,15 +159,24 @@ final class LocationManager: NSObject {
             }
         }
 
+        // Single continuous delivery path: standard updates via the delegate.
+        // `CLLocationUpdate.liveUpdates()` used to run alongside and re-delivered
+        // the same fixes, so every fix was processed (and sent) twice. Standard
+        // updates never auto-pause in BG (pausesLocationUpdatesAutomatically =
+        // false), which keeps the app alive for the stationary heartbeat.
+        // Keep Best accuracy in the background; only throttle frequency.
+        locationManager.distanceFilter = 10
+        locationManager.activityType = .other
+        locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.startUpdatingLocation()
+
         refreshRegions()
-        startLiveUpdates()
+        startHeartbeatTimer()
         ActivityLogger.shared.log(.location, "Location updates started (bg=\(backgroundEnabled) canBg=\(canUseBackground) auth=\(authorizationStatus.rawValue))")
     }
 
     func stopUpdates() {
         isUpdating = false
-        updateTask?.cancel()
-        updateTask = nil
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
 
@@ -188,31 +192,6 @@ final class LocationManager: NSObject {
     func refreshRegions() {
         stopAllRegions()
         startAnchorRegions()
-    }
-
-    private func startLiveUpdates() {
-        updateTask?.cancel()
-
-        updateTask = Task {
-            do {
-                let updates = CLLocationUpdate.liveUpdates()
-                var updateCount = 0
-
-                for try await update in updates {
-                    guard !Task.isCancelled else { break }
-                    updateCount += 1
-
-                    if let location = update.location {
-                        await handleLocationUpdate(location)
-                    }
-                }
-            } catch {
-                lastError = error.localizedDescription
-                ActivityLogger.shared.log(.location, "liveUpdates error: \(error.localizedDescription)")
-            }
-        }
-
-        startHeartbeatTimer()
     }
 
     private func handleLocationUpdate(_ location: CLLocation) async {
