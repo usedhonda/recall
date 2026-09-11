@@ -29,7 +29,11 @@
     is > 60 min old.
   - Location payload `timestamp` is the fix's own time (`CLLocation.timestamp`).
 - Rejected options: reverting BG accuracy to NearestTenMeters (owner chose Best);
-  1 h health keepalive (viewer flicker at the 60 min boundary).
+  1 h health keepalive (viewer flicker at the 60 min boundary);
+  letting location pause while stationary (`pausesLocationUpdatesAutomatically = true` or
+  `liveUpdates`' stationary pause) — rejected for now: iOS may suspend the app while paused,
+  which stops the 5 min stationary heartbeat and breaks oc-general's 10 min gap / 15 min
+  freshness thresholds. This is the only remaining big GPS-power lever; owner trade-off.
 - Commands run:
   - Simulator build: BUILD SUCCEEDED. `recallTests` (JumpGate): 4 tests, 0 failures.
   - `scripts/check-contract.sh`: PASS.
@@ -49,8 +53,13 @@
     auto-starts (userStopIntent reset on `.active`). How it came back on without a toggle tap
     is unknown (hypothesis: the foreground reset in `RecallApp.swift:44-52`). The 24h
     comparison is confounded unless audio is off — compare non-audio categories only.
-  - Duplicate location sends: the delegate and `liveUpdates` both deliver the same fix ->
-    identical `Sent` twice in one second. Pre-existing; doubles every movement-triggered POST.
+  - FIXED in 87907b4 (Phase 2): the delegate and `liveUpdates` both delivered the same fix ->
+    identical `Sent` twice in one second. `liveUpdates` removed; standard updates via the
+    delegate are the single continuous path (FG and BG), `pausesLocationUpdatesAutomatically
+    = false` set next to `startUpdatingLocation()`. Both paths dated from the initial
+    scaffold (5d891f4) with no incident behind either.
+  - Still to observe after 87907b4: BG delivery via the delegate path alone (`BG direct
+    sent` / `BG heartbeat` lines once the phone is locked) and region enter/exit.
   - Indoor jitter >= 20 m counts as movement -> ~26 sends/h indoors instead of <= 12/h.
   - Launch race: `queryAndSendFull` and the first observer-driven query both POST the same
     snapshot at launch (launch-only, harmless).
