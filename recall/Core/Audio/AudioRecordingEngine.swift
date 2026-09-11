@@ -312,7 +312,7 @@ final class AudioRecordingEngine {
                 let route = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portType.rawValue ?? "none"
                 let hwFmt = self.audioEngine.inputNode.outputFormat(forBus: 0)
                 let sr = hwFmt.sampleRate > 0 ? Int(hwFmt.sampleRate) : -1
-                self.activity.log(.state, "WD \(self.state.rawValue) eng=\(self.audioEngine.isRunning) ka=\(BackgroundKeepAlive.shared.isPlaying) \(sr)Hz \(route)")
+                self.activity.log(.state, "WD \(self.state.rawValue) eng=\(self.audioEngine.isRunning) ka=\(BackgroundKeepAlive.shared.isPlaying) \(sr)Hz \(route) rms=\(String(format: "%.3f", self.currentRMS)) nf=\(String(format: "%.3f", self.noiseFloorRMS)) vad=\(String(format: "%.2f", self.vadProbability))")
 
                 switch self.state {
                 case .listening, .recording:
@@ -425,10 +425,11 @@ final class AudioRecordingEngine {
             }
         }
 
-        // Read recent samples from ring buffer for analysis
-        let analysisWindow: TimeInterval = 0.1 // 100ms
+        // Read the latest VAD window (256 ms — Silero's native input size) from the
+        // ring buffer. RMS still looks at only the newest 100 ms (one tick).
+        let vadWindow = Double(VADService.windowSamples) / Double(targetSampleRate)
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
-        let hwSampleCount = Int(analysisWindow * hwRate)
+        let hwSampleCount = Int(vadWindow * hwRate)
         let rawSamples = ringBuffer.read(lastSamples: hwSampleCount)
         guard !rawSamples.isEmpty else { return }
 
@@ -447,7 +448,7 @@ final class AudioRecordingEngine {
         }
 
         // Stage 1: RMS power gate (adaptive threshold)
-        let rms = RMSCalculator.rms(of: samples16k)
+        let rms = RMSCalculator.rms(of: Array(samples16k.suffix(targetSampleRate / 10)))
         currentRMS = rms
 
         // Update noise floor estimate during listening (silence)
@@ -477,7 +478,7 @@ final class AudioRecordingEngine {
         // Stage 2: Silero VAD
         guard let vadService else { return }
         do {
-            let result = try await vadService.processChunk(samples16k)
+            let result = try await vadService.evaluate(window: samples16k)
             vadProbability = result.probability
 
             // Accumulate VAD probability during recording
