@@ -56,6 +56,11 @@ final class LocationManager: NSObject {
 
     var minDistance: CLLocationDistance = 20
 
+    /// While stationary (< minDistance from the last sent fix), re-send at most
+    /// this often. Was minSendInterval (15 s) — ~180 POSTs/h of an unchanged
+    /// position drained the battery. Movement still sends immediately.
+    private let stationaryHeartbeatInterval: TimeInterval = 300
+
     // MARK: - Send Status
 
     private(set) var lastSentTime: Date?
@@ -446,7 +451,7 @@ final class LocationManager: NSObject {
         let timeSinceLastSend = Date().timeIntervalSince(lastTime)
         let distance = location.distance(from: lastSent)
 
-        return timeSinceLastSend >= minSendInterval || distance >= minDistance
+        return timeSinceLastSend >= stationaryHeartbeatInterval || distance >= minDistance
     }
 
     /// Formats Phase 1 (Track 2) sample metadata for ActivityLog visibility.
@@ -476,7 +481,7 @@ final class LocationManager: NSObject {
     private func startHeartbeatTimer() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = Timer.scheduledTimer(
-            withTimeInterval: minSendInterval,
+            withTimeInterval: stationaryHeartbeatInterval,
             repeats: true
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -494,7 +499,7 @@ final class LocationManager: NSObject {
         guard let location = lastGoodLocation ?? currentLocation else { return }
 
         let elapsed = lastSentTime.map { Date().timeIntervalSince($0) } ?? .infinity
-        guard elapsed >= minSendInterval else { return }
+        guard elapsed >= stationaryHeartbeatInterval else { return }
 
         let quality = qualityFor(location)
         let isInForeground = UIApplication.shared.applicationState == .active
