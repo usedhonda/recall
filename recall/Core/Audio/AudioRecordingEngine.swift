@@ -837,6 +837,7 @@ final class AudioRecordingEngine {
         do {
             try context.save()
             logger.info("Saved AudioChunk record: \(chunk.fileName)")
+            Task { @MainActor in UploadManager.shared.wake() }
         } catch {
             logger.error("Failed to save AudioChunk: \(error.localizedDescription)")
         }
