@@ -70,8 +70,10 @@ final class HealthKitManager {
     /// Decoupled from `telemetrySendInterval` (location's 15 s send floor):
     /// running ~18 HealthKit queries every 15 s drained the battery.
     private let sendInterval: TimeInterval = 900
-    /// Re-POST an unchanged snapshot at most this often (server keepalive).
-    private static let unchangedKeepaliveInterval: TimeInterval = 3600
+    /// Re-POST an unchanged snapshot once this much time has passed (server
+    /// keepalive). 40 min + the 15 min poll => effective ~45 min, under the PCE
+    /// viewer's 60 min received-at freshness window (oc-general, 2026-09-11).
+    private static let unchangedKeepaliveInterval: TimeInterval = 2400
     private var lastPostedFingerprint: String?
     private var lastPostedAt: Date?
     private var isSkippingForLock = false
