@@ -66,9 +66,16 @@ final class HealthKitManager {
     private var lastObserverSendAt: Date = .distantPast
     private let observerDebounceInterval: TimeInterval = 60
     private var pendingObserverSendTask: Task<Void, Never>?
-    private var sendInterval: TimeInterval {
-        AppSettings.shared.telemetrySendInterval  // same as Location (default 60s)
-    }
+    /// Supplementary poll only — new samples arrive via HKObserverQuery wakes.
+    /// Decoupled from `telemetrySendInterval` (location's 15 s send floor):
+    /// running ~18 HealthKit queries every 15 s drained the battery.
+    private let sendInterval: TimeInterval = 900
+    /// Re-POST an unchanged snapshot at most this often (server keepalive).
+    private static let unchangedKeepaliveInterval: TimeInterval = 3600
+    private var lastPostedFingerprint: String?
+    private var lastPostedAt: Date?
+    private var isSkippingForLock = false
+    private var protectedDataObserver: NSObjectProtocol?
 
     // MARK: - Initialization
 
@@ -348,6 +355,17 @@ final class HealthKitManager {
                 await self?.queryAndSend()
             }
         }
+        // Catch up once on unlock — queries are skipped while the device is locked.
+        protectedDataObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isEnabled else { return }
+                await self.queryAndSend()
+            }
+        }
     }
 
     func stopTimer() {
@@ -355,6 +373,10 @@ final class HealthKitManager {
         timer = nil
         pendingObserverSendTask?.cancel()
         pendingObserverSendTask = nil
+        if let protectedDataObserver {
+            NotificationCenter.default.removeObserver(protectedDataObserver)
+            self.protectedDataObserver = nil
+        }
     }
 
     // MARK: - Query and Send
@@ -370,6 +392,18 @@ final class HealthKitManager {
 
     private func queryAndSend(from start: Date, to end: Date) async {
         guard isEnabled else { return }
+
+        // The HealthKit store is encrypted while the device is locked — every
+        // query fails with "Protected health data is inaccessible". Skip, and
+        // catch up once on unlock via `protectedDataObserver`.
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            if !isSkippingForLock {
+                isSkippingForLock = true
+                ActivityLogger.shared.log(.health, "Skipped: device locked (protected data unavailable)")
+            }
+            return
+        }
+        isSkippingForLock = false
 
         totalQueries += 1
         lastQueryAt = Date()
@@ -389,12 +423,22 @@ final class HealthKitManager {
             return
         }
 
+        let fingerprint = Self.fingerprint(payload)
+        if fingerprint == lastPostedFingerprint,
+           let postedAt = lastPostedAt,
+           Date().timeIntervalSince(postedAt) < Self.unchangedKeepaliveInterval {
+            ActivityLogger.shared.log(.health, "Unchanged since last POST — not sent")
+            return
+        }
+
         if isBackground {
             // In background, use TelemetryUploader with beginBackgroundTask for reliable delivery
             await TelemetryUploader.shared.uploadHealthOnly(payload)
             let now = Date()
             lastSentTime = now
             lastAcceptedAt = now
+            lastPostedFingerprint = fingerprint
+            lastPostedAt = now
             totalSuccessfulSends += 1
             lastSendResult = .sent(status: 0, body: "bg-queued")
             ActivityLogger.shared.log(.health, "Queued bg upload: \(payload.recordsLogSummary())")
@@ -405,6 +449,8 @@ final class HealthKitManager {
                 let now = Date()
                 lastSentTime = now
                 lastAcceptedAt = now
+                lastPostedFingerprint = fingerprint
+                lastPostedAt = now
                 totalSuccessfulSends += 1
                 lastErrorAt = nil
                 lastErrorMessage = nil
@@ -434,6 +480,32 @@ final class HealthKitManager {
 
     /// Returns the self-describing `HealthPayload` (records + sleep + workouts
     /// with measurement time + provenance per metric).
+    /// Content identity of a payload. Excludes fields that move on every query
+    /// (`collectedAt`, aggregation interval end) so an unchanged snapshot is
+    /// recognized as a duplicate and not re-POSTed.
+    private static func fingerprint(_ payload: HealthPayload) -> String {
+        var parts: [String] = payload.records.map { r in
+            let measuredAt = r.aggregation == "latest" ? "\(r.measuredAt.timeIntervalSince1970)" : ""
+            return [
+                r.metricId,
+                r.value.map { "\($0)" } ?? "",
+                r.valueText ?? "",
+                r.valueMin.map { "\($0)" } ?? "",
+                r.valueMax.map { "\($0)" } ?? "",
+                measuredAt,
+                r.sourceBundleId ?? "",
+            ].joined(separator: "|")
+        }
+        if let sleep = payload.sleep {
+            let lastEnd = sleep.segments?.last?.end.timeIntervalSince1970 ?? 0
+            parts.append("sleep|\(sleep.total ?? -1)|\(sleep.segments?.count ?? 0)|\(lastEnd)")
+        }
+        for w in payload.workouts ?? [] {
+            parts.append("workout|\(w.activityType)|\(w.start.timeIntervalSince1970)|\(w.end.timeIntervalSince1970)")
+        }
+        return parts.joined(separator: "\n")
+    }
+
     func aggregateHealthPayload(from start: Date, to end: Date) async -> HealthPayload {
         // Per-metric query windows
         // - Cumulative / discrete avg / discrete stats: bounded windows so the
@@ -674,7 +746,6 @@ final class HealthKitManager {
         }
 
         guard let stats, let value = stats.sumQuantity()?.doubleValue(for: unit) else {
-            Self.logHK("\(identifier.rawValue.shortHK): empty")
             return nil
         }
 
@@ -724,7 +795,6 @@ final class HealthKitManager {
               let avg = stats.averageQuantity()?.doubleValue(for: unit),
               let mn = stats.minimumQuantity()?.doubleValue(for: unit),
               let mx = stats.maximumQuantity()?.doubleValue(for: unit) else {
-            Self.logHK("\(identifier.rawValue.shortHK): empty")
             return nil
         }
 
@@ -769,7 +839,6 @@ final class HealthKitManager {
         }
 
         guard let stats, let value = stats.averageQuantity()?.doubleValue(for: unit) else {
-            Self.logHK("\(identifier.rawValue.shortHK): empty")
             return nil
         }
 
@@ -808,7 +877,9 @@ final class HealthKitManager {
                 sortDescriptors: [sortDescriptor]
             ) { _, samples, error in
                 guard let sample = samples?.first as? HKQuantitySample else {
-                    Self.logHK("\(identifier.rawValue.shortHK): \(error.map { "err(\($0.localizedDescription))" } ?? "empty")")
+                    if let error {
+                        Self.logHK("\(identifier.rawValue.shortHK): err(\(error.localizedDescription))")
+                    }
                     continuation.resume(returning: nil)
                     return
                 }
@@ -889,7 +960,9 @@ final class HealthKitManager {
                 sortDescriptors: [sortDescriptor]
             ) { _, samples, error in
                 guard let samples = samples as? [HKCategorySample], !samples.isEmpty else {
-                    Self.logHK("sleep: \(error.map { "err(\($0.localizedDescription))" } ?? "empty")")
+                    if let error {
+                        Self.logHK("sleep: err(\(error.localizedDescription))")
+                    }
                     continuation.resume(returning: nil)
                     return
                 }
