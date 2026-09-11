@@ -142,3 +142,25 @@ then POSTs the transcript to the Gateway.
 recall reports per-channel on/off state (no coordinates, no health values) so the server can
 tell "intentionally off" from "broken". Full server contract and send policy:
 `docs/stream-independence.md` §Channel-status heartbeat.
+
+## 8. Stream cadences (battery budget)
+
+Independent streams keep running while recording is off, so each one must keep its own
+steady-state cost low. Values verified in code (2026-09-11):
+
+| Stream | Cadence | Where |
+|---|---|---|
+| Health queries | HKObserverQuery wake (60 s debounce) + 15 min supplementary poll; skipped while the device is locked, one catch-up run on unlock | `HealthKitManager` |
+| Health POST | Only when snapshot content changes; an unchanged snapshot is re-sent after 40 min (effective ~45 min with the poll) | `HealthKitManager` |
+| Location POST | Immediately on >= 20 m displacement from the last sent fix; stationary every 300 s (payload carries the fix's own timestamp) | `LocationManager` |
+| Location capture accuracy | `kCLLocationAccuracyBest` in foreground and background (owner ruling 2026-09-11) | `LocationManager` |
+| Upload queue (idle) | Sleeps until a chunk is saved or the network changes; 60 s fallback | `UploadManager` |
+| Server probe | Foreground 60 s / background 300 s; network-change probes coalesced to >= 30 s apart | `ServerHealthMonitor` |
+| Activity log file | Buffered; flushed every 2 s, at 16 KB, immediately on `.error`, and on day rollover | `ActivityLogger` |
+| Channel status | On every edge + hourly while any channel is gated | `ChannelStatusReporter` |
+
+Server-side limits (oc-general, 2026-09-11) — do not lengthen past these:
+- Location: the smallest gap threshold is 10 min (stationary-cluster continuity), so the
+  stationary cadence must stay <= 5 min.
+- Health: the PCE viewer marks health stale when the last received POST is > 60 min old, so
+  the unchanged-snapshot keepalive must stay under 60 min.
