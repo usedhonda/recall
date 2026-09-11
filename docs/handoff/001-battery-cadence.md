@@ -63,7 +63,8 @@
      --destination <dir>`; then `grep -c` for `Queried `, `Telemetry POST (bg): health2`,
      `[HEALTH] Sent:`, `Unchanged since last POST`, `[LOC] Sent:` / `BG direct sent` /
      `BG heartbeat`, and total lines.
-  2. Ask the owner: fix the duplicate location delivery now, or in Phase 2.
+  2. Duplicate location delivery: owner ruled 2026-09-11 to fix it inside Phase 2 (location
+     delivery-path consolidation), not as a standalone patch.
   3. Confirm with oc-general that location/health/channel_status receipt continues.
 - Completion criteria remaining: 24h numbers vs targets (HK cycles <= 10/h, health POST
   <= 5/h, stationary location <= 12/h, log lines <= 600/h); owner battery comparison.
