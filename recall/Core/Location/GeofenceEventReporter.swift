@@ -16,25 +16,31 @@ enum GeofenceEventReporter {
     /// the earliest doorway signal there is, and unlike reading the SSID it works in the
     /// background: the drop itself comes from NWPathMonitor and the name is the one we
     /// last read while on it.
-    static func reportWiFi(transition: String, ssid: String?, at occurredAt: Date) {
+    static func reportWiFi(transition: String, ssid: String?, at occurredAt: Date, fixId: String?) {
         let payload = WiFiEventPayload(
             deviceId: AppSettings.shared.deviceId,
             transition: transition,
             ssid: ssid,
             occurredAt: ISO8601DateFormatter.geofence.string(from: occurredAt),
-            fixId: UUID().uuidString
+            fixId: fixId
         )
         post(payload, label: "wifi_event \(transition) \(ssid ?? "unknown")")
     }
 
-    static func report(anchor: String, transition: String, at occurredAt: Date, accuracy: Double?) {
+    static func report(
+        anchor: String,
+        transition: String,
+        at occurredAt: Date,
+        accuracy: Double?,
+        fixId: String?
+    ) {
         let payload = GeofenceEventPayload(
             deviceId: AppSettings.shared.deviceId,
             anchor: anchor,
             transition: transition,
             occurredAt: ISO8601DateFormatter.geofence.string(from: occurredAt),
             accuracyM: accuracy,
-            fixId: UUID().uuidString
+            fixId: fixId
         )
 
         post(payload, label: "geofence_event \(anchor) \(transition)")
@@ -96,7 +102,9 @@ struct GeofenceEventPayload: Encodable {
     /// to separate its own latency from the device's.
     let occurredAt: String
     let accuracyM: Double?
-    let fixId: String
+    /// The last accepted position at the moment of the crossing, so the server can join
+    /// this event to the ordinary position POSTs. nil until one fix has been accepted.
+    let fixId: String?
 
     enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
@@ -117,7 +125,8 @@ struct WiFiEventPayload: Encodable {
     /// The network involved. nil when iOS never let us read the name.
     let ssid: String?
     let occurredAt: String
-    let fixId: String
+    /// See `GeofenceEventPayload.fixId`.
+    let fixId: String?
 
     enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"

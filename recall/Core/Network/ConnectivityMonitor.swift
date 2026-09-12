@@ -121,7 +121,12 @@ final class ConnectivityMonitor {
             // network we were on and push a fresh position immediately.
             isOnNamedWiFi = false
             ActivityLogger.shared.log(.network, "wifi left: \(currentSSID ?? "unknown")")
-            GeofenceEventReporter.reportWiFi(transition: "left", ssid: currentSSID, at: Date())
+            GeofenceEventReporter.reportWiFi(
+                transition: "left",
+                ssid: currentSSID,
+                at: Date(),
+                fixId: TelemetryService.shared.locationManager.lastGoodFixId
+            )
             applyWiFiContext(hasSeenSSIDState ? "away" : nil)
             TelemetryService.shared.locationManager.kickFreshFix(reason: "wifi left \(currentSSID ?? "unknown")")
             Task { await TelemetryService.shared.locationManager.sendCurrentLocationNow() }
@@ -165,7 +170,12 @@ final class ConnectivityMonitor {
         hasSeenSSIDState = true
         if changed {
             ActivityLogger.shared.log(.network, "wifi joined: \(ssid)")
-            GeofenceEventReporter.reportWiFi(transition: "joined", ssid: ssid, at: Date())
+            GeofenceEventReporter.reportWiFi(
+                transition: "joined",
+                ssid: ssid,
+                at: Date(),
+                fixId: TelemetryService.shared.locationManager.lastGoodFixId
+            )
             Task { await TelemetryService.shared.locationManager.sendCurrentLocationNow() }
         }
         let home = AppSettings.shared.homeSSID

@@ -14,6 +14,9 @@ struct LocationSample: Codable, Identifiable {
     /// signal survives the queue path. Older samples persisted before this
     /// field existed decode as nil thanks to the optional declaration.
     var quality: String?
+    /// See `TelemetrySample.fixId`. Optional so samples persisted before this field
+    /// existed still decode.
+    var fixId: String?
 
     /// Derived home-Wi-Fi state: "home" / "away" / nil. Mirrors
     /// `LocationPayload.wifi` so the signal survives the queue path. Optional so
@@ -49,7 +52,7 @@ struct LocationSample: Codable, Identifiable {
         self.wifiConnected = ConnectivityMonitor.shared.isOnNamedWiFi
     }
 
-    init(from location: CLLocation, quality: String? = nil) {
+    init(from location: CLLocation, quality: String? = nil, fixId: String? = nil) {
         self.id = UUID()
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
@@ -58,6 +61,7 @@ struct LocationSample: Codable, Identifiable {
         self.speed = location.speed >= 0 ? location.speed : nil
         self.timestamp = location.timestamp
         self.quality = quality
+        self.fixId = fixId
         self.wifi = ConnectivityMonitor.shared.wifiContext
         self.wifiSSID = ConnectivityMonitor.shared.currentSSID
         self.wifiSSIDAgeSeconds = ConnectivityMonitor.shared.ssidAgeSeconds
