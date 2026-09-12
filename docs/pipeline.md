@@ -151,6 +151,20 @@ tell "intentionally off" from "broken". Full server contract and send policy:
 
 ## 8. Stream cadences (battery budget)
 
+**Location cadence tiers** (`LocationCadencePolicy`, decided per accepted fix):
+
+| Tier | Entered when | Sends | GPS |
+|---|---|---|---|
+| `fast` | fix speed >= 5 m/s (18 km/h) — GPS speed alone, motion is not consulted | every 30 s | continuous, no distance filter |
+| `walking` | motion activity says walking/running/cycling/automotive, or speed >= 0.7 m/s, or within 120 s of the last movement | on >= 20 m displacement, else 300 s | continuous, 10 m filter in background |
+| `parked` | motion says stationary (medium/high confidence) and no movement for 120 s | 300 s heartbeat, each one also requesting a single fresh fix | continuous updates stopped; SLC, region monitoring and the motion callback bring it back |
+
+Motion comes from `MotionActivityMonitor` (CMMotionActivity — the same always-on
+coprocessor that counts steps; raw accelerometer/gyro streaming is deliberately not used).
+When motion is unavailable or the owner declines the permission, `isMoving` stays true, so
+the lane behaves exactly as before (never parks on motion alone).
+
+
 Independent streams keep running while recording is off, so each one must keep its own
 steady-state cost low. Values verified in code (2026-09-11):
 

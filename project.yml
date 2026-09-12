@@ -74,6 +74,7 @@ targets:
         product: MWDATDisplay
       - sdk: HealthKit.framework
       - sdk: CoreLocation.framework
+      - sdk: CoreMotion.framework
       - sdk: MediaPlayer.framework
       - sdk: Photos.framework
       - target: RecordingControl
@@ -91,6 +92,7 @@ targets:
         NSLocalNetworkUsageDescription: "Connect to VoiceLog server on local network for audio upload."
         NSLocationWhenInUseUsageDescription: "recall uses your location for lifelogging telemetry."
         NSLocationAlwaysAndWhenInUseUsageDescription: "recall tracks your location in the background for continuous lifelogging."
+        NSMotionUsageDescription: "recall uses step and motion activity to tell walking from a parked phone, so it can keep GPS off while nothing moves."
         NSHealthShareUsageDescription: "recall reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry."
         NSHealthUpdateUsageDescription: "recall does not write any health data."
         NSPhotoLibraryUsageDescription: "recall imports photos and videos taken with your Ray-Ban Meta smart glasses to your lifelog. Other photos are not uploaded."
