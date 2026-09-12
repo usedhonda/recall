@@ -103,22 +103,40 @@ final class ActivityLogger {
     ///
     /// Must be called before anything else writes, or it measures its own line.
     func noteProcessStart() {
-        let newest = (try? FileManager.default.contentsOfDirectory(
-            at: logsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey]
-        ))?
-            .filter { $0.lastPathComponent.hasPrefix("activity_") }
-            .compactMap {
-                try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            }
-            .max()
-
-        guard let newest else {
+        guard let last = lastLoggedTimestamp() else {
             log(.state, "Process start: no earlier log (first run or logs cleared)")
             return
         }
-        let minutes = Int(Date().timeIntervalSince(newest) / 60)
+        let minutes = Int(Date().timeIntervalSince(last) / 60)
         log(.state, "Process start: log had been silent for \(minutes) min")
+    }
+
+    /// The timestamp of the last line actually written. Read from the file rather than
+    /// from its modification date: a launch on 2026-09-13 reported 454 min of silence
+    /// while the newest file had been written four minutes earlier, so the file date is
+    /// not trustworthy here. The line itself cannot lie.
+    private func lastLoggedTimestamp() -> Date? {
+        let newest = (try? FileManager.default.contentsOfDirectory(
+            at: logsDirectory,
+            includingPropertiesForKeys: nil
+        ))?
+            .filter { $0.lastPathComponent.hasPrefix("activity_") }
+            .max { $0.lastPathComponent < $1.lastPathComponent }
+        guard let newest, let handle = try? FileHandle(forReadingFrom: newest) else { return nil }
+        defer { try? handle.close() }
+
+        // Only the tail is needed, and these files reach tens of megabytes.
+        let size = (try? handle.seekToEnd()) ?? 0
+        let window: UInt64 = 4096
+        try? handle.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+
+        for line in text.split(separator: "\n").reversed() {
+            let stamp = line.prefix(20)
+            if let date = iso8601.date(from: String(stamp)) { return date }
+        }
+        return nil
     }
 
     func log(_ category: Entry.Category, _ message: String) {
