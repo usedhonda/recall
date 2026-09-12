@@ -63,6 +63,22 @@ final class LocationManager: NSObject {
     var currentSendInterval: TimeInterval { LocationCadencePolicy.sendInterval(for: cadence) }
     private var lastMovementAt = Date()
     private var continuousUpdatesRunning = false
+
+    // Inputs the cadence decision is made from, surfaced for the HUD.
+    /// Speed of the last fix that was accurate enough to believe (m/s).
+    private(set) var lastTrustedSpeed: Double?
+    /// Horizontal accuracy of the last fix that arrived, accepted or not (m).
+    private(set) var lastFixAccuracy: Double?
+    /// Why the last arriving fix was rejected, if it was.
+    private(set) var lastRejectReason: String?
+    private(set) var parkedRegionArmed = false
+    var secondsSinceLastMovement: TimeInterval { Date().timeIntervalSince(lastMovementAt) }
+    var lastAcceptedFixAge: TimeInterval? {
+        lastGoodLocation.map { Date().timeIntervalSince($0.timestamp) }
+    }
+    var lastSendAge: TimeInterval? {
+        lastSentTime.map { Date().timeIntervalSince($0) }
+    }
     /// Geofence armed around wherever the phone parked, so leaving is caught even if
     /// the motion chip is slow to call it walking (and coarse parked fixes cannot).
     private static let parkedRegionID = "recall.parked-spot"
@@ -332,6 +348,7 @@ final class LocationManager: NSObject {
             let dt = location.timestamp.timeIntervalSince(prev.timestamp)
             if dt >= 1 { speed = location.distance(from: prev) / dt }
         }
+        lastTrustedSpeed = speed
         if let speed, speed >= LocationCadencePolicy.movingSpeed { lastMovementAt = Date() }
 
         let next = nextCadence(speed: speed)
@@ -418,12 +435,14 @@ final class LocationManager: NSObject {
         region.notifyOnEntry = false
         region.notifyOnExit = true
         locationManager.startMonitoring(for: region)
+        parkedRegionArmed = true
         ActivityLogger.shared.log(.location, "Parked geofence armed (\(Int(Self.parkedRegionRadius))m)")
     }
 
     private func disarmParkedRegion() {
         for region in locationManager.monitoredRegions where region.identifier == Self.parkedRegionID {
             locationManager.stopMonitoring(for: region)
+            parkedRegionArmed = false
             ActivityLogger.shared.log(.location, "Parked geofence cleared")
         }
     }
@@ -454,6 +473,8 @@ final class LocationManager: NSObject {
     // MARK: - Location Quality Filtering
 
     private func shouldAcceptLocation(_ location: CLLocation) -> Bool {
+        lastFixAccuracy = location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil
+        lastRejectReason = nil
         guard location.horizontalAccuracy >= 0 else {
             markFiltered("invalid accuracy")
             return false
@@ -837,6 +858,7 @@ extension LocationManager: CLLocationManagerDelegate {
 
 private extension LocationManager {
     func markFiltered(_ reason: String) {
+        lastRejectReason = reason
         totalFilteredSamples += 1
         lastAttemptAt = Date()
         lastSendResult = .filtered(reason)
