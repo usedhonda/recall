@@ -186,29 +186,72 @@ struct RecordingView: View {
         }
     }
 
-    /// Live GPS cadence for the LOCATION stream: which tier it picked and how often it
-    /// sends. Belongs with the stream toggles, not with the recording meters.
+    /// Everything the GPS cadence decision is made from, for the LOCATION stream.
+    /// Belongs with the stream toggles, not with the recording meters.
     @ViewBuilder
     private var gpsCadenceRow: some View {
-        let cadence = telemetry.locationManager.cadence
-        HStack(spacing: 6) {
-            Text("LOC.GPS:")
-                .font(RecallTheme.Fonts.hudCaption)
-                .foregroundStyle(RecallTheme.Colors.textSecondary)
-            Text(gpsModeLabel(cadence))
-                .font(RecallTheme.Fonts.hudMeter)
-                .foregroundStyle(gpsModeColor(cadence))
-            Text("//")
-                .font(RecallTheme.Fonts.hudCaption)
-                .foregroundStyle(RecallTheme.Colors.textMuted)
-            Text("RATE:")
-                .font(RecallTheme.Fonts.hudCaption)
-                .foregroundStyle(RecallTheme.Colors.textSecondary)
-            Text(gpsRateLabel(cadence))
-                .font(RecallTheme.Fonts.hudMeter)
-                .foregroundStyle(gpsModeColor(cadence))
-            Spacer()
+        let location = telemetry.locationManager
+        let cadence = location.cadence
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("LOC.GPS:")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                Text(gpsModeLabel(cadence))
+                    .font(RecallTheme.Fonts.hudMeter)
+                    .foregroundStyle(gpsModeColor(cadence))
+                Text("//")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textMuted)
+                Text("RATE:")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                Text(gpsRateLabel(cadence))
+                    .font(RecallTheme.Fonts.hudMeter)
+                    .foregroundStyle(gpsModeColor(cadence))
+                Spacer()
+                if location.parkedRegionArmed {
+                    Text("FENCE 100m")
+                        .font(RecallTheme.Fonts.hudMicro)
+                        .foregroundStyle(RecallTheme.Colors.neonGreen)
+                }
+            }
+
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                let motion = MotionActivityMonitor.shared
+                HStack(spacing: 8) {
+                    diagField("SPD", location.lastTrustedSpeed.map { String(format: "%.1fm/s", $0) } ?? "--")
+                    diagField("ACC", location.lastFixAccuracy.map { String(format: "%.0fm", $0) } ?? "--")
+                    diagField("MOT", motion.isAvailable ? motion.latestActivity : "n/a")
+                    diagField("IDLE", formatAge(location.secondsSinceLastMovement))
+                    diagField("FIX", location.lastAcceptedFixAge.map(formatAge) ?? "--")
+                    diagField("SENT", location.lastSendAge.map(formatAge) ?? "--")
+                    Spacer()
+                }
+            }
+
+            if let reason = location.lastRejectReason {
+                Text("REJECT: \(reason)")
+                    .font(RecallTheme.Fonts.hudMicro)
+                    .foregroundStyle(RecallTheme.Colors.neonAmber)
+            }
         }
+    }
+
+    @ViewBuilder
+    private func diagField(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 2) {
+            Text(label)
+                .font(RecallTheme.Fonts.hudMicro)
+                .foregroundStyle(RecallTheme.Colors.textMuted)
+            Text(value)
+                .font(RecallTheme.Fonts.hudMicro)
+                .foregroundStyle(RecallTheme.Colors.textPrimary)
+        }
+    }
+
+    private func formatAge(_ seconds: TimeInterval) -> String {
+        seconds < 60 ? "\(Int(seconds))s" : "\(Int(seconds / 60))m"
     }
 
     private func gpsModeLabel(_ cadence: LocationCadence) -> String {
