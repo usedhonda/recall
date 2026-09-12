@@ -58,10 +58,17 @@ final class MotionActivityMonitor {
     private func apply(_ activity: CMMotionActivity) {
         let moving = activity.walking || activity.running || activity.cycling || activity.automotive
         let label = Self.label(for: activity)
-        // Unknown / low-confidence stationary is not trusted: only a confident
-        // stationary reading parks the location lane.
-        let parked = activity.stationary && activity.confidence != .low && !moving
-        let nextMoving = !parked
+        // The stream alternates between a real reading and "unknown" every couple of
+        // seconds. Unknown carries no opinion, so the last real reading stands;
+        // otherwise the lane would never settle.
+        let nextMoving: Bool
+        if moving {
+            nextMoving = true
+        } else if activity.stationary {
+            nextMoving = false
+        } else {
+            nextMoving = isMoving
+        }
 
         if moving { lastMotionAt = Date() }
         let startedMoving = nextMoving && !isMoving
