@@ -25,10 +25,13 @@ struct TelemetrySample: Encodable {
     /// about reduced-accuracy fixes.
     let quality: String?
 
-    /// Derived home-Wi-Fi state: "home" / "away" / nil. Derived on device from
-    /// the user-set home SSID (ConnectivityMonitor.wifiContext); the raw SSID
-    /// never leaves the device.
+    /// Derived home-Wi-Fi state: "home" / "away" / nil, from the user-set home SSID.
     let wifi: String?
+    /// The network name itself, and how old that reading is. iOS mostly answers only in
+    /// the foreground, so an older name still travels rather than nothing (owner's call,
+    /// 2026-09-13: OpenClaw recognises places by SSID faster than by GPS).
+    let wifiSSID: String?
+    let wifiSSIDAgeSeconds: Int?
 
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04)
     let speedAccuracy: Double?
@@ -49,6 +52,8 @@ struct TelemetrySample: Encodable {
         timestamp: Date,
         quality: String?,
         wifi: String? = nil,
+        wifiSSID: String? = nil,
+        wifiSSIDAgeSeconds: Int? = nil,
         speedAccuracy: Double? = nil,
         course: Double? = nil,
         courseAccuracy: Double? = nil,
@@ -66,6 +71,8 @@ struct TelemetrySample: Encodable {
         self.timestamp = timestamp
         self.quality = quality
         self.wifi = wifi
+        self.wifiSSID = wifiSSID
+        self.wifiSSIDAgeSeconds = wifiSSIDAgeSeconds
         self.speedAccuracy = speedAccuracy
         self.course = course
         self.courseAccuracy = courseAccuracy
@@ -86,6 +93,8 @@ struct TelemetrySample: Encodable {
             timestamp: sample.timestamp,
             quality: sample.quality,
             wifi: sample.wifi,
+            wifiSSID: sample.wifiSSID,
+            wifiSSIDAgeSeconds: sample.wifiSSIDAgeSeconds,
             speedAccuracy: sample.speedAccuracy,
             course: sample.course,
             courseAccuracy: sample.courseAccuracy,
@@ -107,6 +116,8 @@ struct TelemetrySample: Encodable {
             timestamp: payload.timestamp,
             quality: payload.quality,
             wifi: payload.wifi,
+            wifiSSID: payload.wifiSSID,
+            wifiSSIDAgeSeconds: payload.wifiSSIDAgeSeconds,
             speedAccuracy: payload.speedAccuracy,
             course: payload.course,
             courseAccuracy: payload.courseAccuracy,
@@ -134,9 +145,11 @@ struct LocationPayload: Codable {
     let timestamp: Date
     let quality: String
 
-    /// Derived home-Wi-Fi state: "home" / "away" / nil. Derived on device from
-    /// the user-set home SSID; the raw SSID never leaves the device.
+    /// Derived home-Wi-Fi state: "home" / "away" / nil, from the user-set home SSID.
     let wifi: String?
+    /// The network name itself and the age of that reading (owner's call, 2026-09-13).
+    let wifiSSID: String?
+    let wifiSSIDAgeSeconds: Int?
 
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04)
     let speedAccuracy: Double?
@@ -156,6 +169,8 @@ struct LocationPayload: Codable {
         self.timestamp = location.timestamp
         self.quality = quality
         self.wifi = ConnectivityMonitor.shared.wifiContext
+        self.wifiSSID = ConnectivityMonitor.shared.currentSSID
+        self.wifiSSIDAgeSeconds = ConnectivityMonitor.shared.ssidAgeSeconds
 
         self.speedAccuracy = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
         self.course = location.course >= 0 ? location.course : nil
