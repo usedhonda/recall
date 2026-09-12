@@ -160,7 +160,7 @@ struct RecordingView: View {
             metersSection
             Text(audioFooter)
                 .font(RecallTheme.Fonts.hudMicro)
-                .foregroundStyle(RecallTheme.Colors.textMuted)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.state)
     }
@@ -187,7 +187,7 @@ struct RecordingView: View {
         HStack(spacing: 8) {
             Text(label)
                 .font(RecallTheme.Fonts.hudCaption)
-                .foregroundStyle(RecallTheme.Colors.textSecondary)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
                 .frame(width: 66, alignment: .leading)
 
             if glitch {
@@ -258,30 +258,56 @@ struct RecordingView: View {
                 badgeColor: RecallTheme.Colors.neonGreen
             )
 
+            Text(cadenceExplanation(cadence))
+                .font(RecallTheme.Fonts.hudCaption)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
+
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 let motion = MotionActivityMonitor.shared
                 VStack(alignment: .leading, spacing: 6) {
-                    // What GPS is giving us.
+                    if cadence == .parked {
+                        // What is being watched for, and how close each one is to firing.
+                        triggerRow(
+                            "SHAKE",
+                            String(format: "%.2f", motion.parkedShakePeak),
+                            String(format: "%.2f g", MotionActivityMonitor.shakeThreshold),
+                            motion.parkedShakePeak >= MotionActivityMonitor.shakeThreshold
+                        )
+                        triggerRow("STEPS", "\(motion.stepsSinceStart)", "any step", motion.stepsSinceStart > 0)
+                        triggerRow(
+                            "ACTIVITY",
+                            motion.isAvailable ? motion.latestActivity : "n/a",
+                            "walking",
+                            motion.isMoving
+                        )
+                        triggerRow(
+                            "GEOFENCE",
+                            location.parkedRegionArmed ? "armed" : "off",
+                            String(format: "%.0f m", LocationManager.parkedRegionRadius),
+                            false
+                        )
+                    } else {
+                        triggerRow(
+                            "SPEED",
+                            location.lastTrustedSpeed.map { String(format: "%.1f", $0) } ?? "--",
+                            String(format: "%.0f m/s -> FAST", LocationCadencePolicy.fastSpeed),
+                            (location.lastTrustedSpeed ?? 0) >= LocationCadencePolicy.fastSpeed
+                        )
+                        triggerRow(
+                            "STILL FOR",
+                            formatAge(location.secondsSinceLastMovement),
+                            String(format: "%.0fs -> PARKED", LocationCadencePolicy.parkedGrace),
+                            location.secondsSinceLastMovement >= LocationCadencePolicy.parkedGrace
+                        )
+                        triggerRow("STEPS", "\(motion.stepsSinceStart)", "walking", motion.isMoving)
+                    }
+
+                    Divider().overlay(RecallTheme.Colors.textMuted.opacity(0.4))
+
                     HStack(spacing: 0) {
                         diagField("GPS ACC", location.lastFixAccuracy.map { String(format: "%.0f m", $0) } ?? "no fix")
-                        diagField("SPEED", location.lastTrustedSpeed.map { String(format: "%.1f m/s", $0) } ?? "--")
-                        diagField("FIX AGE", location.lastAcceptedFixAge.map(formatAge) ?? "--")
-                    }
-                    // What the motion sensors are giving us.
-                    HStack(spacing: 0) {
-                        diagField("MOTION", motion.isAvailable ? motion.latestActivity : "n/a")
-                        diagField("STEPS", "\(motion.stepsSinceStart)")
-                        diagField("GAIT", motion.gaitStepsPerMinute.map { String(format: "%.0f spm", $0) } ?? "--")
-                    }
-                    HStack(spacing: 0) {
-                        diagField("SHAKE", String(format: "%.2f g", motion.parkedShakePeak))
-                        diagField("ACCEL", motion.userAcceleration.map { String(format: "%.2f g", $0) } ?? "--")
-                        diagField("STILL FOR", formatAge(location.secondsSinceLastMovement))
-                    }
-                    HStack(spacing: 0) {
+                        diagField("LAST FIX", location.lastAcceptedFixAge.map(formatAge) ?? "--")
                         diagField("LAST SEND", location.lastSendAge.map(formatAge) ?? "--")
-                        diagField("SEND EVERY", gpsRateLabel(cadence))
-                        diagField("FILTER", "200 m")
                     }
                 }
             }
@@ -294,12 +320,45 @@ struct RecordingView: View {
         }
     }
 
+    /// One watched signal: what it reads now, what would trip it, and whether it has.
+    @ViewBuilder
+    private func triggerRow(_ label: String, _ value: String, _ threshold: String, _ tripped: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(tripped ? "[x]" : "[ ]")
+                .font(RecallTheme.Fonts.hudMicro)
+                .foregroundStyle(tripped ? RecallTheme.Colors.neonGreen : RecallTheme.Colors.textLabel)
+            Text(label)
+                .font(RecallTheme.Fonts.hudMicro)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
+                .frame(width: 74, alignment: .leading)
+            Text(value)
+                .font(RecallTheme.Fonts.hudCaption)
+                .foregroundStyle(RecallTheme.Colors.textPrimary)
+            Spacer()
+            Text(threshold)
+                .font(RecallTheme.Fonts.hudMicro)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
+        }
+    }
+
+    /// Plain-language summary of what the current tier does.
+    private func cadenceExplanation(_ cadence: LocationCadence) -> String {
+        switch cadence {
+        case .parked:
+            return "GPS coarse, sends every 5 min. Watching for:"
+        case .walking:
+            return "GPS full, sends on 20 m of movement. Watching for:"
+        case .fast:
+            return "GPS full, sends every 30 s. Watching for:"
+        }
+    }
+
     @ViewBuilder
     private func diagField(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label)
                 .font(RecallTheme.Fonts.hudMicro)
-                .foregroundStyle(RecallTheme.Colors.textMuted)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
             Text(value)
                 .font(RecallTheme.Fonts.hudCaption)
                 .foregroundStyle(RecallTheme.Colors.textPrimary)

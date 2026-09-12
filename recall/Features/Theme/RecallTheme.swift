@@ -19,6 +19,8 @@ enum RecallTheme {
         static let textPrimary = Color(hex: 0xE0E0E0)
         static let textSecondary = Color(hex: 0x666680)
         static let textMuted = Color(hex: 0x333344)
+        /// Small labels on the dark panels. textMuted / textSecondary disappear at 9-11 pt.
+        static let textLabel = Color(hex: 0x9A9ABA)
     }
 
     // MARK: - Fonts
