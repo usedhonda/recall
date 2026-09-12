@@ -731,6 +731,7 @@ final class LocationManager: NSObject {
                 self?.restartUpdatesIfStarved()
                 self?.reevaluateCadence()
                 self?.sendHeartbeat()
+                BatteryLogger.note()
             }
         }
     }

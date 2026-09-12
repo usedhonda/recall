@@ -63,6 +63,12 @@ struct RecallApp: App {
         // first telemetry send isn't dropped by the data saver gate before the
         // scenePhase observer fires.
         ConnectivityMonitor.shared.isAppActive = true
+        // iOS only hands over the Wi-Fi name in the foreground, and the only other place
+        // that asks is the join transition — which almost always happens in the
+        // background, where it answers nil. So the home/away signal the greetings lean on
+        // had gone dead (no home classification at all on 2026-09-12). Every foreground
+        // refreshes the name and its age.
+        ConnectivityMonitor.shared.readSSID()
         guard !normalStartupStarted else { return }
         normalStartupStarted = true
         RecordingStateManager.shared.userStopIntent = false
