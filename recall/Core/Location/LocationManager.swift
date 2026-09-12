@@ -75,6 +75,10 @@ final class LocationManager: NSObject {
     /// When a fix last arrived at all (accepted or rejected). Continuous updates going
     /// quiet is otherwise invisible: the only symptom is that nothing is ever sent.
     private(set) var lastFixArrivalAt: Date?
+    /// When movement was first noticed while parked, so the first send after it can be
+    /// logged with the latency the owner actually cares about ("how fast is departure
+    /// noticed?"). Cleared once that send goes out.
+    private var departureNoticedAt: Date?
     private var lastUpdatesRestartAt: Date?
     private let noFixRestartAfter: TimeInterval = 180
     var secondsSinceLastMovement: TimeInterval { Date().timeIntervalSince(lastMovementAt) }
@@ -273,6 +277,7 @@ final class LocationManager: NSObject {
                     lastNewAcceptedAt = Date()
                 }
                 resetHeartbeatTimer()
+                logDepartureLatencyIfPending()
                 ActivityLogger.shared.log(.location, String(
                     format: "Sent: %.4f, %.4f (%.0fm)%@",
                     location.coordinate.latitude,
@@ -305,6 +310,7 @@ final class LocationManager: NSObject {
                     lastNewAcceptedAt = Date()
                 }
                 resetHeartbeatTimer()
+                logDepartureLatencyIfPending()
                 ActivityLogger.shared.log(.location, String(
                     format: "BG direct sent: %.4f, %.4f (%.0fm)%@",
                     location.coordinate.latitude,
@@ -468,6 +474,17 @@ final class LocationManager: NSObject {
         locationManager.startUpdatingLocation()
     }
 
+    /// First position sent after movement was noticed: the departure latency.
+    private func logDepartureLatencyIfPending() {
+        guard let noticed = departureNoticedAt else { return }
+        departureNoticedAt = nil
+        let seconds = Date().timeIntervalSince(noticed)
+        ActivityLogger.shared.log(
+            .location,
+            String(format: "Departure: first position sent %.1fs after movement", seconds)
+        )
+    }
+
     private func resumeContinuousUpdates() {
         guard !continuousUpdatesRunning else { return }
         locationManager.startUpdatingLocation()
@@ -480,6 +497,7 @@ final class LocationManager: NSObject {
     private func resumeForMovement(reason: String) {
         guard isEnabled, hasAuthorization, cadence == .parked else { return }
         ActivityLogger.shared.log(.location, "Movement (\(reason)) — resuming GPS")
+        departureNoticedAt = Date()
         disarmParkedRegion()
         cadence = .walking
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
