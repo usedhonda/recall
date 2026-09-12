@@ -357,7 +357,12 @@ final class LocationManager: NSObject {
             // ends the location background session, and with audio off iOS suspends
             // the app, which silences the heartbeat and every other stream with it.
             resumeContinuousUpdates()
-            locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            // Coarse positioning only pays off once there is an accepted fix to keep
+            // re-sending: indoors it returns ~1.8 km readings, which the accuracy filter
+            // rejects. Until one good fix exists, stay on Best.
+            locationManager.desiredAccuracy = lastGoodLocation == nil
+                ? kCLLocationAccuracyBest
+                : kCLLocationAccuracyHundredMeters
             locationManager.distanceFilter = 100
             armParkedRegion()
         case .walking:
@@ -621,7 +626,15 @@ final class LocationManager: NSObject {
     }
 
     private func sendHeartbeat() {
-        guard let location = lastGoodLocation ?? currentLocation else { return }
+        // Only ever re-send a fix that passed the accuracy filter. `currentLocation` is
+        // assigned before filtering, so falling back to it published rejected fixes:
+        // a 1844 m reading went out at 00:40 JST on 2026-09-13, right after a relaunch
+        // had left `lastGoodLocation` empty.
+        guard let location = lastGoodLocation else {
+            // Nothing accepted yet (fresh launch while parked): ask for one good fix.
+            kickFreshFix(reason: "heartbeat without an accepted fix")
+            return
+        }
 
         let elapsed = lastSentTime.map { Date().timeIntervalSince($0) } ?? .infinity
         guard elapsed >= currentSendInterval - heartbeatTolerance else { return }
