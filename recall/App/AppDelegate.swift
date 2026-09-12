@@ -4,6 +4,9 @@ import OSLog
 @MainActor
 final class AppDelegate: NSObject, UIApplicationDelegate {
     private let logger = Logger(subsystem: "com.recall", category: "AppDelegate")
+    /// Held for the process lifetime: the Control Center toggle used to be observed
+    /// from a SwiftUI `.task`, which dies with the scene and swallowed toggles.
+    private var recordingToggleToken: DarwinNotificationToken?
 
     func application(
         _ application: UIApplication,
@@ -15,6 +18,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Set up HealthKit background delivery — must be in didFinishLaunchingWithOptions
         // so observer queries are ready before iOS delivers background updates
         TelemetryService.shared.healthManager.setupBackgroundDelivery()
+
+        recordingToggleToken = RecordingStateManager.shared.observeDarwinNotification {
+            Task { @MainActor in
+                await RecordingViewModel.shared.handleExternalToggle()
+            }
+        }
 
         logger.info("App launched, connectivity monitor + health background delivery started")
         return true

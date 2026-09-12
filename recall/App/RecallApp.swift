@@ -5,7 +5,7 @@ import SwiftData
 struct RecallApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.scenePhase) private var scenePhase
-    @State private var recordingViewModel = RecordingViewModel()
+    @State private var recordingViewModel = RecordingViewModel.shared
     @State private var normalStartupStarted = false
     @State private var independentStreamsStarted = false
 
@@ -24,6 +24,7 @@ struct RecallApp: App {
             ContentView()
                 .environment(recordingViewModel)
                 .task {
+                    recordingViewModel.setModelContainer(sharedModelContainer)
                     if !LaunchContext.launchedInBackground {
                         LaunchContext.markUserForeground()
                     }
@@ -36,10 +37,6 @@ struct RecallApp: App {
                         return
                     }
                     await runNormalStartup()
-                }
-                .task(id: "darwinObserver") {
-                    // Observe Darwin notifications from Control Center widget
-                    await observeExternalToggle()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // Data saver gate: foreground sends, background stays silent.
@@ -141,25 +138,5 @@ struct RecallApp: App {
         // Report per-channel on/off intent so the server can tell "user gated a
         // stream" from "device dead" (runs on both normal and silent launches).
         ChannelStatusReporter.shared.start()
-    }
-
-    @MainActor
-    private func observeExternalToggle() async {
-        // Keep observation alive for the lifetime of the app
-        let stream = AsyncStream<Void> { continuation in
-            let token = RecordingStateManager.shared.observeDarwinNotification {
-                continuation.yield()
-            }
-            continuation.onTermination = { _ in
-                // prevent token from being deallocated
-                _ = token
-            }
-        }
-
-        for await _ in stream {
-            await recordingViewModel.handleExternalToggle(
-                modelContainer: sharedModelContainer
-            )
-        }
     }
 }
