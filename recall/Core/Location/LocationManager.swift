@@ -943,6 +943,19 @@ extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         Task { @MainActor in
             if region.identifier == Self.parkedRegionID {
+                // Leaving the circle drawn around wherever the phone came to rest. Unlike
+                // the configured anchors it needs no setup, so it is the only crossing
+                // available away from home — at the owner's Singapore home on 2026-09-13
+                // the Tokyo anchors never fire, which would leave the greeting with Wi-Fi
+                // as its single witness, and oc-general will not fire on Wi-Fi alone
+                // (routers reboot, bands switch, a back room drops to cellular).
+                GeofenceEventReporter.report(
+                    anchor: "parked",
+                    transition: "exit",
+                    at: Date(),
+                    accuracy: lastGoodLocation?.horizontalAccuracy,
+                    fixId: lastGoodFixId
+                )
                 resumeForMovement(reason: "left parked area")
                 return
             }

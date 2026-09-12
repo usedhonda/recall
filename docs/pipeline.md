@@ -159,6 +159,11 @@ tell "intentionally off" from "broken". Full server contract and send policy:
 | `walking` | motion activity says walking/running/cycling/automotive, or speed >= 0.7 m/s, or within 120 s of the last movement | on >= 20 m displacement, else 300 s | continuous, 10 m filter in background |
 | `parked` | motion says stationary and no movement for 120 s | 300 s heartbeat, each one also opening a 30 s window for one fresh fix | updates keep running at `kCLLocationAccuracyHundredMeters` / 100 m filter (Wi-Fi + cell, GPS chip mostly idle); **the 30 s probe drops both the accuracy and the distance filter** |
 
+Leaving the parked circle is reported as a crossing with the anchor name `parked`. The
+configured anchors are places the owner set up; the parked circle is wherever the phone came
+to rest, so it is the only crossing that fires away from them — measured 2026-09-13, the
+Tokyo anchors never fire at the owner's Singapore home.
+
 **A stationary phone needs the distance filter off, not just a better accuracy.** It never
 travels 100 m, so iOS delivers nothing and the probe returns no fix: the position being
 re-sent ages without bound. Measured 2026-09-12: the last accepted fix was 20:08:44Z, every
