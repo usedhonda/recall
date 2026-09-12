@@ -138,6 +138,12 @@ final class HealthKitManager {
     }
 
     func requestAuthorization() async -> Bool {
+        #if DEBUG
+        // The simulator has no answered HealthKit permission, so the sheet covers the
+        // whole app and the screen cannot be reviewed at all. Design work needs to see
+        // the screen; this flag is only ever passed by the screenshot script.
+        if ProcessInfo.processInfo.arguments.contains("--skip-health-auth") { return false }
+        #endif
         guard HKHealthStore.isHealthDataAvailable() else {
             lastSendResult = .error("HealthKit not available")
             totalAuthorizationFailures += 1
