@@ -92,6 +92,35 @@ final class ActivityLogger {
         cleanupOldLogs()
     }
 
+    /// Reports how long the log had been silent before this process started.
+    ///
+    /// iOS never tells an app that it was killed, so a termination leaves no trace of its
+    /// own: the only evidence is the hole in the log, and finding one means reading the
+    /// file by hand afterwards. On 2026-09-12 the app was gone for 5h04m and nobody
+    /// noticed until the numbers were pulled two days later. Nothing else in the app
+    /// matters while the process is absent — no location, no health, no greeting — so
+    /// every launch now says out loud how long the silence was.
+    ///
+    /// Must be called before anything else writes, or it measures its own line.
+    func noteProcessStart() {
+        let newest = (try? FileManager.default.contentsOfDirectory(
+            at: logsDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ))?
+            .filter { $0.lastPathComponent.hasPrefix("activity_") }
+            .compactMap {
+                try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            }
+            .max()
+
+        guard let newest else {
+            log(.state, "Process start: no earlier log (first run or logs cleared)")
+            return
+        }
+        let minutes = Int(Date().timeIntervalSince(newest) / 60)
+        log(.state, "Process start: log had been silent for \(minutes) min")
+    }
+
     func log(_ category: Entry.Category, _ message: String) {
         let entry = Entry(timestamp: Date(), category: category, message: message)
 
