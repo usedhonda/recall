@@ -5,7 +5,9 @@ import Observation
 /// Reads iOS motion activity (the always-on motion coprocessor that also counts
 /// steps) so the location lane can tell "the owner is walking" from "the phone is
 /// parked on a desk". Far cheaper than keeping GPS running to answer the same
-/// question; raw accelerometer/gyro streaming is deliberately not used.
+/// question. The raw accelerometer is used too, but only as a 1 Hz shake watch while the
+/// location lane is parked (`startShakeWatch`) — continuous high-rate sampling is what
+/// Apple warns costs power, not an occasional magnitude check.
 ///
 /// Availability and permission are optional: when motion is unavailable or the
 /// owner declines, `isMoving` stays true so location behaves exactly as before.
@@ -45,7 +47,8 @@ final class MotionActivityMonitor {
     private(set) var parkedShakePeak: Double = 0
     private var shakeWatchRunning = false
     /// Above this much acceleration the phone is being carried, not sitting still.
-    private let shakeThreshold: Double = 0.12
+    static let shakeThreshold: Double = 0.12
+    private var shakeThreshold: Double { Self.shakeThreshold }
 
     private init() {}
 
@@ -65,8 +68,7 @@ final class MotionActivityMonitor {
         }
         startStepUpdates()
         startStepEvents()
-        startShakeWatch()
-        ActivityLogger.shared.log(.location, "Motion: activity + steps + shake watch started")
+        ActivityLogger.shared.log(.location, "Motion: activity + step updates started")
     }
 
     func stop() {
@@ -118,7 +120,7 @@ final class MotionActivityMonitor {
     /// Accelerometer watch for the parked phone: 1 Hz, magnitude only. This is the
     /// "is it being shaken / carried" signal, independent of GPS and of how long the
     /// activity classifier takes to call it walking.
-    private func startShakeWatch() {
+    func startShakeWatch() {
         guard deviceMotion.isAccelerometerAvailable, !shakeWatchRunning else { return }
         shakeWatchRunning = true
         parkedShakePeak = 0
@@ -134,7 +136,7 @@ final class MotionActivityMonitor {
         }
     }
 
-    private func stopShakeWatch() {
+    func stopShakeWatch() {
         guard shakeWatchRunning else { return }
         deviceMotion.stopAccelerometerUpdates()
         shakeWatchRunning = false
