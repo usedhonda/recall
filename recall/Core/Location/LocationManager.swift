@@ -63,6 +63,10 @@ final class LocationManager: NSObject {
     var currentSendInterval: TimeInterval { LocationCadencePolicy.sendInterval(for: cadence) }
     private var lastMovementAt = Date()
     private var continuousUpdatesRunning = false
+    /// Geofence armed around wherever the phone parked, so leaving is caught even if
+    /// the motion chip is slow to call it walking (and coarse parked fixes cannot).
+    private static let parkedRegionID = "recall.parked-spot"
+    private static let parkedRegionRadius: CLLocationDistance = 100
 
     /// The heartbeat timer ticks faster than the interval it enforces. Ticking once
     /// per interval meant a tick landing a few ms early failed the elapsed check and
@@ -355,11 +359,14 @@ final class LocationManager: NSObject {
             resumeContinuousUpdates()
             locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
             locationManager.distanceFilter = 100
+            armParkedRegion()
         case .walking:
+            disarmParkedRegion()
             resumeContinuousUpdates()
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
             locationManager.distanceFilter = isInForeground ? kCLDistanceFilterNone : 10
         case .fast:
+            disarmParkedRegion()
             resumeContinuousUpdates()
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
             locationManager.distanceFilter = kCLDistanceFilterNone
@@ -381,6 +388,32 @@ final class LocationManager: NSObject {
         )
     }
 
+    /// Circle around the parked spot. Exiting it wakes the app and resumes GPS, so
+    /// leaving is caught even when the motion chip has not called it walking yet and
+    /// the coarse parked fixes are too sparse to notice.
+    private func armParkedRegion() {
+        guard authorizationStatus == .authorizedAlways,
+              CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self),
+              let center = (lastGoodLocation ?? currentLocation)?.coordinate else { return }
+        if locationManager.monitoredRegions.contains(where: { $0.identifier == Self.parkedRegionID }) { return }
+        let region = CLCircularRegion(
+            center: center,
+            radius: Self.parkedRegionRadius,
+            identifier: Self.parkedRegionID
+        )
+        region.notifyOnEntry = false
+        region.notifyOnExit = true
+        locationManager.startMonitoring(for: region)
+        ActivityLogger.shared.log(.location, "Parked geofence armed (\(Int(Self.parkedRegionRadius))m)")
+    }
+
+    private func disarmParkedRegion() {
+        for region in locationManager.monitoredRegions where region.identifier == Self.parkedRegionID {
+            locationManager.stopMonitoring(for: region)
+            ActivityLogger.shared.log(.location, "Parked geofence cleared")
+        }
+    }
+
     private func resumeContinuousUpdates() {
         guard !continuousUpdatesRunning else { return }
         locationManager.startUpdatingLocation()
@@ -393,7 +426,10 @@ final class LocationManager: NSObject {
     private func resumeForMovement(reason: String) {
         guard isEnabled, hasAuthorization, cadence == .parked else { return }
         ActivityLogger.shared.log(.location, "Movement (\(reason)) — resuming GPS")
+        disarmParkedRegion()
         cadence = .walking
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = UIApplication.shared.applicationState == .active ? kCLDistanceFilterNone : 10
         lastMovementAt = Date()
         resumeContinuousUpdates()
         forceNextSend()
@@ -758,6 +794,10 @@ extension LocationManager: CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         Task { @MainActor in
+            if region.identifier == Self.parkedRegionID {
+                resumeForMovement(reason: "left parked area")
+                return
+            }
             ActivityLogger.shared.log(.location, "Region exit: \(anchorName(for: region))")
             forceNextSend()
             await sendCurrentLocationNow()

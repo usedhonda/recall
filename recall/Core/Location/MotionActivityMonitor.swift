@@ -26,6 +26,11 @@ final class MotionActivityMonitor {
     var onMovementStart: (() -> Void)?
 
     private let manager = CMMotionActivityManager()
+    /// Step events are the fastest "the owner started walking" signal: the activity
+    /// classifier needs several seconds of gait before it says walking, while steps
+    /// show up within a couple of them. Same coprocessor, no extra sensors powered.
+    private let pedometer = CMPedometer()
+    private var lastStepCount = 0
     private var isRunning = false
 
     private init() {}
@@ -44,15 +49,42 @@ final class MotionActivityMonitor {
             guard let self, let activity else { return }
             self.apply(activity)
         }
-        ActivityLogger.shared.log(.location, "Motion activity updates started")
+        startStepUpdates()
+        ActivityLogger.shared.log(.location, "Motion activity + step updates started")
     }
 
     func stop() {
         guard isRunning else { return }
         manager.stopActivityUpdates()
+        pedometer.stopUpdates()
+        lastStepCount = 0
         isRunning = false
         isMoving = true
         ActivityLogger.shared.log(.location, "Motion activity updates stopped")
+    }
+
+    private func startStepUpdates() {
+        guard CMPedometer.isStepCountingAvailable() else { return }
+        lastStepCount = 0
+        pedometer.startUpdates(from: Date()) { [weak self] data, _ in
+            guard let data else { return }
+            let steps = data.numberOfSteps.intValue
+            Task { @MainActor [weak self] in
+                self?.noteSteps(steps)
+            }
+        }
+    }
+
+    /// Cumulative step count since the monitor started; any increase means walking now.
+    private func noteSteps(_ steps: Int) {
+        guard steps > lastStepCount else { return }
+        lastStepCount = steps
+        lastMotionAt = Date()
+        guard !isMoving else { return }
+        isMoving = true
+        latestActivity = "steps"
+        ActivityLogger.shared.log(.location, "Motion: steps detected (moving=true)")
+        onMovementStart?()
     }
 
     private func apply(_ activity: CMMotionActivity) {
