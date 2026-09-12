@@ -12,6 +12,21 @@ import UIKit
 /// never-miss path (agreed with oc-general, 2026-09-13).
 @MainActor
 enum GeofenceEventReporter {
+    /// Wi-Fi leaving / joining, with the network name. Dropping off the home network is
+    /// the earliest doorway signal there is, and unlike reading the SSID it works in the
+    /// background: the drop itself comes from NWPathMonitor and the name is the one we
+    /// last read while on it.
+    static func reportWiFi(transition: String, ssid: String?, at occurredAt: Date) {
+        let payload = WiFiEventPayload(
+            deviceId: AppSettings.shared.deviceId,
+            transition: transition,
+            ssid: ssid,
+            occurredAt: ISO8601DateFormatter.geofence.string(from: occurredAt),
+            fixId: UUID().uuidString
+        )
+        post(payload, label: "wifi_event \(transition) \(ssid ?? "unknown")")
+    }
+
     static func report(anchor: String, transition: String, at occurredAt: Date, accuracy: Double?) {
         let payload = GeofenceEventPayload(
             deviceId: AppSettings.shared.deviceId,
@@ -22,6 +37,10 @@ enum GeofenceEventReporter {
             fixId: UUID().uuidString
         )
 
+        post(payload, label: "geofence_event \(anchor) \(transition)")
+    }
+
+    private static func post<Payload: Encodable>(_ payload: Payload, label: String) {
         Task { @MainActor in
             var taskId: UIBackgroundTaskIdentifier = .invalid
             taskId = UIApplication.shared.beginBackgroundTask {
@@ -30,14 +49,14 @@ enum GeofenceEventReporter {
                     taskId = .invalid
                 }
             }
-            await send(payload)
+            await send(payload, label: label)
             if taskId != .invalid {
                 UIApplication.shared.endBackgroundTask(taskId)
             }
         }
     }
 
-    private static func send(_ payload: GeofenceEventPayload) async {
+    private static func send<Payload: Encodable>(_ payload: Payload, label: String) async {
         guard AppSettings.shared.hasValidTelemetryConfig,
               let token = KeychainHelper.shared.getToken(),
               let url = URL(string: "\(AppSettings.shared.telemetryServerURL)/api/telemetry") else { return }
@@ -52,20 +71,17 @@ enum GeofenceEventReporter {
             request.httpBody = try JSONEncoder().encode(payload)
             let (data, response) = try await TelemetryService.shared.urlSession.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                ActivityLogger.shared.log(.telemetry, "geofence_event: invalid response")
+                ActivityLogger.shared.log(.telemetry, "\(label): invalid response")
                 return
             }
             guard (200...299).contains(http.statusCode) else {
                 let body = String(data: data, encoding: .utf8) ?? ""
-                ActivityLogger.shared.log(.telemetry, "geofence_event: HTTP \(http.statusCode): \(body)")
+                ActivityLogger.shared.log(.telemetry, "\(label): HTTP \(http.statusCode): \(body)")
                 return
             }
-            ActivityLogger.shared.log(
-                .telemetry,
-                "geofence_event sent: \(payload.anchor) \(payload.transition) HTTP \(http.statusCode)"
-            )
+            ActivityLogger.shared.log(.telemetry, "\(label) sent: HTTP \(http.statusCode)")
         } catch {
-            ActivityLogger.shared.log(.telemetry, "geofence_event failed: \(error.localizedDescription)")
+            ActivityLogger.shared.log(.telemetry, "\(label) failed: \(error.localizedDescription)")
         }
     }
 }
@@ -89,6 +105,26 @@ struct GeofenceEventPayload: Encodable {
         case transition
         case occurredAt = "occurred_at"
         case accuracyM = "accuracy_m"
+        case fixId = "fix_id"
+    }
+}
+
+struct WiFiEventPayload: Encodable {
+    let deviceId: String
+    let type = "wifi_event"
+    /// "left" or "joined".
+    let transition: String
+    /// The network involved. nil when iOS never let us read the name.
+    let ssid: String?
+    let occurredAt: String
+    let fixId: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case type
+        case transition
+        case ssid
+        case occurredAt = "occurred_at"
         case fixId = "fix_id"
     }
 }

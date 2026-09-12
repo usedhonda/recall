@@ -32,6 +32,8 @@ struct TelemetrySample: Encodable {
     /// 2026-09-13: OpenClaw recognises places by SSID faster than by GPS).
     let wifiSSID: String?
     let wifiSSIDAgeSeconds: Int?
+    /// true while on that network, false once it has been left.
+    let wifiConnected: Bool?
 
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04)
     let speedAccuracy: Double?
@@ -54,6 +56,7 @@ struct TelemetrySample: Encodable {
         wifi: String? = nil,
         wifiSSID: String? = nil,
         wifiSSIDAgeSeconds: Int? = nil,
+        wifiConnected: Bool? = nil,
         speedAccuracy: Double? = nil,
         course: Double? = nil,
         courseAccuracy: Double? = nil,
@@ -73,6 +76,7 @@ struct TelemetrySample: Encodable {
         self.wifi = wifi
         self.wifiSSID = wifiSSID
         self.wifiSSIDAgeSeconds = wifiSSIDAgeSeconds
+        self.wifiConnected = wifiConnected
         self.speedAccuracy = speedAccuracy
         self.course = course
         self.courseAccuracy = courseAccuracy
@@ -95,6 +99,7 @@ struct TelemetrySample: Encodable {
             wifi: sample.wifi,
             wifiSSID: sample.wifiSSID,
             wifiSSIDAgeSeconds: sample.wifiSSIDAgeSeconds,
+            wifiConnected: sample.wifiConnected,
             speedAccuracy: sample.speedAccuracy,
             course: sample.course,
             courseAccuracy: sample.courseAccuracy,
@@ -118,6 +123,7 @@ struct TelemetrySample: Encodable {
             wifi: payload.wifi,
             wifiSSID: payload.wifiSSID,
             wifiSSIDAgeSeconds: payload.wifiSSIDAgeSeconds,
+            wifiConnected: payload.wifiConnected,
             speedAccuracy: payload.speedAccuracy,
             course: payload.course,
             courseAccuracy: payload.courseAccuracy,
@@ -150,6 +156,8 @@ struct LocationPayload: Codable {
     /// The network name itself and the age of that reading (owner's call, 2026-09-13).
     let wifiSSID: String?
     let wifiSSIDAgeSeconds: Int?
+    /// true while on that network, false once it has been left.
+    let wifiConnected: Bool?
 
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04)
     let speedAccuracy: Double?
@@ -171,6 +179,7 @@ struct LocationPayload: Codable {
         self.wifi = ConnectivityMonitor.shared.wifiContext
         self.wifiSSID = ConnectivityMonitor.shared.currentSSID
         self.wifiSSIDAgeSeconds = ConnectivityMonitor.shared.ssidAgeSeconds
+        self.wifiConnected = ConnectivityMonitor.shared.isOnNamedWiFi
 
         self.speedAccuracy = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
         self.course = location.course >= 0 ? location.course : nil
