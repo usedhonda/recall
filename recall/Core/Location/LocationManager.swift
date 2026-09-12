@@ -79,6 +79,9 @@ final class LocationManager: NSObject {
     /// logged with the latency the owner actually cares about ("how fast is departure
     /// noticed?"). Cleared once that send goes out.
     private var departureNoticedAt: Date?
+    private var departureFixLogged = false
+    /// While set, the parked tier keeps full accuracy to check the position really held.
+    private var parkedProbeUntil: Date?
     private var lastUpdatesRestartAt: Date?
     private let noFixRestartAfter: TimeInterval = 180
     var secondsSinceLastMovement: TimeInterval { Date().timeIntervalSince(lastMovementAt) }
@@ -91,7 +94,7 @@ final class LocationManager: NSObject {
     /// Geofence armed around wherever the phone parked, so leaving is caught even if
     /// the motion chip is slow to call it walking (and coarse parked fixes cannot).
     private static let parkedRegionID = "recall.parked-spot"
-    private static let parkedRegionRadius: CLLocationDistance = 100
+    static let parkedRegionRadius: CLLocationDistance = 100
 
     /// The heartbeat timer ticks faster than the interval it enforces. Ticking once
     /// per interval meant a tick landing a few ms early failed the elapsed check and
@@ -252,6 +255,7 @@ final class LocationManager: NSObject {
 
         guard shouldAcceptLocation(location) else { return }
 
+        logDepartureFixIfPending(location)
         updateCadence(for: location, isInForeground: isInForeground)
         lastGoodLocation = location
 
@@ -398,12 +402,15 @@ final class LocationManager: NSObject {
             // Coarse positioning only pays off once there is an accepted fix to keep
             // re-sending: indoors it returns ~1.8 km readings, which the accuracy filter
             // rejects. Until one good fix exists, stay on Best.
-            locationManager.desiredAccuracy = lastGoodLocation == nil
+            let probing = (parkedProbeUntil.map { $0 > Date() } ?? false)
+            locationManager.desiredAccuracy = (lastGoodLocation == nil || probing)
                 ? kCLLocationAccuracyBest
                 : kCLLocationAccuracyHundredMeters
             locationManager.distanceFilter = 100
             armParkedRegion()
+            MotionActivityMonitor.shared.startShakeWatch()
         case .walking:
+            MotionActivityMonitor.shared.stopShakeWatch()
             disarmParkedRegion()
             resumeContinuousUpdates()
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -413,6 +420,7 @@ final class LocationManager: NSObject {
             // rate-limited by the cadence, not by throwing fixes away here.
             locationManager.distanceFilter = kCLDistanceFilterNone
         case .fast:
+            MotionActivityMonitor.shared.stopShakeWatch()
             disarmParkedRegion()
             resumeContinuousUpdates()
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -474,6 +482,19 @@ final class LocationManager: NSObject {
         locationManager.startUpdatingLocation()
     }
 
+    /// First fix that passed the filter after movement was noticed — separates GPS
+    /// acquisition time from network time in the departure latency.
+    private func logDepartureFixIfPending(_ location: CLLocation) {
+        guard let noticed = departureNoticedAt, !departureFixLogged else { return }
+        departureFixLogged = true
+        let seconds = Date().timeIntervalSince(noticed)
+        let age = Date().timeIntervalSince(location.timestamp)
+        ActivityLogger.shared.log(.location, String(
+            format: "Departure: first accepted fix %.1fs after movement (acc %.0fm age %.0fs)",
+            seconds, location.horizontalAccuracy, age
+        ))
+    }
+
     /// First position sent after movement was noticed: the departure latency.
     private func logDepartureLatencyIfPending() {
         guard let noticed = departureNoticedAt else { return }
@@ -498,6 +519,7 @@ final class LocationManager: NSObject {
         guard isEnabled, hasAuthorization, cadence == .parked else { return }
         ActivityLogger.shared.log(.location, "Movement (\(reason)) — resuming GPS")
         departureNoticedAt = Date()
+        departureFixLogged = false
         disarmParkedRegion()
         cadence = .walking
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -505,7 +527,8 @@ final class LocationManager: NSObject {
         lastMovementAt = Date()
         resumeContinuousUpdates()
         forceNextSend()
-        locationManager.requestLocation()
+        // No requestLocation here: with continuous updates running Apple documents it as
+        // a no-op. Raising desiredAccuracy above is what actually speeds the next fix.
         resetHeartbeatTimer()
     }
 
@@ -710,10 +733,11 @@ final class LocationManager: NSObject {
         guard elapsed >= currentSendInterval - heartbeatTolerance else { return }
 
         if cadence == .parked {
-            // Trains and smooth cars can read as "stationary" to the motion chip, so
-            // every heartbeat also asks for one fresh fix; if it moved, handleLocationUpdate
-            // switches the cadence back up.
-            locationManager.requestLocation()
+            // Trains and smooth cars can read as "stationary" to the motion chip, so every
+            // heartbeat spends 30 s at full accuracy to see whether the position moved.
+            // (requestLocation would be a no-op while continuous updates run.)
+            parkedProbeUntil = Date().addingTimeInterval(30)
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
         }
 
         let quality = qualityFor(location)
