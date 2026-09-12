@@ -60,6 +60,24 @@ tune thresholds from that window.
   tick, so the next power comparison can be stated in %/h.
 - The event schemas were re-sent to oc-general (the earlier queued copy expired unsent).
 
+## Owner ruling 2026-09-13: raw SSID, place resolution on the server
+
+The owner chose to send the network name as-is rather than resolve it to a place label on
+the device: "家と会社もだけど、家も海外にもあるので。OpenClaw がしってる". There are more
+places than home and office, some of them abroad, and the table that maps names to places
+already lives on the server side. So:
+
+- `wifi_event.ssid` and the position POST's `wifiSSID` carry the raw name. No labelling.
+- `AppSettings.homeSSID` holds **one** name, so the derived `wifi` ("home"/"away") calls an
+  overseas home "away". It is a hint, not the authority — the server's table decides.
+- oc-general is amending their own contract to accept the raw name; until then `wifi_event`
+  answers 400, which recall logs and drops (no retry, no queue).
+
+`geofence_event` went live on their side the same day: a good event answers
+`{"geofenceEventReceived":true,"duplicate":false}`, `occurred_at` is kept verbatim and their
+receipt time lands in a separate `received_at`, and duplicates are folded by parsed instant
+rather than string match.
+
 ## Open
 
 1. Measure on the ground: trigger -> first accepted fix -> send, and end-to-end to the
