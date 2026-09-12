@@ -23,24 +23,21 @@ struct RecordingView: View {
                     .padding(.bottom, 12)
 
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 12) {
                         dataStreamsBar
                             .padding(.horizontal, 12)
 
                         contextStreamsBar
                             .padding(.horizontal, 12)
 
-                        gpsCadenceRow
-                            .padding(.horizontal, 12)
+                        // Stream detail cards, in the same order as the tiles above and
+                        // in the same container: one framed card per stream, no stream
+                        // dressed differently from the next.
+                        streamCard(accent: stateColor) { recordingCard }
+                        streamCard(accent: RecallTheme.Colors.neonCyan) { locationCard }
 
                         telemetryStatusBanner
                         uploadHealthBanner
-
-                        recordingCard
-                            .padding(12)
-                            .hudBrackets(color: stateColor.opacity(0.5))
-                            .hudCardGlow(color: stateColor, isActive: viewModel.isActive)
-                            .padding(.horizontal, 12)
 
                         if let error = viewModel.errorMessage {
                             HStack(spacing: 4) {
@@ -59,7 +56,7 @@ struct RecordingView: View {
 
                         activityLogSection
                         }
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 96)
                 }
             }
         .background {
@@ -74,6 +71,8 @@ struct RecordingView: View {
             }
             .ignoresSafeArea()
         }
+        .onAppear { MotionActivityMonitor.shared.startLiveSensors() }
+        .onDisappear { MotionActivityMonitor.shared.stopLiveSensors() }
         .onChange(of: viewModel.isActive) { _, active in
             if active {
                 sessionStart = Date()
@@ -81,6 +80,26 @@ struct RecordingView: View {
                 sessionStart = nil
             }
         }
+    }
+
+    /// Shared container for stream detail cards.
+    @ViewBuilder
+    private func streamCard<Content: View>(
+        accent: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.black.opacity(0.35))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(accent.opacity(0.35), lineWidth: 1)
+            )
+            .padding(.horizontal, 12)
     }
 
     // MARK: - Header
@@ -122,49 +141,86 @@ struct RecordingView: View {
 
     // MARK: - Hero State
 
+    // MARK: - Meters
+
+    /// Audio stream card. Same three-part shape as the location card: header line,
+    /// body, caption footer.
     @ViewBuilder
-    private var heroStateSection: some View {
-        // One compact line: the recording state is one stream among several, so it
-        // should not tower over the location / health rows.
-        HStack(spacing: 8) {
-            Text("AUDIO:")
-                .font(RecallTheme.Fonts.hudCaption)
-                .foregroundStyle(RecallTheme.Colors.textSecondary)
-
-            GlitchText(
-                text: stateText,
-                font: RecallTheme.Fonts.hudTitle,
-                color: stateColor,
-                tracking: 2,
-                continuousGlitch: viewModel.isRecording
+    private var recordingCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            cardHeader(
+                label: "AUDIO",
+                state: stateText,
+                stateColor: stateColor,
+                detail: viewModel.isActive ? subLabel : nil,
+                badge: "CHUNKS \(viewModel.chunksRecorded)",
+                badgeColor: RecallTheme.Colors.textSecondary,
+                glitch: viewModel.isRecording
             )
-            .shadow(color: stateColor.opacity(heroGlowOpacity), radius: heroGlowRadius / 2)
-
-            if viewModel.isActive {
-                HStack(spacing: 4) {
-                    PulsingDot(color: stateColor, size: 5)
-                    Text(subLabel)
-                        .font(RecallTheme.Fonts.hudMicro)
-                        .foregroundStyle(stateColor)
-                        .tracking(1)
-                }
-                .transition(.opacity)
-            }
-
-            Spacer()
+            metersSection
+            Text(audioFooter)
+                .font(RecallTheme.Fonts.hudMicro)
+                .foregroundStyle(RecallTheme.Colors.textMuted)
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.state)
     }
 
-    // MARK: - Meters
+    private var audioFooter: String {
+        var parts = ["mic \(viewModel.currentMicMode == .bluetoothHFP ? "bluetooth" : "iphone")", "30s max chunk"]
+        if viewModel.isRecording {
+            parts.insert("current \(formatDuration(viewModel.currentChunkDuration))", at: 0)
+        }
+        return parts.joined(separator: "  //  ")
+    }
 
-    /// The recording stream in one card: its state, its meters, its chunk counter.
+    /// One header shape for every stream card: label, state, detail, right-side badge.
     @ViewBuilder
-    private var recordingCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            heroStateSection
-            metersSection
-            chunkInfo
+    private func cardHeader(
+        label: String,
+        state: String,
+        stateColor: Color,
+        detail: String?,
+        badge: String?,
+        badgeColor: Color,
+        glitch: Bool = false
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(RecallTheme.Fonts.hudCaption)
+                .foregroundStyle(RecallTheme.Colors.textSecondary)
+                .frame(width: 66, alignment: .leading)
+
+            if glitch {
+                GlitchText(
+                    text: state,
+                    font: RecallTheme.Fonts.hudTitle,
+                    color: stateColor,
+                    tracking: 2,
+                    continuousGlitch: true
+                )
+            } else {
+                Text(state)
+                    .font(RecallTheme.Fonts.hudTitle)
+                    .foregroundStyle(stateColor)
+                    .tracking(2)
+            }
+
+            if let detail {
+                HStack(spacing: 4) {
+                    PulsingDot(color: stateColor, size: 5)
+                    Text(detail)
+                        .font(RecallTheme.Fonts.hudMicro)
+                        .foregroundStyle(stateColor)
+                }
+            }
+
+            Spacer()
+
+            if let badge {
+                Text(badge)
+                    .font(RecallTheme.Fonts.hudMicro)
+                    .foregroundStyle(badgeColor)
+            }
         }
     }
 
@@ -186,52 +242,52 @@ struct RecordingView: View {
         }
     }
 
-    /// Everything the GPS cadence decision is made from, for the LOCATION stream.
-    /// Belongs with the stream toggles, not with the recording meters.
+    /// The location stream's card: same shape as the audio card below it, so the two
+    /// streams read as siblings instead of one card and one loose debug line.
     @ViewBuilder
-    private var gpsCadenceRow: some View {
+    private var locationCard: some View {
         let location = telemetry.locationManager
         let cadence = location.cadence
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text("LOC.GPS:")
-                    .font(RecallTheme.Fonts.hudCaption)
-                    .foregroundStyle(RecallTheme.Colors.textSecondary)
-                Text(gpsModeLabel(cadence))
-                    .font(RecallTheme.Fonts.hudMeter)
-                    .foregroundStyle(gpsModeColor(cadence))
-                Text("//")
-                    .font(RecallTheme.Fonts.hudCaption)
-                    .foregroundStyle(RecallTheme.Colors.textMuted)
-                Text("RATE:")
-                    .font(RecallTheme.Fonts.hudCaption)
-                    .foregroundStyle(RecallTheme.Colors.textSecondary)
-                Text(gpsRateLabel(cadence))
-                    .font(RecallTheme.Fonts.hudMeter)
-                    .foregroundStyle(gpsModeColor(cadence))
-                Spacer()
-                if location.parkedRegionArmed {
-                    Text("FENCE 100m")
-                        .font(RecallTheme.Fonts.hudMicro)
-                        .foregroundStyle(RecallTheme.Colors.neonGreen)
-                }
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            cardHeader(
+                label: "LOCATION",
+                state: gpsModeLabel(cadence),
+                stateColor: gpsModeColor(cadence),
+                detail: nil,
+                badge: location.parkedRegionArmed ? "FENCE 100m" : nil,
+                badgeColor: RecallTheme.Colors.neonGreen
+            )
 
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 let motion = MotionActivityMonitor.shared
-                HStack(spacing: 8) {
-                    diagField("SPD", location.lastTrustedSpeed.map { String(format: "%.1fm/s", $0) } ?? "--")
-                    diagField("ACC", location.lastFixAccuracy.map { String(format: "%.0fm", $0) } ?? "--")
-                    diagField("MOT", motion.isAvailable ? motion.latestActivity : "n/a")
-                    diagField("IDLE", formatAge(location.secondsSinceLastMovement))
-                    diagField("FIX", location.lastAcceptedFixAge.map(formatAge) ?? "--")
-                    diagField("SENT", location.lastSendAge.map(formatAge) ?? "--")
-                    Spacer()
+                VStack(alignment: .leading, spacing: 6) {
+                    // What GPS is giving us.
+                    HStack(spacing: 0) {
+                        diagField("GPS ACC", location.lastFixAccuracy.map { String(format: "%.0f m", $0) } ?? "no fix")
+                        diagField("SPEED", location.lastTrustedSpeed.map { String(format: "%.1f m/s", $0) } ?? "--")
+                        diagField("FIX AGE", location.lastAcceptedFixAge.map(formatAge) ?? "--")
+                    }
+                    // What the motion sensors are giving us.
+                    HStack(spacing: 0) {
+                        diagField("MOTION", motion.isAvailable ? motion.latestActivity : "n/a")
+                        diagField("STEPS", "\(motion.stepsSinceStart)")
+                        diagField("GAIT", motion.gaitStepsPerMinute.map { String(format: "%.0f spm", $0) } ?? "--")
+                    }
+                    HStack(spacing: 0) {
+                        diagField("ACCEL", motion.userAcceleration.map { String(format: "%.2f g", $0) } ?? "--")
+                        diagField("GYRO", motion.rotationRate.map { String(format: "%.2f r/s", $0) } ?? "--")
+                        diagField("STILL FOR", formatAge(location.secondsSinceLastMovement))
+                    }
+                    HStack(spacing: 0) {
+                        diagField("LAST SEND", location.lastSendAge.map(formatAge) ?? "--")
+                        diagField("SEND EVERY", gpsRateLabel(cadence))
+                        diagField("FILTER", "200 m")
+                    }
                 }
             }
 
             if let reason = location.lastRejectReason {
-                Text("REJECT: \(reason)")
+                Text("rejected  //  \(reason)")
                     .font(RecallTheme.Fonts.hudMicro)
                     .foregroundStyle(RecallTheme.Colors.neonAmber)
             }
@@ -240,14 +296,15 @@ struct RecordingView: View {
 
     @ViewBuilder
     private func diagField(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(label)
                 .font(RecallTheme.Fonts.hudMicro)
                 .foregroundStyle(RecallTheme.Colors.textMuted)
             Text(value)
-                .font(RecallTheme.Fonts.hudMicro)
+                .font(RecallTheme.Fonts.hudCaption)
                 .foregroundStyle(RecallTheme.Colors.textPrimary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func formatAge(_ seconds: TimeInterval) -> String {
@@ -280,34 +337,6 @@ struct RecordingView: View {
 
     // MARK: - Chunk Info
 
-    @ViewBuilder
-    private var chunkInfo: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Text("CHUNKS:")
-                    .font(RecallTheme.Fonts.hudCaption)
-                    .foregroundStyle(RecallTheme.Colors.textSecondary)
-                Text("\(viewModel.chunksRecorded)")
-                    .font(RecallTheme.Fonts.hudMeter)
-                    .foregroundStyle(RecallTheme.Colors.neonCyan)
-            }
-
-            if viewModel.isRecording {
-                Text(" // ")
-                    .font(RecallTheme.Fonts.hudCaption)
-                    .foregroundStyle(RecallTheme.Colors.textMuted)
-                HStack(spacing: 4) {
-                    Text("DUR:")
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(RecallTheme.Colors.textSecondary)
-                    Text(formatDuration(viewModel.currentChunkDuration))
-                        .font(RecallTheme.Fonts.hudMeter)
-                        .foregroundStyle(RecallTheme.Colors.neonCyan)
-                }
-            }
-        }
-    }
-
     // MARK: - Activity Log (Terminal Style)
 
     @ViewBuilder
@@ -338,7 +367,7 @@ struct RecordingView: View {
 
             if showLog {
                 ActivityLogView(entries: ActivityLogger.shared.entries)
-                    .frame(maxHeight: 150)
+                    .frame(minHeight: 220, maxHeight: 320)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
