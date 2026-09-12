@@ -37,7 +37,6 @@ struct RecordingView: View {
                         uploadHealthBanner
 
                         heroStateSection
-                            .padding(.vertical, 8)
 
                         metersSection
                             .padding(12)
@@ -130,39 +129,32 @@ struct RecordingView: View {
 
     @ViewBuilder
     private var heroStateSection: some View {
-        VStack(spacing: 8) {
-            // System prefix
-            Text("SYS://STATUS")
-                .font(RecallTheme.Fonts.hudData)
-                .foregroundStyle(RecallTheme.Colors.textMuted)
-                .tracking(2)
-
+        // One compact line: the recording state is one stream among several, so it
+        // should not tower over the location / health rows.
+        HStack(spacing: 8) {
             GlitchText(
                 text: stateText,
-                font: RecallTheme.Fonts.hudHero,
+                font: RecallTheme.Fonts.hudLarge,
                 color: stateColor,
-                tracking: 4,
+                tracking: 2,
                 continuousGlitch: viewModel.isRecording
             )
             .shadow(color: stateColor.opacity(heroGlowOpacity), radius: heroGlowRadius)
 
-            // Accent line
-            Rectangle()
-                .fill(stateColor)
-                .frame(width: 60, height: 2)
-                .shadow(color: stateColor.opacity(0.8), radius: 4)
-
             if viewModel.isActive {
-                HStack(spacing: 6) {
-                    PulsingDot(color: stateColor, size: 6)
+                HStack(spacing: 4) {
+                    PulsingDot(color: stateColor, size: 5)
                     Text(subLabel)
-                        .font(RecallTheme.Fonts.hudCaption)
+                        .font(RecallTheme.Fonts.hudMicro)
                         .foregroundStyle(stateColor)
                         .tracking(1)
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                .transition(.opacity)
             }
+
+            Spacer()
         }
+        .padding(.horizontal, 12)
         .animation(.easeInOut(duration: 0.3), value: viewModel.state)
     }
 
