@@ -8,13 +8,20 @@ import OSLog
 @Observable
 @MainActor
 final class RecordingViewModel {
+    /// App-lifetime instance. The Control Center toggle arrives as a Darwin
+    /// notification handled in AppDelegate, which outlives the SwiftUI scene.
+    static let shared = RecordingViewModel()
+
     private let logger = Logger(subsystem: "com.recall", category: "RecordingVM")
 
     var engine: AudioRecordingEngine?
     private var lastModelContainer: ModelContainer?
     var isRecording: Bool { engine?.state == .recording }
     var isListening: Bool { engine?.state == .listening }
-    var isActive: Bool { engine?.state != .idle }
+    /// Recording lane is live. Explicitly false when no engine exists yet — a nil
+    /// engine used to read as "active", so a silent launch showed the Audio toggle ON
+    /// while nothing was recording, and toggling ON became a no-op.
+    var isActive: Bool { engine.map { $0.state != .idle } ?? false }
     var currentRMS: Float { engine?.currentRMS ?? 0 }
     var vadProbability: Float { engine?.vadProbability ?? 0 }
     var state: AudioRecordingEngine.RecordingState { engine?.state ?? .idle }
@@ -300,17 +307,33 @@ final class RecordingViewModel {
         }
     }
 
-    func handleExternalToggle(modelContainer: ModelContainer) async {
+    /// Remember the container so a toggle arriving outside the view tree can start.
+    func setModelContainer(_ modelContainer: ModelContainer) {
+        lastModelContainer = modelContainer
+    }
+
+    /// Apply the Control Center toggle. Every outcome is written to the activity log:
+    /// a toggle that did nothing used to leave no trace at all.
+    func handleExternalToggle(modelContainer: ModelContainer? = nil) async {
         let desired = RecordingStateManager.shared.isRecording
         let current = isActive
 
-        guard desired != current else { return }
+        guard desired != current else {
+            ActivityLogger.shared.log(.state, "External toggle: ignored — already \(current ? "recording" : "stopped")")
+            return
+        }
 
         if desired {
+            guard let container = modelContainer ?? lastModelContainer else {
+                ActivityLogger.shared.log(.error, "External toggle: start requested but no model container yet")
+                return
+            }
             logger.info("External toggle: starting recording")
-            await start(modelContainer: modelContainer)
+            ActivityLogger.shared.log(.state, "External toggle: starting recording")
+            await start(modelContainer: container)
         } else {
             logger.info("External toggle: stopping recording")
+            ActivityLogger.shared.log(.state, "External toggle: stopping recording")
             stop()
         }
     }
