@@ -30,6 +30,9 @@ struct RecordingView: View {
                         contextStreamsBar
                             .padding(.horizontal, 12)
 
+                        gpsCadenceRow
+                            .padding(.horizontal, 12)
+
                         telemetryStatusBanner
                         uploadHealthBanner
 
@@ -180,16 +183,16 @@ struct RecordingView: View {
                 threshold: AppSettings.shared.vadThreshold,
                 barColor: RecallTheme.Colors.neonGreen
             )
-            gpsCadenceRow
         }
     }
 
-    /// Live GPS cadence: which tier the location lane picked and how often it sends.
+    /// Live GPS cadence for the LOCATION stream: which tier it picked and how often it
+    /// sends. Belongs with the stream toggles, not with the recording meters.
     @ViewBuilder
     private var gpsCadenceRow: some View {
         let cadence = telemetry.locationManager.cadence
         HStack(spacing: 6) {
-            Text("GPS.MODE:")
+            Text("LOC.GPS:")
                 .font(RecallTheme.Fonts.hudCaption)
                 .foregroundStyle(RecallTheme.Colors.textSecondary)
             Text(gpsModeLabel(cadence))
@@ -292,7 +295,7 @@ struct RecordingView: View {
 
             if showLog {
                 ActivityLogView(entries: ActivityLogger.shared.entries)
-                    .frame(maxHeight: 200)
+                    .frame(maxHeight: 150)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
