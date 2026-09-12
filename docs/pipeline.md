@@ -157,7 +157,13 @@ tell "intentionally off" from "broken". Full server contract and send policy:
 |---|---|---|---|
 | `fast` | fix speed >= 5 m/s (18 km/h) — GPS speed alone, motion is not consulted | every 30 s | continuous, no distance filter |
 | `walking` | motion activity says walking/running/cycling/automotive, or speed >= 0.7 m/s, or within 120 s of the last movement | on >= 20 m displacement, else 300 s | continuous, 10 m filter in background |
-| `parked` | motion says stationary (medium/high confidence) and no movement for 120 s | 300 s heartbeat, each one also requesting a single fresh fix | continuous updates stopped; SLC, region monitoring and the motion callback bring it back |
+| `parked` | motion says stationary and no movement for 120 s | 300 s heartbeat, each one also requesting a single fresh fix | updates keep running at `kCLLocationAccuracyHundredMeters` / 100 m filter (Wi-Fi + cell, GPS chip mostly idle) |
+
+**Never stop location updates to save power.** Stopping them ends the location background
+session; with audio off, iOS then suspends the app and every stream stops with it — measured
+2026-09-13: the parked tier turned updates off at 00:08 and the app went silent for 23 min
+(no heartbeat, no health, no uploads). Park by lowering accuracy and widening the distance
+filter instead.
 
 Motion comes from `MotionActivityMonitor` (CMMotionActivity — the same always-on
 coprocessor that counts steps; raw accelerometer/gyro streaming is deliberately not used).

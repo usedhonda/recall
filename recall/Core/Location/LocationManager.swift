@@ -217,10 +217,8 @@ final class LocationManager: NSObject {
         currentLocation = location
 
         let isInForeground = UIApplication.shared.applicationState == .active
-        // Accuracy stays Best in both FG and BG (a coarse BG fix was the stale
-        // anchor that let the jump filter lock up). Cadence throttles how often
-        // fixes are delivered and sent.
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        // Accuracy and distance filter are owned by the cadence (Best while moving,
+        // coarse while parked) — see apply(cadence:).
 
         guard shouldAcceptLocation(location) else { return }
 
@@ -350,19 +348,20 @@ final class LocationManager: NSObject {
 
         switch cadence {
         case .parked:
-            // Nothing is moving: stop continuous GPS. Significant-location changes,
-            // region monitoring, the motion callback and the 5 min heartbeat (which
-            // also asks for one fresh fix) all still bring us back.
-            if continuousUpdatesRunning {
-                locationManager.stopUpdatingLocation()
-                continuousUpdatesRunning = false
-                ActivityLogger.shared.log(.location, "Parked — continuous GPS off")
-            }
+            // Nothing is moving: drop to coarse, sparse positioning (Wi-Fi / cell
+            // instead of a hot GPS chip). Updates must keep running — stopping them
+            // ends the location background session, and with audio off iOS suspends
+            // the app, which silences the heartbeat and every other stream with it.
+            resumeContinuousUpdates()
+            locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            locationManager.distanceFilter = 100
         case .walking:
             resumeContinuousUpdates()
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
             locationManager.distanceFilter = isInForeground ? kCLDistanceFilterNone : 10
         case .fast:
             resumeContinuousUpdates()
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
             locationManager.distanceFilter = kCLDistanceFilterNone
         }
     }
@@ -386,7 +385,7 @@ final class LocationManager: NSObject {
         guard !continuousUpdatesRunning else { return }
         locationManager.startUpdatingLocation()
         continuousUpdatesRunning = true
-        ActivityLogger.shared.log(.location, "Continuous GPS on (\(cadence.rawValue))")
+        ActivityLogger.shared.log(.location, "Location updates on (\(cadence.rawValue))")
     }
 
     /// Movement seen while parked (motion coprocessor, or a heartbeat fix that moved):
