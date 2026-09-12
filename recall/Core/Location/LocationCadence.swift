@@ -24,6 +24,17 @@ enum LocationCadencePolicy {
     /// point roughly every 2 km; entering this tier is driven by GPS speed, not motion.
     static let fastSendInterval: TimeInterval = 30
 
+    /// A fix coarser than this cannot be trusted for speed — the first fix after GPS
+    /// resumes often reports a wild speed (a 23 m/s reading briefly flipped the tier
+    /// to `fast` while the phone sat on a desk).
+    static let speedTrustAccuracy: Double = 50
+
+    /// Speed to judge the tier with, or nil when the fix is too coarse to believe.
+    static func trustedSpeed(fixSpeed: Double, horizontalAccuracy: Double) -> Double? {
+        guard fixSpeed >= 0, horizontalAccuracy >= 0, horizontalAccuracy <= speedTrustAccuracy else { return nil }
+        return fixSpeed
+    }
+
     /// `speed` is metres/second from the fix (or derived from displacement); nil when unknown.
     static func tier(
         speed: Double?,

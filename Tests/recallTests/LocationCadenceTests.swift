@@ -40,6 +40,13 @@ final class LocationCadenceTests: XCTestCase {
         XCTAssertEqual(LocationCadencePolicy.sendInterval(for: parked), 300)
     }
 
+    func testCoarseFixSpeedIsNotTrusted() {
+        // The first fix after GPS resumes can claim a wild speed while the phone is still.
+        XCTAssertNil(LocationCadencePolicy.trustedSpeed(fixSpeed: 23.3, horizontalAccuracy: 1414))
+        XCTAssertEqual(LocationCadencePolicy.trustedSpeed(fixSpeed: 23.3, horizontalAccuracy: 12), 23.3)
+        XCTAssertNil(LocationCadencePolicy.trustedSpeed(fixSpeed: -1, horizontalAccuracy: 12))
+    }
+
     func testSlowWalkSpeedCountsAsMovingWithoutMotionPermission() {
         let tier = LocationCadencePolicy.tier(
             speed: 1.2,

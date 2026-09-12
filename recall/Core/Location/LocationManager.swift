@@ -319,8 +319,14 @@ final class LocationManager: NSObject {
     /// Recompute the cadence from this fix. Speed comes from the fix itself when the
     /// OS supplies it, otherwise from displacement since the previous good fix.
     private func updateCadence(for location: CLLocation, isInForeground: Bool) {
-        var speed: Double? = location.speed >= 0 ? location.speed : nil
-        if speed == nil, let prev = lastGoodLocation {
+        var speed = LocationCadencePolicy.trustedSpeed(
+            fixSpeed: location.speed,
+            horizontalAccuracy: location.horizontalAccuracy
+        )
+        if speed == nil,
+           let prev = lastGoodLocation,
+           location.horizontalAccuracy <= LocationCadencePolicy.speedTrustAccuracy,
+           prev.horizontalAccuracy <= LocationCadencePolicy.speedTrustAccuracy {
             let dt = location.timestamp.timeIntervalSince(prev.timestamp)
             if dt >= 1 { speed = location.distance(from: prev) / dt }
         }
