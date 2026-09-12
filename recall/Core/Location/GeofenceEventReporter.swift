@@ -83,9 +83,11 @@ enum GeofenceEventReporter {
             guard (200...299).contains(http.statusCode) else {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 ActivityLogger.shared.log(.telemetry, "\(label): HTTP \(http.statusCode): \(body)")
+                TelemetryService.shared.locationManager.noteCrossing(label, accepted: false)
                 return
             }
             ActivityLogger.shared.log(.telemetry, "\(label) sent: HTTP \(http.statusCode)")
+            TelemetryService.shared.locationManager.noteCrossing(label, accepted: true)
         } catch {
             ActivityLogger.shared.log(.telemetry, "\(label) failed: \(error.localizedDescription)")
         }

@@ -91,6 +91,46 @@ final class LocationManager: NSObject {
     var lastSendAge: TimeInterval? {
         lastSentTime.map { Date().timeIntervalSince($0) }
     }
+    /// How long the last two sends were actually apart. The interval the cadence asks
+    /// for and the interval the phone delivers are not the same number: a parked phone
+    /// is only woken when a fix arrives, so the screen says what happened rather than
+    /// what was intended.
+    private(set) var lastSendGap: TimeInterval?
+    /// Seconds until the cadence would send again. Negative means overdue.
+    var secondsUntilNextSend: TimeInterval? {
+        lastSendAge.map { currentSendInterval - $0 }
+    }
+    /// The last crossing announced to the server: what it was, when, and whether it was
+    /// accepted. Set by `GeofenceEventReporter` for both event kinds.
+    private(set) var lastCrossing: String?
+    private(set) var lastCrossingAt: Date?
+    private(set) var lastCrossingAccepted = false
+
+    /// Configured anchors, and how many are near enough to be able to fire from here.
+    /// Away from all of them — the owner's Singapore home, say — the parked circle is
+    /// the only crossing there is, which is why leaving it is announced too.
+    var anchorCount: Int { AppSettings.shared.locationAnchors.count }
+    var anchorsInRange: Int {
+        guard let here = lastGoodLocation else { return 0 }
+        return AppSettings.shared.locationAnchors.filter { anchor in
+            let center = CLLocation(latitude: anchor.latitude, longitude: anchor.longitude)
+            return here.distance(from: center) <= anchor.radius + 1000
+        }.count
+    }
+
+    func noteCrossing(_ label: String, accepted: Bool) {
+        lastCrossing = label
+        lastCrossingAt = Date()
+        lastCrossingAccepted = accepted
+    }
+
+    /// Records a send and how far it fell from the one before it.
+    private func noteSendTime() {
+        if let previous = lastSentTime {
+            lastSendGap = Date().timeIntervalSince(previous)
+        }
+        lastSentTime = Date()
+    }
     /// Geofence armed around wherever the phone parked, so leaving is caught even if
     /// the motion chip is slow to call it walking (and coarse parked fixes cannot).
     private static let parkedRegionID = "recall.parked-spot"
@@ -281,7 +321,7 @@ final class LocationManager: NSObject {
             if case .sent(_, let received, _, _) = result {
                 totalSuccessfulSends += 1
                 lastSentLocation = location
-                lastSentTime = Date()
+                noteSendTime()
                 lastHttpAcceptedAt = Date()
                 lastError = nil
                 lastErrorAt = nil
@@ -314,7 +354,7 @@ final class LocationManager: NSObject {
                 // Direct send succeeded — same as FG path
                 totalSuccessfulSends += 1
                 lastSentLocation = location
-                lastSentTime = Date()
+                noteSendTime()
                 lastHttpAcceptedAt = Date()
                 lastError = nil
                 lastErrorAt = nil
@@ -340,7 +380,7 @@ final class LocationManager: NSObject {
                 await LocationQueue.shared.enqueue(sample)
                 totalQueuedBackgroundSends += 1
                 lastSentLocation = location
-                lastSentTime = Date()
+                noteSendTime()
                 resetHeartbeatTimer()
 
                 ActivityLogger.shared.log(.location, String(
@@ -786,7 +826,7 @@ final class LocationManager: NSObject {
                 if case .sent(_, let received, _, _) = result {
                     self.totalSuccessfulSends += 1
                     self.lastSentLocation = location
-                    self.lastSentTime = Date()
+                    self.noteSendTime()
                     self.lastHttpAcceptedAt = Date()
                     self.lastError = nil
                     self.lastErrorAt = nil
@@ -810,7 +850,7 @@ final class LocationManager: NSObject {
                 if case .sent(_, let received, _, _) = result {
                     self.totalSuccessfulSends += 1
                     self.lastSentLocation = location
-                    self.lastSentTime = Date()
+                    self.noteSendTime()
                     self.lastHttpAcceptedAt = Date()
                     self.lastError = nil
                     self.lastErrorAt = nil
@@ -833,7 +873,7 @@ final class LocationManager: NSObject {
                     await LocationQueue.shared.enqueue(sample)
                     self.totalQueuedBackgroundSends += 1
                     self.lastSentLocation = location
-                    self.lastSentTime = Date()
+                    self.noteSendTime()
                     ActivityLogger.shared.log(.location, String(
                         format: "BG heartbeat queued (fallback): %.4f, %.4f (%.0fm)%@",
                         location.coordinate.latitude,

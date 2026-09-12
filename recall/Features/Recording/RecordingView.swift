@@ -157,16 +157,30 @@ struct RecordingView: View {
                 badgeColor: RecallTheme.Colors.textSecondary,
                 glitch: viewModel.isRecording
             )
+            // Same shape as the location card: the rule it is working to, then what has
+            // actually happened, then the detail. A card that only shows meters says how
+            // loud the room is, never what the app will do with it.
+            VStack(alignment: .leading, spacing: 3) {
+                Text(audioRule)
+                    .font(RecallTheme.Fonts.hudMeter)
+                    .foregroundStyle(stateColor)
+                Text(audioFooter)
+                    .font(RecallTheme.Fonts.hudMicro)
+                    .foregroundStyle(RecallTheme.Colors.textLabel)
+            }
             metersSection
-            Text(audioFooter)
-                .font(RecallTheme.Fonts.hudMicro)
-                .foregroundStyle(RecallTheme.Colors.textLabel)
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.state)
     }
 
+    private var audioRule: String {
+        viewModel.isActive
+            ? "CUTS AT 1.5s SILENCE, 30s MAX"
+            : "NOT LISTENING"
+    }
+
     private var audioFooter: String {
-        var parts = ["mic \(viewModel.currentMicMode == .bluetoothHFP ? "bluetooth" : "iphone")", "30s max chunk"]
+        var parts = ["mic \(viewModel.currentMicMode == .bluetoothHFP ? "bluetooth" : "iphone")"]
         if viewModel.isRecording {
             parts.insert("current \(formatDuration(viewModel.currentChunkDuration))", at: 0)
         }
@@ -248,66 +262,100 @@ struct RecordingView: View {
     private var locationCard: some View {
         let location = telemetry.locationManager
         let cadence = location.cadence
-        VStack(alignment: .leading, spacing: 10) {
-            cardHeader(
-                label: "LOCATION",
-                state: gpsModeLabel(cadence),
-                stateColor: gpsModeColor(cadence),
-                detail: nil,
-                badge: location.parkedRegionArmed ? "FENCE 100m" : nil,
-                badgeColor: RecallTheme.Colors.neonGreen
-            )
-
-            Text(cadenceExplanation(cadence))
-                .font(RecallTheme.Fonts.hudCaption)
-                .foregroundStyle(RecallTheme.Colors.textLabel)
-
+        return VStack(alignment: .leading, spacing: 10) {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 let motion = MotionActivityMonitor.shared
-                VStack(alignment: .leading, spacing: 6) {
-                    if cadence == .parked {
-                        // What is being watched for, and how close each one is to firing.
-                        triggerRow(
-                            "SHAKE",
-                            String(format: "%.2f", motion.parkedShakePeak),
-                            String(format: "%.2f g", MotionActivityMonitor.shakeThreshold),
-                            motion.parkedShakePeak >= MotionActivityMonitor.shakeThreshold
-                        )
-                        triggerRow("STEPS", "\(motion.stepsSinceStart)", "any step", motion.stepsSinceStart > 0)
-                        triggerRow(
-                            "ACTIVITY",
-                            motion.isAvailable ? motion.latestActivity : "n/a",
-                            "walking",
-                            motion.isMoving
-                        )
-                        triggerRow(
-                            "GEOFENCE",
-                            location.parkedRegionArmed ? "armed" : "off",
-                            String(format: "%.0f m", LocationManager.parkedRegionRadius),
-                            false
-                        )
-                    } else {
-                        triggerRow(
-                            "SPEED",
-                            location.lastTrustedSpeed.map { String(format: "%.1f", $0) } ?? "--",
-                            String(format: "%.0f m/s -> FAST", LocationCadencePolicy.fastSpeed),
-                            (location.lastTrustedSpeed ?? 0) >= LocationCadencePolicy.fastSpeed
-                        )
-                        triggerRow(
-                            "STILL FOR",
-                            formatAge(location.secondsSinceLastMovement),
-                            String(format: "%.0fs -> PARKED", LocationCadencePolicy.parkedGrace),
-                            location.secondsSinceLastMovement >= LocationCadencePolicy.parkedGrace
-                        )
-                        triggerRow("STEPS", "\(motion.stepsSinceStart)", "walking", motion.isMoving)
+                VStack(alignment: .leading, spacing: 10) {
+                    cardHeader(
+                        label: "LOCATION",
+                        state: gpsModeLabel(cadence),
+                        stateColor: gpsModeColor(cadence),
+                        detail: nil,
+                        badge: nextSendBadge(location),
+                        badgeColor: RecallTheme.Colors.neonCyan
+                    )
+
+                    // The question the owner asks of this card is "how often is it
+                    // sending right now", so that is the largest thing in it after the
+                    // mode. Underneath, what actually happened: the asked-for interval
+                    // and the delivered one are not the same number while parked.
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(sendRule(cadence))
+                            .font(RecallTheme.Fonts.hudMeter)
+                            .foregroundStyle(gpsModeColor(cadence))
+                        Text(rateSummary(location))
+                            .font(RecallTheme.Fonts.hudMicro)
+                            .foregroundStyle(RecallTheme.Colors.textLabel)
                     }
 
-                    Divider().overlay(RecallTheme.Colors.textMuted.opacity(0.4))
+                    sectionLabel("WATCHING FOR")
+                    VStack(alignment: .leading, spacing: 6) {
+                        if cadence == .parked {
+                            triggerRow(
+                                "SHAKE",
+                                String(format: "%.2f", motion.parkedShakePeak),
+                                String(format: "%.2f g", MotionActivityMonitor.shakeThreshold),
+                                motion.parkedShakePeak >= MotionActivityMonitor.shakeThreshold
+                            )
+                            triggerRow("STEPS", "\(motion.stepsSinceStart)", "any step", motion.stepsSinceStart > 0)
+                            triggerRow(
+                                "ACTIVITY",
+                                motion.isAvailable ? motion.latestActivity : "n/a",
+                                "walking",
+                                motion.isMoving
+                            )
+                        } else {
+                            triggerRow(
+                                "SPEED",
+                                location.lastTrustedSpeed.map { String(format: "%.1f", $0) } ?? "--",
+                                String(format: "%.0f m/s -> FAST", LocationCadencePolicy.fastSpeed),
+                                (location.lastTrustedSpeed ?? 0) >= LocationCadencePolicy.fastSpeed
+                            )
+                            triggerRow(
+                                "STILL FOR",
+                                formatAge(location.secondsSinceLastMovement),
+                                String(format: "%.0fs -> PARKED", LocationCadencePolicy.parkedGrace),
+                                location.secondsSinceLastMovement >= LocationCadencePolicy.parkedGrace
+                            )
+                            triggerRow("STEPS", "\(motion.stepsSinceStart)", "walking", motion.isMoving)
+                        }
+                    }
 
-                    HStack(spacing: 0) {
-                        diagField("GPS ACC", location.lastFixAccuracy.map { String(format: "%.0f m", $0) } ?? "no fix")
-                        diagField("LAST FIX", location.lastAcceptedFixAge.map(formatAge) ?? "--")
-                        diagField("LAST SEND", location.lastSendAge.map(formatAge) ?? "--")
+                    // Who can testify that the owner has left. The server refuses to greet
+                    // on Wi-Fi alone, so it matters on screen whether a second witness
+                    // exists where the phone happens to be.
+                    sectionLabel("DEPARTURE WITNESSES")
+                    VStack(alignment: .leading, spacing: 6) {
+                        let net = ConnectivityMonitor.shared
+                        triggerRow(
+                            "WIFI",
+                            net.currentSSID ?? "unknown",
+                            net.isOnNamedWiFi
+                                ? (net.ssidAgeSeconds.map { "read \(formatAge(TimeInterval($0))) ago" } ?? "on")
+                                : "left",
+                            net.isOnNamedWiFi
+                        )
+                        triggerRow(
+                            "FENCE",
+                            location.parkedRegionArmed ? "armed" : "off",
+                            String(format: "%.0f m around here", LocationManager.parkedRegionRadius),
+                            location.parkedRegionArmed
+                        )
+                        triggerRow(
+                            "ANCHORS",
+                            "\(location.anchorsInRange) of \(location.anchorCount)",
+                            location.anchorsInRange > 0 ? "in range" : "none here",
+                            location.anchorsInRange > 0
+                        )
+                        if let crossing = location.lastCrossing, let at = location.lastCrossingAt {
+                            Text("last sent  //  \(crossing)  \(formatAge(Date().timeIntervalSince(at))) ago")
+                                .font(RecallTheme.Fonts.hudMicro)
+                                .foregroundStyle(
+                                    location.lastCrossingAccepted
+                                        ? RecallTheme.Colors.neonGreen
+                                        : RecallTheme.Colors.neonAmber
+                                )
+                        }
                     }
                 }
             }
@@ -318,6 +366,42 @@ struct RecordingView: View {
                     .foregroundStyle(RecallTheme.Colors.neonAmber)
             }
         }
+    }
+
+    /// Right-hand badge: the countdown to the next send, which says the rate and proves
+    /// the stream is alive at the same time.
+    private func nextSendBadge(_ location: LocationManager) -> String {
+        guard let remaining = location.secondsUntilNextSend else { return "SENDING" }
+        return remaining <= 0 ? "DUE NOW" : "NEXT \(formatAge(remaining))"
+    }
+
+    /// What actually makes a send happen in this tier — the walking tier answers to
+    /// distance first and only falls back on the clock, and saying only the clock would
+    /// be a quarter true.
+    private func sendRule(_ cadence: LocationCadence) -> String {
+        let interval = formatAge(LocationCadencePolicy.sendInterval(for: cadence))
+        switch cadence {
+        case .parked: return "SENDS EVERY \(interval)"
+        case .walking: return "SENDS ON 20 m, ELSE EVERY \(interval)"
+        case .fast: return "SENDS EVERY \(interval)"
+        }
+    }
+
+    /// What has been happening, as opposed to what is meant to happen.
+    private func rateSummary(_ location: LocationManager) -> String {
+        var parts: [String] = []
+        parts.append(location.lastSendGap.map { "last gap \(formatAge($0))" } ?? "no gap yet")
+        parts.append(location.lastFixAccuracy.map { String(format: "gps %.0f m", $0) } ?? "no fix")
+        if let age = location.lastAcceptedFixAge { parts.append("fix \(formatAge(age)) old") }
+        return parts.joined(separator: "  //  ")
+    }
+
+    @ViewBuilder
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(RecallTheme.Fonts.hudMicro)
+            .foregroundStyle(RecallTheme.Colors.textLabel)
+            .tracking(2)
     }
 
     /// One watched signal: what it reads now, what would trip it, and whether it has.
