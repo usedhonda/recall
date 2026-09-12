@@ -36,15 +36,10 @@ struct RecordingView: View {
                         telemetryStatusBanner
                         uploadHealthBanner
 
-                        heroStateSection
-
-                        metersSection
+                        recordingCard
                             .padding(12)
                             .hudBrackets(color: stateColor.opacity(0.5))
                             .hudCardGlow(color: stateColor, isActive: viewModel.isActive)
-                            .padding(.horizontal, 12)
-
-                        chunkInfo
                             .padding(.horizontal, 12)
 
                         if let error = viewModel.errorMessage {
@@ -132,14 +127,18 @@ struct RecordingView: View {
         // One compact line: the recording state is one stream among several, so it
         // should not tower over the location / health rows.
         HStack(spacing: 8) {
+            Text("AUDIO:")
+                .font(RecallTheme.Fonts.hudCaption)
+                .foregroundStyle(RecallTheme.Colors.textSecondary)
+
             GlitchText(
                 text: stateText,
-                font: RecallTheme.Fonts.hudLarge,
+                font: RecallTheme.Fonts.hudTitle,
                 color: stateColor,
                 tracking: 2,
                 continuousGlitch: viewModel.isRecording
             )
-            .shadow(color: stateColor.opacity(heroGlowOpacity), radius: heroGlowRadius)
+            .shadow(color: stateColor.opacity(heroGlowOpacity), radius: heroGlowRadius / 2)
 
             if viewModel.isActive {
                 HStack(spacing: 4) {
@@ -154,11 +153,20 @@ struct RecordingView: View {
 
             Spacer()
         }
-        .padding(.horizontal, 12)
         .animation(.easeInOut(duration: 0.3), value: viewModel.state)
     }
 
     // MARK: - Meters
+
+    /// The recording stream in one card: its state, its meters, its chunk counter.
+    @ViewBuilder
+    private var recordingCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            heroStateSection
+            metersSection
+            chunkInfo
+        }
+    }
 
     @ViewBuilder
     private var metersSection: some View {
