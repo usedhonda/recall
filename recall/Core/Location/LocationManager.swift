@@ -61,6 +61,13 @@ final class LocationManager: NSObject {
     /// position drained the battery. Movement still sends immediately.
     private let stationaryHeartbeatInterval: TimeInterval = 300
 
+    /// The heartbeat timer ticks faster than the interval it enforces. Ticking once
+    /// per interval meant a tick landing a few ms early failed the elapsed check and
+    /// the send slipped to the next tick — a 600 s gap instead of 300 s, which is
+    /// past the server's 10 min staleness threshold and made leaving home look late.
+    private let heartbeatTickInterval: TimeInterval = 60
+    private let heartbeatTolerance: TimeInterval = 2
+
     // MARK: - Send Status
 
     private(set) var lastSentTime: Date?
@@ -460,7 +467,7 @@ final class LocationManager: NSObject {
     private func startHeartbeatTimer() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = Timer.scheduledTimer(
-            withTimeInterval: stationaryHeartbeatInterval,
+            withTimeInterval: heartbeatTickInterval,
             repeats: true
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -478,7 +485,7 @@ final class LocationManager: NSObject {
         guard let location = lastGoodLocation ?? currentLocation else { return }
 
         let elapsed = lastSentTime.map { Date().timeIntervalSince($0) } ?? .infinity
-        guard elapsed >= stationaryHeartbeatInterval else { return }
+        guard elapsed >= stationaryHeartbeatInterval - heartbeatTolerance else { return }
 
         let quality = qualityFor(location)
         let isInForeground = UIApplication.shared.applicationState == .active
