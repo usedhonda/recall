@@ -41,6 +41,11 @@ final class MotionActivityMonitor {
     private(set) var gaitStepsPerMinute: Double?
     private(set) var userAcceleration: Double?
     private(set) var rotationRate: Double?
+    /// Peak shake seen by the parked accelerometer watch since it started (g).
+    private(set) var parkedShakePeak: Double = 0
+    private var shakeWatchRunning = false
+    /// Above this much acceleration the phone is being carried, not sitting still.
+    private let shakeThreshold: Double = 0.12
 
     private init() {}
 
@@ -59,13 +64,17 @@ final class MotionActivityMonitor {
             self.apply(activity)
         }
         startStepUpdates()
-        ActivityLogger.shared.log(.location, "Motion activity + step updates started")
+        startStepEvents()
+        startShakeWatch()
+        ActivityLogger.shared.log(.location, "Motion: activity + steps + shake watch started")
     }
 
     func stop() {
         guard isRunning else { return }
         manager.stopActivityUpdates()
         pedometer.stopUpdates()
+        pedometer.stopEventUpdates()
+        stopShakeWatch()
         lastStepCount = 0
         isRunning = false
         isMoving = true
@@ -91,11 +100,53 @@ final class MotionActivityMonitor {
         stepsSinceStart = steps
         guard steps > lastStepCount else { return }
         lastStepCount = steps
+        noteMovement(source: "steps")
+    }
+
+    /// Pedometer events fire the moment walking starts or pauses — the lowest-latency
+    /// "the owner picked the phone up and walked" signal iOS offers.
+    private func startStepEvents() {
+        guard CMPedometer.isPedometerEventTrackingAvailable() else { return }
+        pedometer.startEventUpdates { [weak self] event, _ in
+            guard let event, event.type == .resume else { return }
+            Task { @MainActor [weak self] in
+                self?.noteMovement(source: "step event")
+            }
+        }
+    }
+
+    /// Accelerometer watch for the parked phone: 1 Hz, magnitude only. This is the
+    /// "is it being shaken / carried" signal, independent of GPS and of how long the
+    /// activity classifier takes to call it walking.
+    private func startShakeWatch() {
+        guard deviceMotion.isAccelerometerAvailable, !shakeWatchRunning else { return }
+        shakeWatchRunning = true
+        parkedShakePeak = 0
+        deviceMotion.accelerometerUpdateInterval = 1.0
+        deviceMotion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
+            guard let self, let data else { return }
+            let a = data.acceleration
+            // Gravity is ~1 g; the deviation from it is the movement.
+            let magnitude = abs((a.x * a.x + a.y * a.y + a.z * a.z).squareRoot() - 1.0)
+            self.parkedShakePeak = max(self.parkedShakePeak, magnitude)
+            guard magnitude >= self.shakeThreshold else { return }
+            self.noteMovement(source: String(format: "shake %.2fg", magnitude))
+        }
+    }
+
+    private func stopShakeWatch() {
+        guard shakeWatchRunning else { return }
+        deviceMotion.stopAccelerometerUpdates()
+        shakeWatchRunning = false
+    }
+
+    /// Any sensor that says the phone is moving right now.
+    private func noteMovement(source: String) {
         lastMotionAt = Date()
         guard !isMoving else { return }
         isMoving = true
-        latestActivity = "steps"
-        ActivityLogger.shared.log(.location, "Motion: steps detected (moving=true)")
+        latestActivity = source
+        ActivityLogger.shared.log(.location, "Motion: \(source) (moving=true)")
         onMovementStart?()
     }
 

@@ -274,8 +274,8 @@ struct RecordingView: View {
                         diagField("GAIT", motion.gaitStepsPerMinute.map { String(format: "%.0f spm", $0) } ?? "--")
                     }
                     HStack(spacing: 0) {
+                        diagField("SHAKE", String(format: "%.2f g", motion.parkedShakePeak))
                         diagField("ACCEL", motion.userAcceleration.map { String(format: "%.2f g", $0) } ?? "--")
-                        diagField("GYRO", motion.rotationRate.map { String(format: "%.2f r/s", $0) } ?? "--")
                         diagField("STILL FOR", formatAge(location.secondsSinceLastMovement))
                     }
                     HStack(spacing: 0) {
