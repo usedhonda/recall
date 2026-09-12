@@ -56,10 +56,13 @@ final class LocationManager: NSObject {
 
     var minDistance: CLLocationDistance = 20
 
-    /// While stationary (< minDistance from the last sent fix), re-send at most
-    /// this often. Was minSendInterval (15 s) — ~180 POSTs/h of an unchanged
-    /// position drained the battery. Movement still sends immediately.
-    private let stationaryHeartbeatInterval: TimeInterval = 300
+    /// Current send cadence (parked / walking / fast). GPS speed decides the fast
+    /// tier, the motion coprocessor decides walking vs parked — see LocationCadencePolicy.
+    private(set) var cadence: LocationCadence = .walking
+    /// Seconds between sends at the current cadence, for the HUD.
+    var currentSendInterval: TimeInterval { LocationCadencePolicy.sendInterval(for: cadence) }
+    private var lastMovementAt = Date()
+    private var continuousUpdatesRunning = false
 
     /// The heartbeat timer ticks faster than the interval it enforces. Ticking once
     /// per interval meant a tick landing a few ms early failed the elapsed check and
@@ -177,6 +180,13 @@ final class LocationManager: NSObject {
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.startUpdatingLocation()
 
+        continuousUpdatesRunning = true
+
+        MotionActivityMonitor.shared.onMovementStart = { [weak self] in
+            self?.resumeForMovement(reason: "motion")
+        }
+        MotionActivityMonitor.shared.start()
+
         refreshRegions()
         startHeartbeatTimer()
         ActivityLogger.shared.log(.location, "Location updates started (bg=\(backgroundEnabled) canBg=\(canUseBackground) auth=\(authorizationStatus.rawValue))")
@@ -190,7 +200,9 @@ final class LocationManager: NSObject {
         backgroundActivitySession?.invalidate()
         backgroundActivitySession = nil
 
+        MotionActivityMonitor.shared.stop()
         locationManager.stopUpdatingLocation()
+        continuousUpdatesRunning = false
         locationManager.stopMonitoringSignificantLocationChanges()
         stopAllRegions()
         ActivityLogger.shared.log(.location, "Location updates stopped")
@@ -206,13 +218,13 @@ final class LocationManager: NSObject {
 
         let isInForeground = UIApplication.shared.applicationState == .active
         // Accuracy stays Best in both FG and BG (a coarse BG fix was the stale
-        // anchor that let the jump filter lock up). Only distanceFilter throttles
-        // BG update frequency.
+        // anchor that let the jump filter lock up). Cadence throttles how often
+        // fixes are delivered and sent.
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = isInForeground ? kCLDistanceFilterNone : 10
 
         guard shouldAcceptLocation(location) else { return }
 
+        updateCadence(for: location, isInForeground: isInForeground)
         lastGoodLocation = location
 
         guard shouldSendLocation(location) else { return }
@@ -300,6 +312,73 @@ final class LocationManager: NSObject {
                 await TelemetryUploader.shared.triggerUpload()
             }
         }
+    }
+
+    // MARK: - Cadence
+
+    /// Recompute the cadence from this fix. Speed comes from the fix itself when the
+    /// OS supplies it, otherwise from displacement since the previous good fix.
+    private func updateCadence(for location: CLLocation, isInForeground: Bool) {
+        var speed: Double? = location.speed >= 0 ? location.speed : nil
+        if speed == nil, let prev = lastGoodLocation {
+            let dt = location.timestamp.timeIntervalSince(prev.timestamp)
+            if dt >= 1 { speed = location.distance(from: prev) / dt }
+        }
+        if let speed, speed >= LocationCadencePolicy.movingSpeed { lastMovementAt = Date() }
+
+        let next = LocationCadencePolicy.tier(
+            speed: speed,
+            motionSaysMoving: MotionActivityMonitor.shared.isMoving,
+            secondsSinceLastMovement: Date().timeIntervalSince(lastMovementAt)
+        )
+        apply(cadence: next, isInForeground: isInForeground, speed: speed)
+    }
+
+    private func apply(cadence next: LocationCadence, isInForeground: Bool, speed: Double?) {
+        if next != cadence {
+            let speedText = speed.map { String(format: " %.1fm/s", $0) } ?? ""
+            ActivityLogger.shared.log(.location, "Cadence: \(cadence.rawValue) -> \(next.rawValue)\(speedText)")
+            cadence = next
+            resetHeartbeatTimer()
+        }
+
+        switch cadence {
+        case .parked:
+            // Nothing is moving: stop continuous GPS. Significant-location changes,
+            // region monitoring, the motion callback and the 5 min heartbeat (which
+            // also asks for one fresh fix) all still bring us back.
+            if continuousUpdatesRunning {
+                locationManager.stopUpdatingLocation()
+                continuousUpdatesRunning = false
+                ActivityLogger.shared.log(.location, "Parked — continuous GPS off")
+            }
+        case .walking:
+            resumeContinuousUpdates()
+            locationManager.distanceFilter = isInForeground ? kCLDistanceFilterNone : 10
+        case .fast:
+            resumeContinuousUpdates()
+            locationManager.distanceFilter = kCLDistanceFilterNone
+        }
+    }
+
+    private func resumeContinuousUpdates() {
+        guard !continuousUpdatesRunning else { return }
+        locationManager.startUpdatingLocation()
+        continuousUpdatesRunning = true
+        ActivityLogger.shared.log(.location, "Continuous GPS on (\(cadence.rawValue))")
+    }
+
+    /// Movement seen while parked (motion coprocessor, or a heartbeat fix that moved):
+    /// resume GPS and send immediately instead of waiting for the next heartbeat.
+    private func resumeForMovement(reason: String) {
+        guard isEnabled, hasAuthorization, cadence == .parked else { return }
+        ActivityLogger.shared.log(.location, "Movement (\(reason)) — resuming GPS")
+        cadence = .walking
+        lastMovementAt = Date()
+        resumeContinuousUpdates()
+        forceNextSend()
+        locationManager.requestLocation()
+        resetHeartbeatTimer()
     }
 
     // MARK: - Location Quality Filtering
@@ -437,7 +516,7 @@ final class LocationManager: NSObject {
         let timeSinceLastSend = Date().timeIntervalSince(lastTime)
         let distance = location.distance(from: lastSent)
 
-        return timeSinceLastSend >= stationaryHeartbeatInterval || distance >= minDistance
+        return timeSinceLastSend >= currentSendInterval || distance >= minDistance
     }
 
     /// Formats Phase 1 (Track 2) sample metadata for ActivityLog visibility.
@@ -485,7 +564,14 @@ final class LocationManager: NSObject {
         guard let location = lastGoodLocation ?? currentLocation else { return }
 
         let elapsed = lastSentTime.map { Date().timeIntervalSince($0) } ?? .infinity
-        guard elapsed >= stationaryHeartbeatInterval - heartbeatTolerance else { return }
+        guard elapsed >= currentSendInterval - heartbeatTolerance else { return }
+
+        if cadence == .parked {
+            // Trains and smooth cars can read as "stationary" to the motion chip, so
+            // every heartbeat also asks for one fresh fix; if it moved, handleLocationUpdate
+            // switches the cadence back up.
+            locationManager.requestLocation()
+        }
 
         let quality = qualityFor(location)
         let isInForeground = UIApplication.shared.applicationState == .active

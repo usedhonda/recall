@@ -180,6 +180,55 @@ struct RecordingView: View {
                 threshold: AppSettings.shared.vadThreshold,
                 barColor: RecallTheme.Colors.neonGreen
             )
+            gpsCadenceRow
+        }
+    }
+
+    /// Live GPS cadence: which tier the location lane picked and how often it sends.
+    @ViewBuilder
+    private var gpsCadenceRow: some View {
+        let cadence = telemetry.locationManager.cadence
+        HStack(spacing: 6) {
+            Text("GPS.MODE:")
+                .font(RecallTheme.Fonts.hudCaption)
+                .foregroundStyle(RecallTheme.Colors.textSecondary)
+            Text(gpsModeLabel(cadence))
+                .font(RecallTheme.Fonts.hudMeter)
+                .foregroundStyle(gpsModeColor(cadence))
+            Text("//")
+                .font(RecallTheme.Fonts.hudCaption)
+                .foregroundStyle(RecallTheme.Colors.textMuted)
+            Text("RATE:")
+                .font(RecallTheme.Fonts.hudCaption)
+                .foregroundStyle(RecallTheme.Colors.textSecondary)
+            Text(gpsRateLabel(cadence))
+                .font(RecallTheme.Fonts.hudMeter)
+                .foregroundStyle(gpsModeColor(cadence))
+            Spacer()
+        }
+    }
+
+    private func gpsModeLabel(_ cadence: LocationCadence) -> String {
+        switch cadence {
+        case .parked: return "PARKED"
+        case .walking: return "WALKING"
+        case .fast: return "FAST"
+        }
+    }
+
+    private func gpsRateLabel(_ cadence: LocationCadence) -> String {
+        switch cadence {
+        case .parked: return "300s"
+        case .walking: return "20m / 300s"
+        case .fast: return "30s"
+        }
+    }
+
+    private func gpsModeColor(_ cadence: LocationCadence) -> Color {
+        switch cadence {
+        case .parked: return RecallTheme.Colors.textSecondary
+        case .walking: return RecallTheme.Colors.neonCyan
+        case .fast: return RecallTheme.Colors.neonAmber
         }
     }
 
