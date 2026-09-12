@@ -334,12 +334,21 @@ final class LocationManager: NSObject {
         }
         if let speed, speed >= LocationCadencePolicy.movingSpeed { lastMovementAt = Date() }
 
-        let next = LocationCadencePolicy.tier(
+        let next = nextCadence(speed: speed)
+        apply(cadence: next, isInForeground: isInForeground, speed: speed)
+    }
+
+    /// Parking is only allowed once one fix has passed the accuracy filter. Indoors a
+    /// single coarse request comes back at ~1.6 km, which the filter rejects, so parking
+    /// before that left the server with no position at all; continuous Best updates need
+    /// a little time to converge.
+    private func nextCadence(speed: Double?) -> LocationCadence {
+        guard lastGoodLocation != nil else { return .walking }
+        return LocationCadencePolicy.tier(
             speed: speed,
             motionSaysMoving: MotionActivityMonitor.shared.isMoving,
             secondsSinceLastMovement: Date().timeIntervalSince(lastMovementAt)
         )
-        apply(cadence: next, isInForeground: isInForeground, speed: speed)
     }
 
     private func apply(cadence next: LocationCadence, isInForeground: Bool, speed: Double?) {
@@ -381,11 +390,7 @@ final class LocationManager: NSObject {
     /// Re-decide the cadence without a new fix (heartbeat tick).
     private func reevaluateCadence() {
         guard isEnabled, hasAuthorization else { return }
-        let next = LocationCadencePolicy.tier(
-            speed: nil,
-            motionSaysMoving: MotionActivityMonitor.shared.isMoving,
-            secondsSinceLastMovement: Date().timeIntervalSince(lastMovementAt)
-        )
+        let next = nextCadence(speed: nil)
         apply(
             cadence: next,
             isInForeground: UIApplication.shared.applicationState == .active,
