@@ -378,7 +378,11 @@ final class LocationManager: NSObject {
             disarmParkedRegion()
             resumeContinuousUpdates()
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
-            locationManager.distanceFilter = isInForeground ? kCLDistanceFilterNone : 10
+            // No distance filter: a stationary phone delivers almost nothing with one,
+            // so GPS never converges and no fix ever passes the accuracy filter. That
+            // used to be masked by liveUpdates, which delivered regardless. Sends are
+            // rate-limited by the cadence, not by throwing fixes away here.
+            locationManager.distanceFilter = kCLDistanceFilterNone
         case .fast:
             disarmParkedRegion()
             resumeContinuousUpdates()
