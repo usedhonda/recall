@@ -77,6 +77,9 @@ final class HealthKitManager {
     private var lastPostedFingerprint: String?
     private var lastPostedAt: Date?
     private var isSkippingForLock = false
+    /// Guards against two queries running at once (launch fires the catch-up query and
+    /// the first observer wake together), which POSTed the same snapshot twice.
+    private var isQuerying = false
     private var protectedDataObserver: NSObjectProtocol?
 
     // MARK: - Initialization
@@ -394,6 +397,9 @@ final class HealthKitManager {
 
     private func queryAndSend(from start: Date, to end: Date) async {
         guard isEnabled else { return }
+        guard !isQuerying else { return }
+        isQuerying = true
+        defer { isQuerying = false }
 
         // The HealthKit store is encrypted while the device is locked — every
         // query fails with "Protected health data is inaccessible". Skip, and

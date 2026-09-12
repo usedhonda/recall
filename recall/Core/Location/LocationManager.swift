@@ -361,6 +361,21 @@ final class LocationManager: NSObject {
         }
     }
 
+    /// Re-decide the cadence without a new fix (heartbeat tick).
+    private func reevaluateCadence() {
+        guard isEnabled, hasAuthorization else { return }
+        let next = LocationCadencePolicy.tier(
+            speed: nil,
+            motionSaysMoving: MotionActivityMonitor.shared.isMoving,
+            secondsSinceLastMovement: Date().timeIntervalSince(lastMovementAt)
+        )
+        apply(
+            cadence: next,
+            isInForeground: UIApplication.shared.applicationState == .active,
+            speed: nil
+        )
+    }
+
     private func resumeContinuousUpdates() {
         guard !continuousUpdatesRunning else { return }
         locationManager.startUpdatingLocation()
@@ -550,6 +565,10 @@ final class LocationManager: NSObject {
             repeats: true
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
+                // A parked phone stops producing fixes (10 m distance filter), so the
+                // cadence has to be re-evaluated here too — otherwise it can never
+                // reach the parked tier that turns continuous GPS off.
+                self?.reevaluateCadence()
                 self?.sendHeartbeat()
             }
         }
