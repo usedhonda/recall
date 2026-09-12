@@ -90,6 +90,25 @@ rather than string match.
    `docs/handoff/001-battery-cadence.md` for the numbers and the jetsam hypothesis.
 3. The stationary heartbeat effectively lands every 600 s, not 300 s: in the parked tier iOS
    only services the timer when a fix arrives. Under our own target, but exactly on
-   oc-general's 10 min gap threshold.
+   oc-general's 10 min gap threshold. The parked-probe fix below may change this, since a
+   delivered fix is itself a wake.
+
+## Fixed later the same day
+
+- **The parked probe now returns a fix** (`f44aa60`). Each parked heartbeat opened a 30 s
+  window at full accuracy, but left the 100 m distance filter on — and a phone that is not
+  moving never travels 100 m, so iOS delivered nothing. The position being re-sent aged
+  without bound (371 min, measured by oc-general on 09-12) and arrival stopped being
+  decidable from freshness. The probe now drops the filter with the accuracy; the next tick
+  restores it. Same for the window right after a relaunch, when no fix has been accepted yet.
+- **Every launch says how long the log had been silent** (`d6bbfd2`). iOS never tells an app
+  it was killed, so a termination's only trace is the hole. The alarm itself stays on the
+  server: oc-general is adding a liveness measure from the receive time, because the payload
+  `timestamp` is the fix's own time and an ageing fix cannot distinguish "alive and parked"
+  from "dead".
+- oc-general's side of the same story: `scripts/location-check:320` read `timestamp` first
+  and never reached `receivedAt`, so their monitor had no liveness measure at all. They are
+  splitting the alarm into "no word from the device" (always wrong) and "the fix is old"
+  (normal while parked or airborne).
 4. Battery: rates measured (see handoff 001). An actual %/h figure needs a day with the new
    logging, or the owner's Settings > Battery screen.
