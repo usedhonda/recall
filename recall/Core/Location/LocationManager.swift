@@ -72,6 +72,11 @@ final class LocationManager: NSObject {
     /// Why the last arriving fix was rejected, if it was.
     private(set) var lastRejectReason: String?
     private(set) var parkedRegionArmed = false
+    /// When a fix last arrived at all (accepted or rejected). Continuous updates going
+    /// quiet is otherwise invisible: the only symptom is that nothing is ever sent.
+    private(set) var lastFixArrivalAt: Date?
+    private var lastUpdatesRestartAt: Date?
+    private let noFixRestartAfter: TimeInterval = 180
     var secondsSinceLastMovement: TimeInterval { Date().timeIntervalSince(lastMovementAt) }
     var lastAcceptedFixAge: TimeInterval? {
         lastGoodLocation.map { Date().timeIntervalSince($0.timestamp) }
@@ -235,6 +240,7 @@ final class LocationManager: NSObject {
 
     private func handleLocationUpdate(_ location: CLLocation) async {
         currentLocation = location
+        lastFixArrivalAt = Date()
 
         let isInForeground = UIApplication.shared.applicationState == .active
         // Accuracy and distance filter are owned by the cadence (Best while moving,
@@ -447,6 +453,21 @@ final class LocationManager: NSObject {
         }
     }
 
+    /// Continuous updates can go silent (a stale internal flag, or iOS simply stopping
+    /// delivery) and nothing else notices — the lane just stops sending. Restart them
+    /// when no fix at all has arrived for a few minutes.
+    private func restartUpdatesIfStarved() {
+        guard isEnabled, hasAuthorization, continuousUpdatesRunning else { return }
+        let lastArrival = lastFixArrivalAt ?? .distantPast
+        guard Date().timeIntervalSince(lastArrival) >= noFixRestartAfter else { return }
+        if let last = lastUpdatesRestartAt, Date().timeIntervalSince(last) < noFixRestartAfter { return }
+        lastUpdatesRestartAt = Date()
+        let age = Int(Date().timeIntervalSince(lastArrival))
+        ActivityLogger.shared.log(.location, "No fixes for \(age)s — restarting location updates")
+        locationManager.stopUpdatingLocation()
+        locationManager.startUpdatingLocation()
+    }
+
     private func resumeContinuousUpdates() {
         guard !continuousUpdatesRunning else { return }
         locationManager.startUpdatingLocation()
@@ -644,6 +665,7 @@ final class LocationManager: NSObject {
                 // A parked phone stops producing fixes (10 m distance filter), so the
                 // cadence has to be re-evaluated here too — otherwise it can never
                 // reach the parked tier that turns continuous GPS off.
+                self?.restartUpdatesIfStarved()
                 self?.reevaluateCadence()
                 self?.sendHeartbeat()
             }
