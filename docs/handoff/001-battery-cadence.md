@@ -75,6 +75,32 @@
   2. Duplicate location delivery: owner ruled 2026-09-11 to fix it inside Phase 2 (location
      delivery-path consolidation), not as a standalone patch.
   3. Confirm with oc-general that location/health/channel_status receipt continues.
+- Measured 2026-09-13 with `scripts/log-rates.py` over two full JST days of the on-device
+  log (before = 09-10, the last complete pre-deploy day, audio OFF; after = 09-12, the first
+  complete post-deploy day, audio ON). Per hour:
+
+  | | before | after | target |
+  |---|---|---|---|
+  | total log lines | 6707 | 549 | <= 600 |
+  | HealthKit query cycles | 240.9 | 11.7 | <= 10 |
+  | health POST (bg) | 134.5 | 4.4 (+6.6 suppressed as unchanged) | <= 5 |
+  | location sends, stationary hours | ~190 | 6 | <= 12 |
+  | location sends, whole day | 190.6 | 32.2 | n/a (09-12 included a trip) |
+  | upload queue health | 11.9 | 9.2 | n/a |
+
+  Every target is met except HK cycles, which miss by 1.7/h on a day full of walking —
+  the observer fires on new step data, which is the intended behaviour.
+- Two things the measurement turned up, neither of them the cadence work misfiring:
+  - **The stationary heartbeat lands every 600 s, not the intended 300 s** (20:48:44,
+    20:58:44, 21:08:44 UTC, identical coordinates). In the parked tier iOS only wakes the
+    app when a fix arrives, and the 60 s `Timer` is serviced on that wake, so the fix rate
+    is the real floor. It is under the 12/h target, but it sits exactly on oc-general's
+    10 min gap threshold — tell them, or shorten the parked distance filter.
+  - **The app was terminated for 5h04m on 09-12** (last line 09-11T21:08:44Z, silent
+    relaunch 09-12T02:13:05Z = 06:08 -> 11:13 JST). No error, no engine line: audio was not
+    running, so only the location stream was holding the process up. FACT: the outage
+    happened and no greeting could have fired in it. HYPOTHESIS (one day each, not proven):
+    a quieter app is a better jetsam candidate. The old build's day shows no gap at all.
 - Completion criteria remaining: 24h numbers vs targets (HK cycles <= 10/h, health POST
   <= 5/h, stationary location <= 12/h, log lines <= 600/h); owner battery comparison.
 - Links: `docs/pipeline.md` §8, `docs/stream-independence.md`.

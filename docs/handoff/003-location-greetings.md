@@ -42,14 +42,36 @@ back at ~1.7 km and the 200 m filter rejected all of them, so `LAST FIX --` and 
 "No fixes ... restarting location updates" lines are the environment, not a defect. Do not
 tune thresholds from that window.
 
+## Done 2026-09-13
+
+- **`fix_id` is now a real join key** (`bfde8d3`). Crossing events used to invent one, so
+  nothing could be correlated. `LocationManager` issues an id when it accepts a fix and
+  re-issues it only for a genuinely different fix (the forced send after a crossing replays
+  the same `CLLocation`); positions and events both quote it. `TelemetrySample.id` stays
+  unique per POST on purpose — the stationary heartbeat re-sends one fix every few minutes
+  and a stable `id` would let the server dedupe the heartbeat away. Wire format is pinned by
+  `Tests/recallTests/TelemetrySampleEncodingTests.swift`.
+- **The Wi-Fi name is read on every foreground** (`abbd1d7`). It was only asked for on the
+  join transition, which almost always happens in the background where iOS answers nil —
+  hence zero home classifications on 09-12. The "home detection has been dead for N days"
+  watchdog stays on the server: `wifi_ssid_age_seconds` already travels with every position,
+  and a second copy of the same check on the device would be duplicated machinery.
+- **Battery level goes into the activity log on change** (`abbd1d7`), riding the heartbeat
+  tick, so the next power comparison can be stated in %/h.
+- The event schemas were re-sent to oc-general (the earlier queued copy expired unsent).
+
 ## Open
 
-1. Measure on the ground: trigger -> first accepted fix -> send, and end-to-end to the greeting
-   once oc-general's event receiver is live (they can correlate if we also put `fix_id` on
-   position POSTs — not implemented yet).
-2. Wi-Fi home detection is dead in the background (0 home classifications all day). Fixing it
-   would give the earliest possible doorway signal. Add a watchdog that warns when SSID-derived
-   home detection has been zero for N days (oc-general's advice: a fast path needs its own
-   liveness check).
-3. Battery: no 24 h before/after comparison yet; baseline numbers in
-   `docs/handoff/001-battery-cadence.md`.
+1. Measure on the ground: trigger -> first accepted fix -> send, and end-to-end to the
+   greeting once oc-general's receiver is live.
+2. **The app was dead for 5h04m on the morning of 09-12** (09-11T21:08:44Z -> 09-12T02:13:05Z,
+   i.e. 06:08 -> 11:13 JST): no lines at all, then a silent relaunch. Audio was not running,
+   so only the location stream was holding the process up. Nothing else can matter if the
+   process is gone — this outranks every latency tuning below. Needs: a launch-time line
+   recording how long the log had been silent, then a few days of data. See
+   `docs/handoff/001-battery-cadence.md` for the numbers and the jetsam hypothesis.
+3. The stationary heartbeat effectively lands every 600 s, not 300 s: in the parked tier iOS
+   only services the timer when a fix arrives. Under our own target, but exactly on
+   oc-general's 10 min gap threshold.
+4. Battery: rates measured (see handoff 001). An actual %/h figure needs a day with the new
+   logging, or the owner's Settings > Battery screen.
