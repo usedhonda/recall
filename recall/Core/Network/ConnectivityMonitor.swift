@@ -24,6 +24,8 @@ final class ConnectivityMonitor {
     /// only in the foreground, so the last known name is kept with the time it was read.
     private(set) var currentSSID: String?
     private(set) var ssidReadAt: Date?
+    /// Whether that network is the one we are on right now, or the one we just left.
+    private(set) var isOnNamedWiFi = false
     var ssidAgeSeconds: Int? { ssidReadAt.map { Int(Date().timeIntervalSince($0)) } }
 
     /// True once a real (non-nil) SSID has been observed. Gates the "away"
@@ -61,7 +63,6 @@ final class ConnectivityMonitor {
                 self.isConstrained = constrained
 
                 self.updateWiFiContext(wifi: wifi, wasWiFi: wasWiFi)
-                if !wifi { self.forgetSSID() }
 
                 if changed {
                     var flags: [String] = []
@@ -114,9 +115,17 @@ final class ConnectivityMonitor {
             // never fakes a departure while still on Wi-Fi.
             guard !wasWiFi else { return }
             readSSID()
+        } else if wasWiFi {
+            // Left Wi-Fi. The drop is visible in the background even though the name is
+            // not, so this is the earliest doorway signal we get: announce it with the
+            // network we were on and push a fresh position immediately.
+            isOnNamedWiFi = false
+            ActivityLogger.shared.log(.network, "wifi left: \(currentSSID ?? "unknown")")
+            GeofenceEventReporter.reportWiFi(transition: "left", ssid: currentSSID, at: Date())
+            applyWiFiContext(hasSeenSSIDState ? "away" : nil)
+            TelemetryService.shared.locationManager.kickFreshFix(reason: "wifi left \(currentSSID ?? "unknown")")
+            Task { await TelemetryService.shared.locationManager.sendCurrentLocationNow() }
         } else {
-            // Left Wi-Fi (cellular or none) — a real interface drop. Classify as
-            // "away" only if we ever saw a real SSID; otherwise state is unknown.
             applyWiFiContext(hasSeenSSIDState ? "away" : nil)
         }
     }
@@ -149,23 +158,18 @@ final class ConnectivityMonitor {
 
     @MainActor
     private func applySSID(_ ssid: String) {
-        let changed = ssid != currentSSID
+        let changed = ssid != currentSSID || !isOnNamedWiFi
         currentSSID = ssid
         ssidReadAt = Date()
+        isOnNamedWiFi = true
         hasSeenSSIDState = true
         if changed {
-            ActivityLogger.shared.log(.network, "wifi ssid: \(ssid)")
+            ActivityLogger.shared.log(.network, "wifi joined: \(ssid)")
+            GeofenceEventReporter.reportWiFi(transition: "joined", ssid: ssid, at: Date())
+            Task { await TelemetryService.shared.locationManager.sendCurrentLocationNow() }
         }
         let home = AppSettings.shared.homeSSID
         applyWiFiContext(ssid == home ? "home" : "away")
-    }
-
-    @MainActor
-    private func forgetSSID() {
-        guard currentSSID != nil else { return }
-        currentSSID = nil
-        ssidReadAt = Date()
-        ActivityLogger.shared.log(.network, "wifi ssid: none (off wifi)")
     }
 
     // Single data policy gate. All streams (audio/health/location) follow the

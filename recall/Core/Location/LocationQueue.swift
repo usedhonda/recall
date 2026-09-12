@@ -22,6 +22,7 @@ struct LocationSample: Codable, Identifiable {
     /// Network name and the age of that reading, mirroring `LocationPayload`.
     var wifiSSID: String?
     var wifiSSIDAgeSeconds: Int?
+    var wifiConnected: Bool?
 
     // Phase 1 (Track 2 — phantom drift detection metadata, 2026-05-04).
     // All optional so samples persisted before this field existed still decode.
@@ -45,6 +46,7 @@ struct LocationSample: Codable, Identifiable {
         self.wifi = ConnectivityMonitor.shared.wifiContext
         self.wifiSSID = ConnectivityMonitor.shared.currentSSID
         self.wifiSSIDAgeSeconds = ConnectivityMonitor.shared.ssidAgeSeconds
+        self.wifiConnected = ConnectivityMonitor.shared.isOnNamedWiFi
     }
 
     init(from location: CLLocation, quality: String? = nil) {
@@ -59,6 +61,7 @@ struct LocationSample: Codable, Identifiable {
         self.wifi = ConnectivityMonitor.shared.wifiContext
         self.wifiSSID = ConnectivityMonitor.shared.currentSSID
         self.wifiSSIDAgeSeconds = ConnectivityMonitor.shared.ssidAgeSeconds
+        self.wifiConnected = ConnectivityMonitor.shared.isOnNamedWiFi
 
         self.speedAccuracy = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
         self.course = location.course >= 0 ? location.course : nil
