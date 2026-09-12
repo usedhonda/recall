@@ -411,10 +411,17 @@ final class LocationManager: NSObject {
             // re-sending: indoors it returns ~1.8 km readings, which the accuracy filter
             // rejects. Until one good fix exists, stay on Best.
             let probing = (parkedProbeUntil.map { $0 > Date() } ?? false)
-            locationManager.desiredAccuracy = (lastGoodLocation == nil || probing)
+            let needsAFix = (lastGoodLocation == nil || probing)
+            locationManager.desiredAccuracy = needsAFix
                 ? kCLLocationAccuracyBest
                 : kCLLocationAccuracyHundredMeters
-            locationManager.distanceFilter = 100
+            // The distance filter has to come off with the accuracy. A phone that is not
+            // moving never travels 100 m, so iOS delivers nothing and the probe returns
+            // no fix at all: the position we keep re-sending ages forever (measured at
+            // 371 min by oc-general on 2026-09-12) and arrival stops being decidable.
+            // Raising the accuracy alone was never enough — the walking branch below
+            // says the same thing about a stationary phone.
+            locationManager.distanceFilter = needsAFix ? kCLDistanceFilterNone : 100
             armParkedRegion()
             MotionActivityMonitor.shared.startShakeWatch()
         case .walking:
@@ -761,6 +768,9 @@ final class LocationManager: NSObject {
             // (requestLocation would be a no-op while continuous updates run.)
             parkedProbeUntil = Date().addingTimeInterval(30)
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            // Open delivery for the same window: `apply(cadence:)` already ran on this
+            // tick, so waiting for the next one would spend most of the 30 s filtered.
+            locationManager.distanceFilter = kCLDistanceFilterNone
         }
 
         let quality = qualityFor(location)
