@@ -157,7 +157,14 @@ tell "intentionally off" from "broken". Full server contract and send policy:
 |---|---|---|---|
 | `fast` | fix speed >= 5 m/s (18 km/h) — GPS speed alone, motion is not consulted | every 30 s | continuous, no distance filter |
 | `walking` | motion activity says walking/running/cycling/automotive, or speed >= 0.7 m/s, or within 120 s of the last movement | on >= 20 m displacement, else 300 s | continuous, 10 m filter in background |
-| `parked` | motion says stationary and no movement for 120 s | 300 s heartbeat, each one also requesting a single fresh fix | updates keep running at `kCLLocationAccuracyHundredMeters` / 100 m filter (Wi-Fi + cell, GPS chip mostly idle) |
+| `parked` | motion says stationary and no movement for 120 s | 300 s heartbeat, each one also opening a 30 s window for one fresh fix | updates keep running at `kCLLocationAccuracyHundredMeters` / 100 m filter (Wi-Fi + cell, GPS chip mostly idle); **the 30 s probe drops both the accuracy and the distance filter** |
+
+**A stationary phone needs the distance filter off, not just a better accuracy.** It never
+travels 100 m, so iOS delivers nothing and the probe returns no fix: the position being
+re-sent ages without bound. Measured 2026-09-12: the last accepted fix was 20:08:44Z, every
+later heartbeat re-sent it, and the server saw the fix age climb to 371 min. The payload
+`timestamp` is the fix's own time, so an ageing fix says nothing about whether the app is
+still alive — liveness belongs to the receive time, on the server side.
 
 **Never stop location updates to save power.** Stopping them ends the location background
 session; with audio off, iOS then suspends the app and every stream stops with it — measured
