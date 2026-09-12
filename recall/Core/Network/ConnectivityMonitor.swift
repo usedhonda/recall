@@ -15,9 +15,16 @@ final class ConnectivityMonitor {
 
     /// Derived home-Wi-Fi state: "home" (on the user-set home SSID), "away"
     /// (on a different Wi-Fi, or off Wi-Fi after any SSID was seen), or nil
-    /// (feature disabled / state unknown). Only this derived value travels in
-    /// telemetry — the raw SSID never leaves the device.
+    /// (feature disabled / state unknown).
     private(set) var wifiContext: String?
+
+    /// The network name itself. The owner asked for it to travel with telemetry
+    /// (2026-09-13): OpenClaw recognises places by SSID far faster than by GPS, which
+    /// is what the greetings depend on. `NEHotspotNetwork.fetchCurrent` mostly answers
+    /// only in the foreground, so the last known name is kept with the time it was read.
+    private(set) var currentSSID: String?
+    private(set) var ssidReadAt: Date?
+    var ssidAgeSeconds: Int? { ssidReadAt.map { Int(Date().timeIntervalSince($0)) } }
 
     /// True once a real (non-nil) SSID has been observed. Gates the "away"
     /// classification on a Wi-Fi drop so probe failures don't fake a departure.
@@ -54,6 +61,7 @@ final class ConnectivityMonitor {
                 self.isConstrained = constrained
 
                 self.updateWiFiContext(wifi: wifi, wasWiFi: wasWiFi)
+                if !wifi { self.forgetSSID() }
 
                 if changed {
                     var flags: [String] = []
@@ -105,15 +113,7 @@ final class ConnectivityMonitor {
             // as "unknown" and leave wifiContext untouched so a probe failure
             // never fakes a departure while still on Wi-Fi.
             guard !wasWiFi else { return }
-            probeSSID { [weak self] ssid in
-                Task { @MainActor in
-                    guard let self else { return }
-                    guard let ssid, !ssid.isEmpty else { return } // unknown -> keep current
-                    self.hasSeenSSIDState = true
-                    let home = AppSettings.shared.homeSSID
-                    self.applyWiFiContext(ssid == home ? "home" : "away")
-                }
-            }
+            readSSID()
         } else {
             // Left Wi-Fi (cellular or none) — a real interface drop. Classify as
             // "away" only if we ever saw a real SSID; otherwise state is unknown.
@@ -135,11 +135,37 @@ final class ConnectivityMonitor {
     }
 
     /// Fetch the current Wi-Fi SSID via NEHotspotNetwork (needs the wifi-info
-    /// entitlement + location auth). The callback fires on an arbitrary queue.
-    private func probeSSID(_ completion: @escaping (String?) -> Void) {
+    /// entitlement + location auth). Returns nil in most background situations, so the
+    /// caller keeps whatever it already knew.
+    @MainActor
+    func readSSID() {
         NEHotspotNetwork.fetchCurrent { network in
-            completion(network?.ssid)
+            guard let ssid = network?.ssid, !ssid.isEmpty else { return }
+            Task { @MainActor in
+                ConnectivityMonitor.shared.applySSID(ssid)
+            }
         }
+    }
+
+    @MainActor
+    private func applySSID(_ ssid: String) {
+        let changed = ssid != currentSSID
+        currentSSID = ssid
+        ssidReadAt = Date()
+        hasSeenSSIDState = true
+        if changed {
+            ActivityLogger.shared.log(.network, "wifi ssid: \(ssid)")
+        }
+        let home = AppSettings.shared.homeSSID
+        applyWiFiContext(ssid == home ? "home" : "away")
+    }
+
+    @MainActor
+    private func forgetSSID() {
+        guard currentSSID != nil else { return }
+        currentSSID = nil
+        ssidReadAt = Date()
+        ActivityLogger.shared.log(.network, "wifi ssid: none (off wifi)")
     }
 
     // Single data policy gate. All streams (audio/health/location) follow the

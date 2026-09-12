@@ -893,7 +893,14 @@ extension LocationManager: CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         Task { @MainActor in
-            ActivityLogger.shared.log(.location, "Region enter: \(anchorName(for: region))")
+            let name = anchorName(for: region)
+            ActivityLogger.shared.log(.location, "Region enter: \(name)")
+            GeofenceEventReporter.report(
+                anchor: name,
+                transition: "enter",
+                at: Date(),
+                accuracy: lastGoodLocation?.horizontalAccuracy
+            )
             forceNextSend()
             await sendCurrentLocationNow()
         }
@@ -905,7 +912,14 @@ extension LocationManager: CLLocationManagerDelegate {
                 resumeForMovement(reason: "left parked area")
                 return
             }
-            ActivityLogger.shared.log(.location, "Region exit: \(anchorName(for: region))")
+            let name = anchorName(for: region)
+            ActivityLogger.shared.log(.location, "Region exit: \(name)")
+            GeofenceEventReporter.report(
+                anchor: name,
+                transition: "exit",
+                at: Date(),
+                accuracy: lastGoodLocation?.horizontalAccuracy
+            )
             forceNextSend()
             await sendCurrentLocationNow()
         }
