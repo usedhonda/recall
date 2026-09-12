@@ -83,10 +83,11 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "preMarginSeconds") }
     }
 
-    var chunkDurationSeconds: TimeInterval {
-        get { UserDefaults.standard.double(forKey: "chunkDurationSeconds").nonZero ?? 30.0 }
-        set { UserDefaults.standard.set(newValue, forKey: "chunkDurationSeconds") }
-    }
+    /// Max chunk length before a forced split. Contract value (AGENTS.md section 2,
+    /// docs/pipeline.md section 2): 30 s. Deliberately a constant, not a stored setting —
+    /// a leftover stored 60 s made chunks ~50 s long, which slows server-side transcription
+    /// and pushes VoiceLog into newest-wins eviction.
+    let chunkDurationSeconds: TimeInterval = 30
 
     var minChunkDurationSeconds: TimeInterval {
         get { UserDefaults.standard.double(forKey: "minChunkDurationSeconds").nonZero ?? 2.0 }
