@@ -33,6 +33,15 @@ final class MotionActivityMonitor {
     private var lastStepCount = 0
     private var isRunning = false
 
+    /// Live sensor read-outs for the HUD. Device motion is sampled only while the
+    /// screen is showing them (2 Hz) — it is the one sensor here that costs power.
+    private let deviceMotion = CMMotionManager()
+    private(set) var stepsSinceStart = 0
+    /// Steps per minute from the pedometer's own cadence estimate.
+    private(set) var gaitStepsPerMinute: Double?
+    private(set) var userAcceleration: Double?
+    private(set) var rotationRate: Double?
+
     private init() {}
 
     var isAvailable: Bool { CMMotionActivityManager.isActivityAvailable() }
@@ -69,7 +78,9 @@ final class MotionActivityMonitor {
         pedometer.startUpdates(from: Date()) { [weak self] data, _ in
             guard let data else { return }
             let steps = data.numberOfSteps.intValue
+            let cadence = data.currentCadence?.doubleValue
             Task { @MainActor [weak self] in
+                self?.gaitStepsPerMinute = cadence.map { $0 * 60 }
                 self?.noteSteps(steps)
             }
         }
@@ -77,6 +88,7 @@ final class MotionActivityMonitor {
 
     /// Cumulative step count since the monitor started; any increase means walking now.
     private func noteSteps(_ steps: Int) {
+        stepsSinceStart = steps
         guard steps > lastStepCount else { return }
         lastStepCount = steps
         lastMotionAt = Date()
@@ -85,6 +97,26 @@ final class MotionActivityMonitor {
         latestActivity = "steps"
         ActivityLogger.shared.log(.location, "Motion: steps detected (moving=true)")
         onMovementStart?()
+    }
+
+    /// Start/stop the 2 Hz accelerometer + gyro read-out. Foreground only.
+    func startLiveSensors() {
+        guard deviceMotion.isDeviceMotionAvailable, !deviceMotion.isDeviceMotionActive else { return }
+        deviceMotion.deviceMotionUpdateInterval = 0.5
+        deviceMotion.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
+            guard let self, let motion else { return }
+            let a = motion.userAcceleration
+            let r = motion.rotationRate
+            self.userAcceleration = (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot()
+            self.rotationRate = (r.x * r.x + r.y * r.y + r.z * r.z).squareRoot()
+        }
+    }
+
+    func stopLiveSensors() {
+        guard deviceMotion.isDeviceMotionActive else { return }
+        deviceMotion.stopDeviceMotionUpdates()
+        userAcceleration = nil
+        rotationRate = nil
     }
 
     private func apply(_ activity: CMMotionActivity) {
