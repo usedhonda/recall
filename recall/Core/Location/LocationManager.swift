@@ -114,6 +114,13 @@ final class LocationManager: NSObject {
     private let locationManager = CLLocationManager()
     private var lastSentLocation: CLLocation?
     private var lastGoodLocation: CLLocation?
+    /// Identity of `lastGoodLocation`. Every POST carrying that fix, and every crossing
+    /// event raised while it was the newest accepted one, quote the same value so the
+    /// server can join departure -> position -> greeting. It is re-issued only when a
+    /// genuinely different fix is accepted: the forced send after a crossing replays the
+    /// same `CLLocation`, and a fresh id there would break the join.
+    private(set) var lastGoodFixId: String?
+    private var lastGoodFixKey: String?
     private var jumpRejectStreak = 0
     private var lastKickAt: Date?
     private var heartbeatTimer: Timer?
@@ -258,13 +265,14 @@ final class LocationManager: NSObject {
         logDepartureFixIfPending(location)
         updateCadence(for: location, isInForeground: isInForeground)
         lastGoodLocation = location
+        noteGoodFix(location)
 
         guard shouldSendLocation(location) else { return }
 
         let quality = qualityFor(location)
 
         if isInForeground {
-            let payload = LocationPayload(from: location, quality: quality)
+            let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
 
             totalAttemptedSends += 1
             lastAttemptAt = Date()
@@ -295,7 +303,7 @@ final class LocationManager: NSObject {
             }
         } else {
             // BG: try direct send first, fallback to queue on failure
-            let payload = LocationPayload(from: location, quality: quality)
+            let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
 
             totalAttemptedSends += 1
             lastAttemptAt = Date()
@@ -328,7 +336,7 @@ final class LocationManager: NSObject {
                     totalHttpErrors += 1
                     recordNetworkError(detail)
                 }
-                let sample = LocationSample(from: location, quality: quality)
+                let sample = LocationSample(from: location, quality: quality, fixId: lastGoodFixId)
                 await LocationQueue.shared.enqueue(sample)
                 totalQueuedBackgroundSends += 1
                 lastSentLocation = location
@@ -617,6 +625,20 @@ final class LocationManager: NSObject {
         ActivityLogger.shared.log(.location, "[LOC] fresh-fix kick (\(reason))")
     }
 
+    /// Issues an id for a newly accepted fix, keeping the current one when the same fix
+    /// comes round again.
+    private func noteGoodFix(_ location: CLLocation) {
+        let key = String(
+            format: "%.3f|%.6f|%.6f",
+            location.timestamp.timeIntervalSince1970,
+            location.coordinate.latitude,
+            location.coordinate.longitude
+        )
+        guard key != lastGoodFixKey else { return }
+        lastGoodFixKey = key
+        lastGoodFixId = UUID().uuidString
+    }
+
     func sendCurrentLocationNow() async {
         forceNextSend()
         guard let location = currentLocation ?? lastGoodLocation else { return }
@@ -744,7 +766,7 @@ final class LocationManager: NSObject {
         let isInForeground = UIApplication.shared.applicationState == .active
 
         if isInForeground {
-            let payload = LocationPayload(from: location, quality: quality)
+            let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
             Task {
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
@@ -767,7 +789,7 @@ final class LocationManager: NSObject {
             }
         } else {
             // BG heartbeat: try direct send first, fallback to queue
-            let payload = LocationPayload(from: location, quality: quality)
+            let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
             Task {
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
@@ -796,7 +818,7 @@ final class LocationManager: NSObject {
                         self.totalHttpErrors += 1
                         self.recordNetworkError(detail)
                     }
-                    let sample = LocationSample(from: location, quality: quality)
+                    let sample = LocationSample(from: location, quality: quality, fixId: lastGoodFixId)
                     await LocationQueue.shared.enqueue(sample)
                     self.totalQueuedBackgroundSends += 1
                     self.lastSentLocation = location
@@ -899,7 +921,8 @@ extension LocationManager: CLLocationManagerDelegate {
                 anchor: name,
                 transition: "enter",
                 at: Date(),
-                accuracy: lastGoodLocation?.horizontalAccuracy
+                accuracy: lastGoodLocation?.horizontalAccuracy,
+                fixId: lastGoodFixId
             )
             forceNextSend()
             await sendCurrentLocationNow()
@@ -918,7 +941,8 @@ extension LocationManager: CLLocationManagerDelegate {
                 anchor: name,
                 transition: "exit",
                 at: Date(),
-                accuracy: lastGoodLocation?.horizontalAccuracy
+                accuracy: lastGoodLocation?.horizontalAccuracy,
+                fixId: lastGoodFixId
             )
             forceNextSend()
             await sendCurrentLocationNow()

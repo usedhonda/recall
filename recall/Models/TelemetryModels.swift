@@ -24,6 +24,11 @@ struct TelemetrySample: Encodable {
     /// (which mirrors `LocationManager.qualityFor`) so server can reason
     /// about reduced-accuracy fixes.
     let quality: String?
+    /// Identity of the fix this sample carries. Stable across every POST of the same
+    /// fix (the stationary heartbeat re-sends one for as long as the phone stays put),
+    /// while `id` stays unique per POST so the server never dedupes a heartbeat away.
+    /// Crossing events quote the same value: see `GeofenceEventPayload.fixId`.
+    let fixId: String?
 
     /// Derived home-Wi-Fi state: "home" / "away" / nil, from the user-set home SSID.
     let wifi: String?
@@ -44,6 +49,14 @@ struct TelemetrySample: Encodable {
     let producedByAccessory: Bool?
     let simulatedBySoftware: Bool?
 
+    enum CodingKeys: String, CodingKey {
+        case id, lat, lon, accuracy, altitude, speed, timestamp, quality
+        case fixId = "fix_id"
+        case wifi, wifiSSID, wifiSSIDAgeSeconds, wifiConnected
+        case speedAccuracy, course, courseAccuracy, verticalAccuracy, floor
+        case producedByAccessory, simulatedBySoftware
+    }
+
     init(
         id: String,
         lat: Double,
@@ -53,6 +66,7 @@ struct TelemetrySample: Encodable {
         speed: Double?,
         timestamp: Date,
         quality: String?,
+        fixId: String? = nil,
         wifi: String? = nil,
         wifiSSID: String? = nil,
         wifiSSIDAgeSeconds: Int? = nil,
@@ -73,6 +87,7 @@ struct TelemetrySample: Encodable {
         self.speed = speed
         self.timestamp = timestamp
         self.quality = quality
+        self.fixId = fixId
         self.wifi = wifi
         self.wifiSSID = wifiSSID
         self.wifiSSIDAgeSeconds = wifiSSIDAgeSeconds
@@ -96,6 +111,7 @@ struct TelemetrySample: Encodable {
             speed: sample.speed,
             timestamp: sample.timestamp,
             quality: sample.quality,
+            fixId: sample.fixId,
             wifi: sample.wifi,
             wifiSSID: sample.wifiSSID,
             wifiSSIDAgeSeconds: sample.wifiSSIDAgeSeconds,
@@ -120,6 +136,7 @@ struct TelemetrySample: Encodable {
             speed: payload.speed,
             timestamp: payload.timestamp,
             quality: payload.quality,
+            fixId: payload.fixId,
             wifi: payload.wifi,
             wifiSSID: payload.wifiSSID,
             wifiSSIDAgeSeconds: payload.wifiSSIDAgeSeconds,
@@ -150,6 +167,8 @@ struct LocationPayload: Codable {
     let speed: Double?
     let timestamp: Date
     let quality: String
+    /// See `TelemetrySample.fixId`.
+    let fixId: String?
 
     /// Derived home-Wi-Fi state: "home" / "away" / nil, from the user-set home SSID.
     let wifi: String?
@@ -168,7 +187,7 @@ struct LocationPayload: Codable {
     let producedByAccessory: Bool?
     let simulatedBySoftware: Bool?
 
-    init(from location: CLLocation, quality: String) {
+    init(from location: CLLocation, quality: String, fixId: String? = nil) {
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.accuracy = location.horizontalAccuracy
@@ -176,6 +195,7 @@ struct LocationPayload: Codable {
         self.speed = location.speed >= 0 ? location.speed : nil
         self.timestamp = location.timestamp
         self.quality = quality
+        self.fixId = fixId
         self.wifi = ConnectivityMonitor.shared.wifiContext
         self.wifiSSID = ConnectivityMonitor.shared.currentSSID
         self.wifiSSIDAgeSeconds = ConnectivityMonitor.shared.ssidAgeSeconds
