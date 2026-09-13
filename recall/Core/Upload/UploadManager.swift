@@ -272,8 +272,20 @@ final class UploadManager {
         if chunk.vadAvgProb > 0 { metadata["vad_avg_prob"] = String(format: "%.4f", chunk.vadAvgProb) }
         if chunk.noiseFloorRMS > 0 { metadata["noise_floor_rms"] = String(format: "%.6f", chunk.noiseFloorRMS) }
 
-        // Server optimization hints
-        metadata["is_speech"] = "true" // iOS VAD confirmed speech — server can skip VAD
+        // What the detector measured over the whole chunk. The owner's rule is that the
+        // device captures and the server judges: throwing audio away here forecloses any
+        // processing anyone might want to do later, and the server can always ignore a
+        // number it does not need.
+        metadata["max_continuous_voice_ms"] = String(chunk.maxContinuousVoiceMs)
+        metadata["voice_frame_ratio"] = String(format: "%.4f", chunk.voiceFrameRatio)
+
+        // Server optimization hints.
+        // `is_speech` used to be hardcoded true, which told the server to skip its own
+        // VAD on our word. On 2026-09-13 that word turned out to be worthless — chunks
+        // with no speech in them scored the same as real ones — so it now reports what
+        // was actually measured, and the server is free to check for itself.
+        let sustainedVoice = chunk.maxContinuousVoiceMs >= 300 && chunk.voiceFrameRatio >= 0.10
+        metadata["is_speech"] = sustainedVoice ? "true" : "false"
         metadata["chunk_start_utc"] = formatter.string(from: chunk.startedAt) // absolute timestamp for offset
         metadata["language"] = "ja" // language hint — server can skip detection
         metadata["reaction_mode"] = settings.reactionMode.rawValue // Chi reaction stance (auto/question/rebut/executive); latest chunk wins server-side
