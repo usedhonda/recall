@@ -1,58 +1,68 @@
 # Handoff: vad-collapse
 
-- Goal / why: Owner observed "recording is ON but no audio reaches the server". Server ingest
-  history (VoiceLog jobs, kana): detection normal after each launch, then collapsing within
-  1-3 h (8/30 00-01h ~250/h -> 04h 4; 9/3 00-03h 110-180/h -> ~0; 9/11 16h 174 -> 17h 7).
-- Scope: `recall/Core/Audio/VADService.swift`, `AudioRecordingEngine.processCurrentAudio`,
-  watchdog log line, `docs/pipeline.md` §2.
-- Explicitly out: thresholds (vadThreshold 0.25, RMS gate), chunk writing / upload / noise-skip
-  rule, visible UI layout, server-side queue policy.
-- Status: review — VAD fix b51b646 (2026-09-11 20:02 JST), chunk length 46af9dd and Control
-  Center toggle cf8f06e (2026-09-12 16:08 / 16:11 JST) all deployed to kana. Long-run VAD
-  check still pending: the owner stopped recording at 20:12 JST on 09-11, ten minutes after
-  the fix, so only ~10 min of live recording has been observed.
-- Done so far:
-  - Root cause (code + library source): FluidAudio 0.12.6 Silero VAD expects 4096 contiguous
-    samples (256 ms @ 16 kHz) per inference (`VadManager.swift:21-22`) and pads shorter input
-    with the last sample (`:171-182`). recall streamed a 100 ms ring-buffer snapshot every
-    100 ms tick into one recurrent state that was never reset (`VADService.reset()` had no
-    call site). Every call = 100 ms audio + 156 ms flat padding; the state drifted.
-  - Live repro 19:44 JST: owner spoke 10 s at the phone; one trigger, 2.5 s chunk with
-    vad=0.03 mcv=0 vfr=0.00 -> "Skipped noise chunk" (never uploaded). Mic was fine
-    (UI SYS.RMS 0.005-0.008 idle; iOS mic-in-use indicator = recall).
-  - Fix: each tick evaluates the latest 256 ms window from a fresh state
-    (`VADService.evaluate(window:)`); RMS on the newest 100 ms; watchdog line now logs
-    `rms= nf= vad=` every 10 s.
-  - After deploy (UDP mirror, 20:02-20:05 JST): continuous detection, chunks 49.6 s / 50.3 s /
-    28.5 s with vad 0.30-0.40, vfr 0.51-0.71, all uploaded.
-- Decisions: stateless 256 ms windows over true streaming (the 100 ms control loop, 3-frame
-  guard and voice-island metrics stay in 100 ms units; overlapping windows cannot share one
-  recurrent state).
-- Rejected options: resetting the stream state periodically while keeping 100 ms padded
-  input (keeps the contract violation).
-- Commands run: simulator build OK; `scripts/check-contract.sh` PASS; `ios-build.sh device`
-  deployed. `devicectl copy from` of the day log failed twice with "socket was closed
-  unexpectedly" (kana on network CoreDevice, large file) -> used the macmini UDP mirror
-  `~/logs/recall-udp/recall_2026-09-11.log` instead.
-- Open issues / risks:
-  - Morning of 9/11 the engine never started although the owner says the mic was ON in recall
-    (app was never foreground before 17:28; start() never ran). Which control was used is still
-    unanswered; both suspected mechanisms are fixed in cf8f06e (see follow-ups below).
-  - 9/4-9/7 near-zero ingest while (probably) ON matches the same VAD collapse.
-- 2026-09-12 follow-ups (owner: "make it the spec it should obviously be"):
-  - `AppSettings.chunkDurationSeconds` is now a 30 s constant (46af9dd). kana held a stale
-    stored 60 s, so chunks ran ~50 s once detection worked again; nothing writes the key.
-  - Control Center toggle (cf8f06e): the Darwin observer moved from a SwiftUI `.task` to
-    AppDelegate (process lifetime) against `RecordingViewModel.shared`, every outcome is
-    logged (`External toggle: starting / stopping / ignored / no container`), and
-    `isActive` is false when the engine is nil. Verified end to end without the owner:
-    `xcrun devicectl device notification post --name com.example.recall.recordingStateChanged`
-    produced `External toggle: ignored — already recording` at 16:11:19 JST.
-- Next steps:
-  1. >= 3 h after 20:02 JST, confirm detections continue: UDP mirror or device log, look at
-     `WD ... vad=` values and `[#] Voice detected` / `Uploaded` counts per hour.
-  2. Confirm a long speech now splits at 30 s (look for `Chunk duration limit — splitting`
-     30 s after `New chunk`).
-  3. The 9/11 morning start path stays unexplained; with cf8f06e a repeat would leave an
-     `External toggle:` line in the activity log.
-- Links: `docs/pipeline.md` §2, `docs/handoff/001-battery-cadence.md`.
+- Goal / why: the speech detector decides what recall records and sends. When it is wrong
+  the transcriber answers silence with a stock phrase it learned from subtitles, and that
+  fiction reaches Chi as if the owner had said it.
+- Scope: `Core/Audio/VADService.swift`, the detector call in `AudioRecordingEngine`,
+  `RingBuffer`, `scripts/voice-separation.py`.
+- Explicitly out: chunking rules (1.5 s silence / 30 s max), the audio format, upload.
+- Status: repaired and deployed to kana 2026-09-13; **not yet verified against labels**.
+
+## Two wrong shapes, and how each broke it
+
+Silero is recurrent: it judges the current 256 ms partly from what came before, carried in
+a state it returns with every result.
+
+1. **Padded windows into a state that was never reset** (before `b51b646`): 100 ms of audio
+   padded to 256 ms, fed into an accumulating state. Detection collapsed to silence within
+   1-3 hours of a fresh start.
+2. **Fresh state per overlapping window** (`b51b646`, 09-11): the newest 256 ms re-scored
+   from scratch every 100 ms. Detection never collapsed, and never meant anything either.
+
+## The measurement that settled it (2026-09-13)
+
+oc-general labelled 903 recordings by whether every transcript segment was boilerplate.
+Joined to what recall measured about the same audio (883 matched: 510 with no speech, 373
+with speech), the two groups sat on top of each other:
+
+| | no speech | speech |
+|---|---|---|
+| speech probability (median) | 0.41 | 0.40 |
+| longest run (median) | 24.3 s | 24.2 s |
+| voice frames (median) | 0.89 | 0.87 |
+
+Every candidate rule threw away real speech at the rate it caught silence — `vad < 0.45`
+catches 73% of the silence and loses 66% of the speech. **No on-device filter is possible
+on these numbers**, which is the point: the absence of a difference is the evidence that
+the detector carried no information.
+
+## The repair (`dbbf499`)
+
+Contiguous, non-overlapping windows, state carried forward, and the library's own state
+machine (`makeStreamState` / `processStreamingChunk`) raising speech start and end. Quiet
+audio is fed too — that is how the model hears a sentence end; the power gate only decides
+whether a frame may open a chunk. `RingBuffer.read(after:)` hands over exactly what has
+arrived since last time (tested: `RingBufferStreamTests`).
+
+## How to verify — do not skip this
+
+A changed detector always changes the distribution. That is not evidence it separates.
+
+1. Let the new build run through a normal day.
+2. Regenerate labels: `scripts/voice-labels` in oc-general's repo (`--start-date` /
+   `--end-date`), which imports the live filter's own predicate so the yardstick cannot
+   drift from production.
+3. `scripts/voice-separation.py labels.tsv <device logs>` and read the matched count first
+   — a rule looks perfect on an empty denominator.
+4. Only then pick a drop rule, and only if it catches silence at a rate the speech loss
+   does not match.
+
+## Also watch
+
+- **Missed quiet speech.** The new gate leans on Silero's own start threshold. The owner
+  cares about distant speech (3-5 m); if real utterances stop being recorded, that is the
+  cost side of this change and it will not show up in the labels above.
+- oc-general suppresses known boilerplate before Chi reads it (their `2bd62a2`): 733 of 914
+  recordings excluded, no real recording lost. Audio and rows are untouched, so everything
+  can be re-judged once the detector is trusted. It is symptom relief — noise-derived text
+  that is not a known phrase still passes.
