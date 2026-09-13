@@ -10,6 +10,10 @@ final class RingBuffer: @unchecked Sendable {
     private var filled: Int = 0
     private let lock = NSLock()
     private var _lastWriteTime: Date = Date()
+    /// Every sample ever written, counted. Lets a reader ask for exactly the audio it
+    /// has not seen yet, which a speech model needs: it carries state from one window
+    /// to the next, so repeating or skipping audio corrupts its idea of the sentence.
+    private var _totalWritten: Int = 0
 
     /// Initialize with capacity in samples.
     /// Default: 3 seconds at 16kHz = 48000 samples.
@@ -31,6 +35,7 @@ final class RingBuffer: @unchecked Sendable {
         defer { lock.unlock() }
 
         _lastWriteTime = Date()
+        _totalWritten += samples.count
         let count = samples.count
         if count >= capacity {
             // Incoming data is larger than buffer; keep only the tail
@@ -53,6 +58,27 @@ final class RingBuffer: @unchecked Sendable {
 
         writeIndex = (writeIndex + count) % capacity
         filled = min(filled + count, capacity)
+    }
+
+    /// How many samples have been written since the buffer was created.
+    var totalWritten: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _totalWritten
+    }
+
+    /// Everything written after `index`, plus the index to pass in next time. A reader
+    /// that falls behind further than the buffer holds gets the oldest audio still
+    /// present rather than a gap it cannot see.
+    func read(after index: Int) -> (samples: [Float], nextIndex: Int) {
+        lock.lock()
+        let total = _totalWritten
+        let available = filled
+        lock.unlock()
+
+        let wanted = max(0, total - max(index, total - available))
+        guard wanted > 0 else { return ([], total) }
+        return (read(lastSamples: wanted), total)
     }
 
     /// Read the last N seconds of samples from the buffer.
