@@ -119,6 +119,9 @@ final class AudioRecordingEngine {
 
     // MARK: - Adaptive Noise Floor
 
+    /// How far into the microphone stream the detector has listened, so each tick can
+    /// hand it exactly the audio it has not heard yet.
+    private var vadReadIndex = 0
     private var noiseFloorRMS: Float = 0.002
     private let noiseFloorAlpha: Float = 0.05 // smoothing factor
     private let noiseFloorMultiplier: Float = 1.2 // threshold = floor * multiplier (lowered for better distant speech capture)
@@ -392,6 +395,12 @@ final class AudioRecordingEngine {
     }
 
     private func startProcessingLoop() {
+        // Start listening from now, with no memory of the audio either side of the
+        // break: the model's state describes a sentence, and there is no sentence
+        // spanning a stopped microphone.
+        vadReadIndex = ringBuffer.totalWritten
+        Task { await vadService?.reset() }
+
         // Cancel any existing processing task to prevent double-running
         processingTask?.cancel()
         processingTask = nil
@@ -425,12 +434,12 @@ final class AudioRecordingEngine {
             }
         }
 
-        // Read the latest VAD window (256 ms — Silero's native input size) from the
-        // ring buffer. RMS still looks at only the newest 100 ms (one tick).
-        let vadWindow = Double(VADService.windowSamples) / Double(targetSampleRate)
+        // Take only what has arrived since the last tick. Silero carries state from one
+        // window to the next, so it has to hear the microphone exactly once, in order:
+        // re-scoring overlapping windows was what made its answers meaningless.
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
-        let hwSampleCount = Int(vadWindow * hwRate)
-        let rawSamples = ringBuffer.read(lastSamples: hwSampleCount)
+        let (rawSamples, nextIndex) = ringBuffer.read(after: vadReadIndex)
+        vadReadIndex = nextIndex
         guard !rawSamples.isEmpty else { return }
 
         // Resample to 16kHz for RMS + VAD
@@ -469,16 +478,13 @@ final class AudioRecordingEngine {
             chunkRMSCount += 1
         }
 
-        if rms < effectiveThreshold {
-            consecutiveVoiceFrames = 0
-            await handleSilence()
-            return
-        }
-
-        // Stage 2: Silero VAD
+        // Stage 2: Silero VAD. The quiet frames are fed too — that is how the model
+        // hears a sentence end. The power gate only decides whether a frame may open a
+        // chunk, it never withholds audio from the detector.
+        let quiet = rms < effectiveThreshold
         guard let vadService else { return }
         do {
-            let result = try await vadService.evaluate(window: samples16k)
+            for result in try await vadService.feed(samples16k) {
             vadProbability = result.probability
 
             // Accumulate VAD probability during recording
@@ -507,7 +513,14 @@ final class AudioRecordingEngine {
                 }
             }
 
-            let vadPass = result.probability >= settings.vadThreshold || result.event == .speechStart
+            // Silero's own state machine owns the start and end of speech; the raw
+            // probability only keeps a frame alive once it has begun.
+            let vadPass: Bool
+            switch result.event {
+            case .speechStart: vadPass = !quiet
+            case .speechEnd: vadPass = false
+            case .none: vadPass = !quiet && result.probability >= settings.vadThreshold
+            }
 
             if vadPass {
                 if state == .listening {
@@ -523,6 +536,7 @@ final class AudioRecordingEngine {
             } else {
                 consecutiveVoiceFrames = 0
                 await handleSilence()
+            }
             }
         } catch {
             logger.error("VAD processing error: \(error.localizedDescription)")
