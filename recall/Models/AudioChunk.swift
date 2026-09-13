@@ -23,6 +23,10 @@ final class AudioChunk {
     // Voice island metrics for upload filtering
     var maxContinuousVoiceMs: Int = 0
     var voiceFrameRatio: Float = 0
+    /// The highest speech probability any single frame of this chunk reached. Averages
+    /// hide a word inside a long quiet recording; the peak cannot. Nothing is deleted
+    /// unless the peak says no moment of it ever resembled speech.
+    var maxVadProb: Float = 0
 
     var uploadStatus: UploadStatus {
         get { UploadStatus(rawValue: uploadStatusRaw) ?? .pending }
@@ -39,7 +43,8 @@ final class AudioChunk {
         vadAvgProb: Float = 0,
         noiseFloorRMS: Float = 0,
         maxContinuousVoiceMs: Int = 0,
-        voiceFrameRatio: Float = 0
+        voiceFrameRatio: Float = 0,
+        maxVadProb: Float = 0
     ) {
         self.id = UUID()
         self.filePath = filePath
@@ -55,6 +60,7 @@ final class AudioChunk {
         self.noiseFloorRMS = noiseFloorRMS
         self.maxContinuousVoiceMs = maxContinuousVoiceMs
         self.voiceFrameRatio = voiceFrameRatio
+        self.maxVadProb = maxVadProb
     }
 
     enum UploadStatus: String, Codable {

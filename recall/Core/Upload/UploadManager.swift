@@ -197,10 +197,17 @@ final class UploadManager {
                 continue
             }
 
-            // Skip noise-only chunks: no sustained voice detected
-            if chunk.maxContinuousVoiceMs < 200 && chunk.voiceFrameRatio < 0.05 {
+            // Delete only audio that cannot contain a word. The owner's rule
+            // (2026-09-13): truly meaningless audio may go, but nothing at a level where
+            // speech could be leaking through — what the server can make of a marginal
+            // recording will keep improving, and a deleted one is gone for good.
+            //
+            // An average can hide one word inside half a minute of quiet, so the peak
+            // decides: unless no single frame of the whole chunk ever came near speech,
+            // it is uploaded and the server judges it.
+            if chunk.maxVadProb < 0.30 && chunk.maxContinuousVoiceMs < 200 && chunk.voiceFrameRatio < 0.05 {
                 Self.logger.info("Skipping noise chunk: \(chunk.fileName) (mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(chunk.voiceFrameRatio, format: .fixed(precision: 2)))")
-                activity.log(.upload, "Skipped noise chunk \(chunk.fileName) (mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(String(format: "%.2f", chunk.voiceFrameRatio)))")
+                activity.log(.upload, "Deleted silent chunk \(chunk.fileName) (peak=\(String(format: "%.2f", chunk.maxVadProb)) mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(String(format: "%.2f", chunk.voiceFrameRatio)))")
                 chunk.uploadStatus = .uploaded
                 chunk.uploadedAt = Date()
                 try? modelContext.save()
@@ -278,6 +285,7 @@ final class UploadManager {
         // number it does not need.
         metadata["max_continuous_voice_ms"] = String(chunk.maxContinuousVoiceMs)
         metadata["voice_frame_ratio"] = String(format: "%.4f", chunk.voiceFrameRatio)
+        metadata["max_vad_prob"] = String(format: "%.4f", chunk.maxVadProb)
 
         // Server optimization hints.
         // `is_speech` used to be hardcoded true, which told the server to skip its own
