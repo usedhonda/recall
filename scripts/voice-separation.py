@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Ask whether the speech detector can tell real speech from silence.
 
+This is a diagnostic, not the design of a filter. The owner ruled on 2026-09-13 that the
+device must not throw audio away to make its numbers look better: whatever is discarded
+here can never be processed on the server later, and what the server can do will keep
+improving. So the question this answers is "are the numbers recall sends worth anything
+to the server", not "what should recall drop".
+
 The transcriber answers silence with a stock phrase it learned from subtitles, so a
 recording labelled "nothing but boilerplate" is one the device should never have sent.
 oc-general labels those (`scripts/voice-labels` in their repo, one row per recording:
