@@ -36,6 +36,33 @@ catches 73% of the silence and loses 66% of the speech. **No on-device filter is
 on these numbers**, which is the point: the absence of a difference is the evidence that
 the detector carried no information.
 
+## What this was NOT (corrected 2026-09-13, oc-general)
+
+The rate of boilerplate transcripts rose from 1.6% on 09-11 to 41% on 09-12, and within
+09-12 it climbed through the evening. Neither is evidence that `b51b646` made anything
+worse, and this document should not be read that way:
+
+- The evening climb is the owner asleep. Counting real (non-boilerplate) speech by hour
+  UTC: 07h 89%, 08h 82%, 09h 82%, 15h 82%, then **16h 7%, 17h 9%, 18h 5%, 19h 11%**, back
+  to 85% at 23h. 16-19h UTC is 01-04h JST.
+- The day-over-day jump is recording hours. 09-11 recorded only 07-11h UTC (daytime, no
+  night); 09-12 ran all 24 h, so a night of silence was added to the denominator.
+
+The case for the repair rests on something else entirely: **the detector's numbers carried
+no information about whether anyone had spoken** (0.41 vs 0.40, below). Never compare daily
+totals — compare the same hours.
+
+## Baseline before the swap (oc-general, 2026-09-13)
+
+| | all segments | real speech | characters of real speech | recordings |
+|---|---|---|---|---|
+| 09-11 | 311 | 296 | 5,250 | 153 |
+| 09-12 | 1,270 | 543 | 7,192 | 891 |
+
+Daytime (07-15h UTC) real-speech share ran 44-89% on the old build. **That is the number
+that falls if the new gate starts missing quiet or distant speech** — and it is invisible
+in the boilerplate labels, because audio that was never recorded is never labelled.
+
 ## The repair (`dbbf499`)
 
 Contiguous, non-overlapping windows, state carried forward, and the library's own state
@@ -54,8 +81,19 @@ A changed detector always changes the distribution. That is not evidence it sepa
    drift from production.
 3. `scripts/voice-separation.py labels.tsv <device logs>` and read the matched count first
    — a rule looks perfect on an empty denominator.
-4. Only then pick a drop rule, and only if it catches silence at a rate the speech loss
+4. Regenerate the by-hour real-speech table too, and compare **daytime hours against the
+   baseline above**. Do not skip this: "fewer hallucinations" is also what you get by
+   recording less, and the owner losing a real utterance costs more than a fiction kept.
+5. Only then pick a drop rule, and only if it catches silence at a rate the speech loss
    does not match.
+
+## First signals from the new build (2026-09-13 00:40Z, directional only)
+
+Quiet frames on the device now report 0.00 where they used to drift between 0.16 and 0.43,
+and a silent simulator reads 0.061 where it read 0.15-0.55. Four chunks opened in the first
+80 minutes of a quiet room. **None of this is evidence of separation** — that needs the
+labels. Note also that the macmini UDP mirror showed 170 chunks over the same window: it
+carries lines from a second sender and cannot be counted. Use the on-device log.
 
 ## Also watch
 
