@@ -10,6 +10,7 @@ xcuserdata/
 *.moved-aside
 DerivedData/
 build/
+buildsim/
 *.hmap
 *.ipa
 *.dSYM.zip
