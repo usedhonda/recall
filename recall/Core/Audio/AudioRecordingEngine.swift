@@ -71,6 +71,7 @@ final class AudioRecordingEngine {
 
     private var chunkRMSSum: Float = 0
     private var chunkRMSCount: Int = 0
+    private var chunkVADPeak: Float = 0
     private var chunkVADSum: Float = 0
     private var chunkVADCount: Int = 0
 
@@ -491,6 +492,7 @@ final class AudioRecordingEngine {
             if state == .recording {
                 chunkVADSum += result.probability
                 chunkVADCount += 1
+                chunkVADPeak = max(chunkVADPeak, result.probability)
 
                 // Voice island tracking (binary: prob >= vadThreshold = voice)
                 voiceIslandTotalFrames += 1
@@ -625,6 +627,7 @@ final class AudioRecordingEngine {
         chunkRMSCount = 0
         chunkVADSum = 0
         chunkVADCount = 0
+        chunkVADPeak = 0
 
         // Prepend pending buffer from previous short chunk
         if !pendingSegmentBuffer.isEmpty {
@@ -737,7 +740,7 @@ final class AudioRecordingEngine {
         let maxVoiceMs = voiceIslandMaxRun * 100 // each frame is 100ms
         let vfr = voiceIslandTotalFrames > 0 ? Float(voiceIslandFrameCount) / Float(voiceIslandTotalFrames) : 0
 
-        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS, maxContinuousVoiceMs: maxVoiceMs, voiceFrameRatio: vfr)
+        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS, maxContinuousVoiceMs: maxVoiceMs, voiceFrameRatio: vfr, maxVadProb: chunkVADPeak)
         chunksRecorded += 1
 
         // Reset voice island state
@@ -749,7 +752,7 @@ final class AudioRecordingEngine {
 
         let sizeKB = result.fileSize / 1024
         logger.info("Chunk finalized: \(url.lastPathComponent), duration: \(result.duration, format: .fixed(precision: 1))s")
-        activity.log(.chunk, "Finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB rms=\(String(format: "%.4f", avgRMSVal)) vad=\(String(format: "%.2f", vadAvgVal)) mcv=\(maxVoiceMs)ms vfr=\(String(format: "%.2f", vfr))")
+        activity.log(.chunk, "Finalized: \(url.lastPathComponent) \(String(format: "%.1f", result.duration))s \(sizeKB)KB rms=\(String(format: "%.4f", avgRMSVal)) vad=\(String(format: "%.2f", vadAvgVal)) peak=\(String(format: "%.2f", chunkVADPeak)) mcv=\(maxVoiceMs)ms vfr=\(String(format: "%.2f", vfr))")
     }
 
     /// Force-finalize the pending buffer as a standalone chunk (short but better than losing data).
@@ -828,7 +831,7 @@ final class AudioRecordingEngine {
 
     // MARK: - SwiftData Persistence
 
-    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64, avgRMS: Float = 0, vadAvgProb: Float = 0, noiseFloorRMS: Float = 0, maxContinuousVoiceMs: Int = 0, voiceFrameRatio: Float = 0) async {
+    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64, avgRMS: Float = 0, vadAvgProb: Float = 0, noiseFloorRMS: Float = 0, maxContinuousVoiceMs: Int = 0, voiceFrameRatio: Float = 0, maxVadProb: Float = 0) async {
         guard let modelContainer else {
             logger.error("ModelContainer not set, cannot save chunk record")
             return
@@ -845,7 +848,8 @@ final class AudioRecordingEngine {
             vadAvgProb: vadAvgProb,
             noiseFloorRMS: noiseFloorRMS,
             maxContinuousVoiceMs: maxContinuousVoiceMs,
-            voiceFrameRatio: voiceFrameRatio
+            voiceFrameRatio: voiceFrameRatio,
+            maxVadProb: maxVadProb
         )
         context.insert(chunk)
 
