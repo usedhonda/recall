@@ -32,6 +32,11 @@ final class ChannelStatusReporter {
     private let tickInterval: TimeInterval = 60
 
     private var loopTask: Task<Void, Never>?
+    /// The audio health class the server last acknowledged. Kept apart from the per-channel
+    /// state so a failed send is retried on the next tick rather than lost.
+    private var lastSentAudioClass: String?
+    private let audioClassKey = "audioState.class"
+    private let audioSinceKey = "audioState.since"
 
     private static let iso: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -110,7 +115,10 @@ final class ChannelStatusReporter {
             entries.append(ChannelEntry(channel: channel.rawValue, state: current.rawValue, since: since))
         }
 
-        let sendEdge = changed || (firstRun && anyGated)
+        let audio = currentAudioState(nowISO: nowISO)
+        let audioEdge = audio.healthClass != lastSentAudioClass
+
+        let sendEdge = changed || (firstRun && anyGated) || audioEdge
 
         var sendLevel = false
         if anyGated {
@@ -122,7 +130,8 @@ final class ChannelStatusReporter {
 
         guard sendEdge || sendLevel else { return }
 
-        let ok = await send(entries: entries, sentAt: nowISO)
+        let ok = await send(entries: entries, sentAt: nowISO, audio: audio)
+        if ok { lastSentAudioClass = audio.healthClass }
         // Reset the hourly clock only on a successful send that included a gated
         // channel, so a failed send stays retried by the next tick.
         if ok && anyGated {
@@ -130,9 +139,55 @@ final class ChannelStatusReporter {
         }
     }
 
+    // MARK: - Audio state
+
+    private struct AudioSnapshot {
+        let state: String
+        let healthClass: String
+        let since: String
+        let lastChunkAt: String?
+    }
+
+    /// Whether the microphone is actually capturing, and since when. The per-channel entry
+    /// only says whether the owner's switch is on; this says whether that switch is being
+    /// honoured. See `AudioStateSignal`.
+    private func currentAudioState(nowISO: String) -> AudioSnapshot {
+        let rec = RecordingStateManager.shared
+        let engine = RecordingViewModel.shared.engine
+        let engineState: AudioStateSignal.Engine
+        switch engine?.state {
+        case nil: engineState = .none
+        case .idle: engineState = .idle
+        case .listening: engineState = .listening
+        case .recording: engineState = .recording
+        case .paused: engineState = .paused
+        }
+        let state = AudioStateSignal.describe(
+            toggleOn: rec.isRecording && !rec.userStopIntent,
+            engine: engineState,
+            activationBlocked: engine?.isActivationBlocked ?? false
+        )
+        let healthClass = AudioStateSignal.healthClass(of: state)
+
+        let defaults = UserDefaults.standard
+        if defaults.string(forKey: audioClassKey) != healthClass {
+            defaults.set(healthClass, forKey: audioClassKey)
+            defaults.set(nowISO, forKey: audioSinceKey)
+        }
+        let lastChunk = (defaults.object(forKey: AudioStateSignal.lastChunkKey) as? Date)
+            .map { Self.iso.string(from: $0) }
+
+        return AudioSnapshot(
+            state: state,
+            healthClass: healthClass,
+            since: defaults.string(forKey: audioSinceKey) ?? nowISO,
+            lastChunkAt: lastChunk
+        )
+    }
+
     // MARK: - Send (reuses the immediate-telemetry auth path)
 
-    private func send(entries: [ChannelEntry], sentAt: String) async -> Bool {
+    private func send(entries: [ChannelEntry], sentAt: String, audio: AudioSnapshot) async -> Bool {
         guard AppSettings.shared.hasValidTelemetryConfig,
               let token = KeychainHelper.shared.getToken() else { return false }
 
@@ -148,7 +203,10 @@ final class ChannelStatusReporter {
         let payload = ChannelStatusPayload(
             deviceId: AppSettings.shared.deviceId,
             sentAt: sentAt,
-            channels: entries
+            channels: entries,
+            audioState: audio.state,
+            audioStateSince: audio.since,
+            lastChunkAt: audio.lastChunkAt
         )
 
         do {
@@ -163,7 +221,7 @@ final class ChannelStatusReporter {
                 ActivityLogger.shared.log(.telemetry, "channel_status: HTTP \(http.statusCode): \(body)")
                 return false
             }
-            ActivityLogger.shared.log(.telemetry, "channel_status sent: HTTP \(http.statusCode)")
+            ActivityLogger.shared.log(.telemetry, "channel_status sent: HTTP \(http.statusCode) audio=\(audio.state) since=\(audio.since)")
             return true
         } catch {
             ActivityLogger.shared.log(.telemetry, "channel_status send failed: \(error.localizedDescription)")
@@ -179,12 +237,21 @@ private struct ChannelStatusPayload: Encodable {
     let type = "channel_status"
     let sentAt: String
     let channels: [ChannelEntry]
+    /// See `AudioStateSignal`. The server alarms on `blocked:*` / `stopped:internal`
+    /// lasting 10 minutes and treats `stopped:user` as information.
+    let audioState: String
+    let audioStateSince: String
+    /// When a chunk was last opened. nil only before the first one ever.
+    let lastChunkAt: String?
 
     enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
         case type
         case sentAt = "sent_at"
         case channels
+        case audioState = "audio_state"
+        case audioStateSince = "audio_state_since"
+        case lastChunkAt = "last_chunk_at"
     }
 }
 

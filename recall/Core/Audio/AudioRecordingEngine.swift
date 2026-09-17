@@ -100,6 +100,8 @@ final class AudioRecordingEngine {
     /// stops hammering fresh activations and waits for an activatable trigger (route
     /// change / foreground / watchdog) instead. Cleared on any successful resume.
     private var activationBlocked = false
+    /// iOS is refusing to hand the audio session back. Read by the audio state signal.
+    var isActivationBlocked: Bool { activationBlocked }
     private var cannotInterruptOthersFailures = 0
     private var nextActivationRetryAt: Date = .distantPast
     private let activationRetryBackoff: [TimeInterval] = [10, 30, 60, 120, 300]
@@ -603,6 +605,7 @@ final class AudioRecordingEngine {
     // MARK: - Chunk Lifecycle
 
     private func startNewChunk() async {
+        UserDefaults.standard.set(Date(), forKey: AudioStateSignal.lastChunkKey)
         // Use pending chunk's timestamp if available (preserves original timing for voicelog merge)
         let effectiveStart = pendingChunkStartedAt ?? Date()
         let url = await chunkFileManager.generateChunkURL(startedAt: effectiveStart)
