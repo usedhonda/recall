@@ -54,6 +54,8 @@ So the server can tell "intentionally off" from "broken", recall reports channel
   blocked:<reason> | stopped:user | stopped:internal`, `audio_state_since` (when that
   *health class* began — listening and recording count as one, "capturing", so a sentence
   does not send a message), and `last_chunk_at`. A change of health class is an edge.
+  While audio is not capturing, the payload also repeats hourly, so a long outage never
+  ages past what the server trusts.
   The server alarms when `blocked:*` or `stopped:internal` lasts 10 minutes; `stopped:user`
   is information only, because the owner switches recording off on purpose. Mapping and its
   tests: `AudioStateSignal`.

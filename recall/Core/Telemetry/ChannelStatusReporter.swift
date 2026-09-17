@@ -120,8 +120,13 @@ final class ChannelStatusReporter {
 
         let sendEdge = changed || (firstRun && anyGated) || audioEdge
 
+        // A stretch without capture repeats itself hourly, like a gated channel does. An
+        // edge alone is not enough: the server stops trusting a state it has not heard for
+        // two hours, and an outage that outlasts that would otherwise go quiet again.
+        let needsLevel = anyGated || audio.healthClass != "capturing"
+
         var sendLevel = false
-        if anyGated {
+        if needsLevel {
             let last = defaults.object(forKey: lastLevelKey) as? Date
             if last == nil || now.timeIntervalSince(last!) >= levelInterval {
                 sendLevel = true
@@ -132,9 +137,9 @@ final class ChannelStatusReporter {
 
         let ok = await send(entries: entries, sentAt: nowISO, audio: audio)
         if ok { lastSentAudioClass = audio.healthClass }
-        // Reset the hourly clock only on a successful send that included a gated
-        // channel, so a failed send stays retried by the next tick.
-        if ok && anyGated {
+        // Reset the hourly clock only on a successful send that needed repeating, so a
+        // failed send stays retried by the next tick.
+        if ok && needsLevel {
             defaults.set(now, forKey: lastLevelKey)
         }
     }
