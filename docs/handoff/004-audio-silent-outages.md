@@ -1,16 +1,20 @@
 # Handoff: audio-silent-outages
 
 - Goal / why: recall records everything the owner says so Chi can remember the day. On
-  2026-09-17 three separate ways were found for that to stop **without anyone being able to
-  see it** — the app stays alive, telemetry keeps flowing, and only the audio is gone.
+  2026-09-17 three stretches were found where recording stopped **without anyone being able
+  to see it** (one of them possibly deliberate) — the app stays alive, telemetry keeps flowing, and only the audio is gone.
 - Scope: recording engine start/stop paths, audio session recovery, telemetry fields.
 - Status: diagnosed. Nothing implemented yet — **waiting for the owner's GO** on the state
   signal and on the Audio tile behaviour. oc-general has agreed the receiving side.
 
-## Hole 1 — the Audio tile turns recording off right after opening the app (~77 h lost)
+## Stretch 1 — recording stopped from the Audio tile, then off for ~77 h
 
-Opening the app auto-starts recording. The Audio tile is a toggle. Tapping it "to turn
-recording on" in the second after opening turns it off.
+**Not necessarily a fault.** The owner stops recording themselves at times, for battery
+(2026-09-17). The log proves which control stopped it, never why. An earlier version of this
+note called these mis-taps; that was an assumption and it is withdrawn.
+
+What is established: opening the app auto-starts recording, and within 1-3 seconds the Audio
+tile stopped it.
 
 | when (UTC) | foreground + auto-start | stop |
 |---|---|---|
@@ -26,8 +30,9 @@ recording` first. That line is absent; the only other caller is the tile
 Server side agrees (oc-general): 09-13T01Z to 09-16T06Z, no POST /ingest at all, while the
 5-minute HEAD /ingest kept arriving — app alive, recording off.
 
-The first occurrence followed an agent asking the owner to "open the app and turn recording
-back on". Opening already does that. **Do not give that instruction.**
+Still worth knowing: opening the app already starts recording, so "open the app and turn
+recording back on" asks for a tap that stops it. If recording needs to come back, bringing the
+app to the front is enough.
 
 ## Hole 2 — another app takes the audio session and recall cannot take it back
 
@@ -54,12 +59,14 @@ Add to the telemetry POST:
     audio_state_since: ISO8601
     last_chunk_at:     ISO8601
 
-The server alerts on `blocked:*` lasting N minutes and `stopped:user` lasting N hours. Also
+The server alerts on `blocked:*` lasting N minutes — that one is always involuntary.
+`stopped:user` is **information, not an alarm**: the owner turns recording off on purpose, and
+what the server needs is to tell "recording was off" apart from "nobody spoke", not to nag. Also
 count the stretches where the detector's peak stayed below the start threshold, so missed
 quiet speech becomes measurable (it is otherwise invisible: unrecorded audio gets no label).
 
-Separately, the Audio tile needs a decision from the owner (visible change): ignore a stop
-tap in the seconds after an auto-start, or show the state so that a tap is never a guess.
+A guard that ignores a stop tap right after an auto-start was considered and dropped: it would
+block exactly the deliberate battery stop the owner makes.
 
 ## The detector (context)
 
