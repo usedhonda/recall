@@ -49,6 +49,14 @@ So the server can tell "intentionally off" from "broken", recall reports channel
   state: `active | gated_by_user`, plus per-channel `since` (ISO8601 UTC).
 - Send on every state **edge**, plus once per hour while any channel is `gated_by_user`.
   All-active steady state sends nothing (the location POSTs themselves are the liveness signal).
+- The same payload carries whether the audio switch is actually being honoured (added
+  2026-09-17, agreed with oc-general): `audio_state` = `recording | listening |
+  blocked:<reason> | stopped:user | stopped:internal`, `audio_state_since` (when that
+  *health class* began — listening and recording count as one, "capturing", so a sentence
+  does not send a message), and `last_chunk_at`. A change of health class is an edge.
+  The server alarms when `blocked:*` or `stopped:internal` lasts 10 minutes; `stopped:user`
+  is information only, because the owner switches recording off on purpose. Mapping and its
+  tests: `AudioStateSignal`.
 - Receiver side (gateway `vibeterm-telemetry` ext, alert suppression, viewer display) is owned
   by the oc-general lane; the payload contract's canonical copy lives in oc-general
   `docs/contracts/`. Changes go through that contract doc, both lanes in agreement.
