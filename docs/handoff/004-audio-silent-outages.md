@@ -4,8 +4,11 @@
   2026-09-17 three stretches were found where recording stopped **without anyone being able
   to see it** (one of them possibly deliberate) — the app stays alive, telemetry keeps flowing, and only the audio is gone.
 - Scope: recording engine start/stop paths, audio session recovery, telemetry fields.
-- Status: diagnosed. Nothing implemented yet — **waiting for the owner's GO** on the state
-  signal and on the Audio tile behaviour. oc-general has agreed the receiving side.
+- Status: state signal **shipped** 2026-09-17 on the owner's GO (`3bcc957`, `2d17b23`) and
+  verified end to end — `channel_status sent: HTTP 200 audio=listening` on the device, arrival
+  confirmed in oc-general's channel-status.json. Their receiver (storing the fields, the
+  10-minute alarm, the note in Chi's context) is being rolled out on their side. No change to
+  the Audio tile. The server-side 50% drop (hole 3) is with oc-general and the owner.
 
 ## Stretch 1 — recording stopped from the Audio tile, then off for ~77 h
 
@@ -51,7 +54,12 @@ VoiceLog's `max_queued: 2` (config.local.yaml, oc-general's side). On 09-16 reca
 `newer_arrived`, 116 trimmed. Order of arrival, not content, decides. This conflicts with
 the owner's 09-13 ruling that input must not be reduced; oc-general is raising it.
 
-## Proposed (agreed with oc-general, pending owner GO)
+## Shipped (agreed with oc-general, owner GO 2026-09-17)
+
+First real payloads: at launch `stopped:internal` for one minute (the first tick beat the
+engine start), then `listening`. That one-minute blip is exactly what the 10-minute threshold
+is for. While not capturing, the status repeats hourly so the server's two-hour staleness rule
+never hides an ongoing outage; capturing sends nothing in its steady state.
 
 Add to the telemetry POST:
 
