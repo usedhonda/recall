@@ -59,7 +59,11 @@ Add to the telemetry POST:
     audio_state_since: ISO8601
     last_chunk_at:     ISO8601
 
-The server alerts on `blocked:*` lasting N minutes — that one is always involuntary.
+The server alerts on `blocked:*` or `stopped:internal` lasting N minutes (N = 10 to start,
+raised if it proves too short) — neither is the owner's choice. `stopped:internal` normally
+lasts seconds while an engine is rebuilt, so only a long one alarms; recall rewrites the state
+to `blocked:<reason>` whenever iOS refuses a resume, which means a `stopped:internal` that lasts
+10 minutes is a recall bug, and the server's alert says so.
 `stopped:user` is **information, not an alarm**: the owner turns recording off on purpose, and
 what the server needs is to tell "recording was off" apart from "nobody spoke", not to nag. Also
 count the stretches where the detector's peak stayed below the start threshold, so missed
