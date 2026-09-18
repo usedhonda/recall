@@ -1027,7 +1027,7 @@ final class AudioRecordingEngine {
                 return
             }
             logger.error("Resume attempt \(attempt) failed: \(error.localizedDescription)")
-            activity.log(.error, "Resume failed (attempt \(attempt)/\(maxAttempts)): \(error.localizedDescription)")
+            activity.log(.error, "Resume failed (attempt \(attempt)/\(maxAttempts)): \(error.audioDiagnostic) \(AudioSessionSnapshot.describe())")
 
             if attempt < maxAttempts {
                 // Exponential backoff: 2s, 4s, 8s
@@ -1156,7 +1156,7 @@ final class AudioRecordingEngine {
                 return
             }
             // If stop+start fails, try with full reset as last resort
-            activity.log(.error, "Soft restart failed: \(error.localizedDescription), trying hard reset")
+            activity.log(.error, "Soft restart failed: \(error.audioDiagnostic), trying hard reset")
             activity.log(.error, snapshotAudioState(prefix: "soft fail"))
             audioEngine.reset()
             do {
@@ -1192,7 +1192,7 @@ final class AudioRecordingEngine {
                 }
                 consecutiveRestartFailures += 1
                 logger.error("Failed to restart engine: \(error.localizedDescription)")
-                activity.log(.error, "Engine restart failed (\(consecutiveRestartFailures)/\(maxRestartBeforeRecreate)): \(error.localizedDescription)")
+                activity.log(.error, "Engine restart failed (\(consecutiveRestartFailures)/\(maxRestartBeforeRecreate)): \(error.audioDiagnostic) \(AudioSessionSnapshot.describe())")
                 state = .idle
                 if consecutiveRestartFailures >= maxRestartBeforeRecreate {
                     activity.log(.error, "Engine restart failed \(consecutiveRestartFailures)x — needs full recreate by HealthMonitor")

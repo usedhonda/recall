@@ -221,7 +221,7 @@ final class RecordingViewModel {
                     self.startMusicAutoSwitch()
                     return
                 } catch {
-                    let desc = error.localizedDescription
+                    let desc = "\(error.audioDiagnostic) \(AudioSessionSnapshot.describe())"
                     let isIntConflict = AudioSessionManager.isCannotInterruptOthers(error)
                     if isIntConflict {
                         intLaneAttempt += 1
