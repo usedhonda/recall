@@ -159,6 +159,26 @@ final class AudioSessionManager {
             return
         }
 
+        // Everything iOS says about the interruption, for the log. The reason separates
+        // "another app took the session" from a muted built-in mic, a suspended app or a
+        // disconnected route — which the recovery path currently cannot tell apart.
+        let reasonValue = userInfo[AVAudioSessionInterruptionReasonKey] as? UInt
+        let reason: String = {
+            guard let reasonValue,
+                  let reason = AVAudioSession.InterruptionReason(rawValue: reasonValue) else { return "none" }
+            switch reason {
+            case .default: return "default"
+            case .appWasSuspended: return "appWasSuspended"
+            case .builtInMicMuted: return "builtInMicMuted"
+            case .routeDisconnected: return "routeDisconnected"
+            @unknown default: return "unknown(\(reasonValue))"
+            }
+        }()
+        let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        // Captured here, at the moment of the notification; only the write is deferred.
+        let notice = "Interruption notice: \(type == .began ? "began" : "ended") reason=\(reason) options=\(optionsValue) \(AudioSessionSnapshot.describe())"
+        Task { @MainActor in ActivityLogger.shared.log(.state, notice) }
+
         switch type {
         case .began:
             logger.info("Audio session interruption began")
