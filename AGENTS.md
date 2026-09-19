@@ -1,7 +1,7 @@
 # recall — Project Contract (AGENTS.md)
 
-This is the single source of truth for how agents work in this repo. Claude Code loads it via
-the `@AGENTS.md` import in CLAUDE.md; Codex reads it natively. Keep it under ~200 lines / 32 KiB
+This is the single source of truth for how agents work in this repo. Claude Code and Codex both
+read `AGENTS.md` directly; Claude-only private notes live in ignored `CLAUDE.local.md`. Keep it under ~200 lines / 32 KiB
 — it is the contract, not the manual. Detailed, code-verified facts live in `docs/` (notably
 `docs/pipeline.md` and `docs/stream-independence.md`); link to them instead of restating them.
 
@@ -48,7 +48,9 @@ reviewer, and roles may swap mid-task. What matters is the shared state, not who
 
 Shared state lives in files, not conversation: `docs/handoff/` (copy `TEMPLATE.md` →
 `NNN-slug.md`, keep it current). **If it is not in the handoff file or the repo, it does not
-exist for the next agent.**
+exist for the next agent.** Claude Code: auto memory (`~/.claude/projects/.../memory/`) is
+Claude-private — any knowledge Codex or a future agent must share belongs in this file or
+docs/, not in memory.
 
 ## 4. Commands & verification
 
@@ -65,6 +67,9 @@ Device build / deploy to kana (real iPhone):
 ```bash
 ~/.claude/apple-dev/bin/ios-build.sh device
 ```
+
+Claude Code: prefer the `/ios-build` skill (`--device` for kana); it wraps the same
+`ios-build.sh` command above.
 
 Unit tests (`recallTests`, currently `JumpGate` only):
 
