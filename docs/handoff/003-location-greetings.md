@@ -78,6 +78,32 @@ already lives on the server side. So:
 receipt time lands in a separate `received_at`, and duplicates are folded by parsed instant
 rather than string match.
 
+## Measured on the ground, 2026-09-25 (first real out-and-back in Singapore)
+
+From the on-device log (JST): out 13:48 -> home 15:09, about 2.1 km away at the furthest.
+
+- The fast path worked and was accepted: `wifi left: sfk841` at 13:48:08, a fresh-fix kick in
+  the same second, `wifi_event left ... sent: HTTP 200` at **13:48:10 — two seconds after the
+  doorway**. Arrival likewise at 15:10:21.
+- Position kept flowing while away: 268 sends, largest gap 6 min, accuracy mostly 2-5 m.
+- No greeting fired. oc-general had been looking at 15:10-18:25, i.e. **after the return**,
+  where "inside, 6-20 m from home" is simply correct. They are re-checking 13:48-15:10 and
+  have agreed to separate "HTTP 200" from "stored", and never to greet on Wi-Fi alone.
+
+### The weakness this exposed: one witness only
+
+`geofence_event` did not fire at all — the configured anchors are in Tokyo. The parked-circle
+exit added for exactly this reason (`ef927db`) did not fire either: the circle is cleared and
+re-armed on every small movement indoors (**40+ times on 2026-09-25**), and it happened not to
+be armed at the moment of departure. So in Singapore the departure has **only the Wi-Fi drop**
+as a witness, and Wi-Fi alone must not greet — the home network drops without anyone leaving
+(observed the same day: left 06:37Z, rejoined 07:44Z, position unchanged).
+
+Options, none implemented: keep the parked circle armed through small indoor movement (arm it
+around the *home* rather than the last fix, or require a real exit before clearing); let the
+owner add a Singapore anchor; or let the server treat "Wi-Fi drop + the next position beyond
+N m" as two witnesses rather than one.
+
 ## Open
 
 1. Measure on the ground: trigger -> first accepted fix -> send, and end-to-end to the
