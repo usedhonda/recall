@@ -178,6 +178,9 @@ enum HubProducerContract {
             byteLength = 0
         }
 
+        if (route == .audioOriginal || route == .glassesOriginal) && hash == nil {
+            throw HubProducerError.conflictingOriginal
+        }
         let metadata: [String: Any] = ["schema_version": 1, "device_id": deviceID,
                                         "observation_id": observationID, "source_payload": payloadObject,
                                         "time_basis": timeBasis, "parents": parents.map { [
@@ -202,7 +205,11 @@ enum HubProducerContract {
         guard let object = try? JSONSerialization.jsonObject(with: responseData),
               let response = object as? [String: Any],
               let receiptObject = response["storage_receipt"],
-              JSONSerialization.isValidJSONObject(receiptObject) else {
+              JSONSerialization.isValidJSONObject(receiptObject),
+              let receiptDictionary = receiptObject as? [String: Any],
+              isStrictInteger(receiptDictionary["receipt_version"]),
+              isStrictInteger(receiptDictionary["byte_length"]),
+              isStrictInteger(receiptDictionary["ingest_sequence"]) else {
             throw HubProducerError.invalidReceipt
         }
         let receipt = try HubStorageReceipt.decode(JSONSerialization.data(withJSONObject: receiptObject))
@@ -211,7 +218,9 @@ enum HubProducerContract {
     }
 
     fileprivate static func isSHA256(_ value: String) -> Bool {
-        value.count == 64 && value.allSatisfy { $0.isHexDigit && $0.isLowercase }
+        value.count == 64 && value.unicodeScalars.allSatisfy {
+            ($0.value >= 48 && $0.value <= 57) || ($0.value >= 97 && $0.value <= 102)
+        }
     }
 }
 

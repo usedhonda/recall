@@ -37,7 +37,7 @@ final class HubProducerContractTests: XCTestCase {
         XCTAssertThrowsError(try HubProducerContract.makeEnvelope(route: .wifi, deviceID: "d",
                                                                    observationID: "o", occurredAt: date,
                                                                    timeBasis: "occurred_at", sourcePayloadJSON: Data("[]".utf8)))
-        let huge = Data((String(repeating: "x", count: 20_971_000)).utf8)
+        let huge = Data((String(repeating: "x", count: 21_000_000)).utf8)
         XCTAssertThrowsError(try HubProducerContract.makeEnvelope(route: .wifi, deviceID: "d",
                                                                    observationID: "o", occurredAt: date,
                                                                    timeBasis: "occurred_at", sourcePayloadJSON: Data("{\"x\":\"".utf8) + huge + Data("\"}".utf8)))
