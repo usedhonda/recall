@@ -36,7 +36,11 @@ The old code paths still have the migration gaps recorded in handoff 005.
    downstream durable inbox recovery; B = storage plus separate adapter admission
    ACK before release. The Hub's `audio-dispatch-boundary.md` is the current
    decision record; the old adapter ledger is candidate B, not direct ingress.
-   Neither handoff is accepted. Exact VoiceLog ownership remains unconfirmed.
+   Neither handoff is accepted. The VoiceLog integration owner has since
+   acknowledged API/queue/worker/dispatch-ledger responsibility. See
+   [audio-source-provenance.md](../audio-source-provenance.md) for the current
+   field partition proposal and capture-clock limits; neither was implemented
+   by the generic foundation commit.
 4. Startup/normal-operation reconciliation with receipt persistence before
    deletion, accounting for physical writes and gap-report failures.
 5. Natural event receipt -> scoped MCP read -> consumer evidence, then explicit

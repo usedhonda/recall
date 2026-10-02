@@ -80,12 +80,14 @@ processing inbox; recovery beyond that history's retention horizon is a gap.
   leased items until matching receipts are persisted.
 - Audio needs an owner-provided durable commit-to-dispatch bridge, stable legacy
   recording ID, and deduplicated processing jobs. Do not replay expired reactions.
-  Exact VoiceLog API/queue/worker ownership remains unconfirmed; Gateway/Chi
-  integration ownership does not establish VoiceLog ownership. Preserve capture
+  The VoiceLog integration owner has now acknowledged API/queue/worker/dispatch
+  ledger responsibility; that is not handoff acceptance. Preserve capture
   start/end, ASR completion, and Hub receipt clocks separately. DB creation time
   or Hub receipt time is not capture end and cannot trigger a fresh-conversation
   notification. Legacy recording-ID mapping is required for candidate B; candidate
   A instead requires a durable downstream inbox/checkpoint and job identity.
+  See [audio-source-provenance.md](audio-source-provenance.md) for the current
+  field origins and why `startedAt + duration` cannot establish capture end.
 - Prove each route using actual producer ID -> Hub receipt -> scoped MCP read ->
   required consumer correlation, without publishing personal payload values.
 - Stop old delivery only after the consumer owner's synchronized per-route GO.
