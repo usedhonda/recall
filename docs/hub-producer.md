@@ -63,8 +63,28 @@ Consequently, MCP read does not promise the producer's original JSON bytes or
 number spelling. Saving an inbox's received representation is not proof of
 original-request byte equality. Downstream comparisons must use the Hub-owned
 read/content contract, not a guessed reconstruction of producer bytes or a
-separately implemented Hub canonicalizer. That downstream comparison contract
-and lossless numeric range have been referred to the Hub owner for resolution.
+separately implemented Hub canonicalizer.
+
+The resolved authority is the Hub's `docs/contracts/event-content.md` (owner
+release `c290e23`). `get_event` exposes stored `content_sha256` with
+`content_hash_scheme="hub-event-v1"` on both complete and paginated metadata.
+An inbox binds `(source, external_id)` to event ID, scheme, content fingerprint,
+and blob hash; subsequent differences conflict. Require matching event identity
+and fingerprint on every page and complete metadata reassembly before admission.
+Missing or unsupported schemes are unmet admission, not a local hash-generation
+fallback. List summaries and storage receipt v1 are unchanged; producer receipt
+validation therefore needs no change. These values add no blob permissions,
+signature guarantee, or evidence of processing completion.
+
+For binary64 consumers the portable integer range is `[-(2^53-1), 2^53-1]`.
+Floats have binary64 precision, not arbitrary-precision decimal fidelity:
+`0.10000000000000001` can collapse to `0.1`, while integer `1` and float `1.0`
+can have different Hub fingerprints. New nonfinite writes are rejected; that
+does not certify or rewrite historical rows. A route requiring exact decimals,
+larger integers, or original UTF-8 needs an explicit owner-agreed representation
+before admission, with no automatic string conversion or raw-JSON reconstruction.
+Original byte length comes from a validated receipt or authorized original bytes,
+never from interpreting the event-content fingerprint.
 
 ## Capacity and activation boundaries
 
