@@ -92,7 +92,7 @@ public actor HubDurableOutbox {
 
     public func enqueue(_ envelope: Envelope) throws {
         guard let budget = try budget(for: envelope.lane) else { throw Error.invalidBudget }
-        let existing = try queryOne("SELECT lane, identity, COALESCE(sha256,''), byte_length FROM outbox WHERE id=? OR id IN (SELECT id FROM tombstones WHERE id=?)", binds: [.text(envelope.id), .text(envelope.id)])
+        let existing = try queryOne("SELECT lane,identity,COALESCE(sha256,''),byte_length FROM outbox WHERE id=? UNION ALL SELECT lane,identity,COALESCE(sha256,''),byte_length FROM tombstones WHERE id=? LIMIT 1", binds: [.text(envelope.id), .text(envelope.id)])
         if let existing {
             if existing[0] != envelope.lane || existing[1] != envelope.identity || existing[2] != (envelope.sha256 ?? "") || existing[3] != String(envelope.byteLength) { throw Error.immutableConflict }
             throw Error.immutableConflict
