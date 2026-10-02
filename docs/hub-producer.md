@@ -58,15 +58,34 @@ SQLite journals, temporary files, or original capture reservations.
 
 ## Remaining integration
 
+The Hub-owned `docs/contracts/audio-dispatch-boundary.md` is the current audio
+decision record. Direct ingress is storage-only. The device-release choice is
+pending: A releases after a durably bound storage receipt and requires a durable
+downstream consumer inbox; B waits for storage plus a separate processing-admission
+ACK from an adapter. Neither processing handoff is implemented or accepted.
+The old adapter ledger proposal is historical candidate B, not the current
+`POST /v1/events` response contract. Do not change audio deletion until the choice
+and route acceptance are established. Retained Hub history alone is not a durable
+processing inbox; recovery beyond that history's retention horizon is a gap.
+
 - Freeze and persist each route's actual source payload before first delivery.
 - Wire independent admission, capture backpressure, and recoverable gap reporting
   using approved budgets; protect originals from legacy expiry/removal paths.
 - Provision a distinct Hub endpoint and Recall source token through a private
   device configuration path. The existing Gateway QR/token is not this path.
+  This workflow belongs to Recall: the Hub has no device enrollment/Keychain
+  installer. Its operator-side capability preflight does not configure a device.
+  Never copy the complete Hub source policy to the device.
 - Start the outbox reconciler at app startup and during normal operation; keep
   leased items until matching receipts are persisted.
 - Audio needs an owner-provided durable commit-to-dispatch bridge, stable legacy
   recording ID, and deduplicated processing jobs. Do not replay expired reactions.
+  Exact VoiceLog API/queue/worker ownership remains unconfirmed; Gateway/Chi
+  integration ownership does not establish VoiceLog ownership. Preserve capture
+  start/end, ASR completion, and Hub receipt clocks separately. DB creation time
+  or Hub receipt time is not capture end and cannot trigger a fresh-conversation
+  notification. Legacy recording-ID mapping is required for candidate B; candidate
+  A instead requires a durable downstream inbox/checkpoint and job identity.
 - Prove each route using actual producer ID -> Hub receipt -> scoped MCP read ->
   required consumer correlation, without publishing personal payload values.
 - Stop old delivery only after the consumer owner's synchronized per-route GO.

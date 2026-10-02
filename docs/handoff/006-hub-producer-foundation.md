@@ -26,16 +26,26 @@ The old code paths still have the migration gaps recorded in handoff 005.
    The audio-only setting must not be reused as a global budget.
 2. Private source-specific Hub endpoint/token device provisioning. Existing QR
    configuration targets Gateway, not independent Hub authentication.
+   Recall owns this missing workflow; the Hub has no device installer. Operator
+   connection preflight does not provision the device. Copy only the approved
+   source credential through private setup, never the complete Hub policy.
 3. Per-route finalized immutable payload capture and durable admission before
    legacy overwrite/expiry. Audio also needs original-file reservations and a
    processing-owner commit-to-dispatch contract.
+   Audio release is a pending user choice: A = durable storage receipt plus
+   downstream durable inbox recovery; B = storage plus separate adapter admission
+   ACK before release. The Hub's `audio-dispatch-boundary.md` is the current
+   decision record; the old adapter ledger is candidate B, not direct ingress.
+   Neither handoff is accepted. Exact VoiceLog ownership remains unconfirmed.
 4. Startup/normal-operation reconciliation with receipt persistence before
    deletion, accounting for physical writes and gap-report failures.
 5. Natural event receipt -> scoped MCP read -> consumer evidence, then explicit
    consumer-owner synchronization before disabling old delivery.
 
 No new permission for the existing implementation scope is required. The missing
-numeric policies are choices, not a mechanical task-carry approval requirement.
+numeric policies and audio release alternative are choices, not a mechanical
+task-carry approval requirement. The Hub owner reports already presenting A/B;
+do not duplicate that user question. No existing audio deletion behavior changes.
 No infinite queue or automatic tombstone-pruning policy was invented. Logical
 pending JSON byte accounting does not measure total SQLite or capture disk use.
 
