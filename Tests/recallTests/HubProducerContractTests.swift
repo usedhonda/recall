@@ -69,9 +69,14 @@ final class HubProducerContractTests: XCTestCase {
         var extra = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         extra["extra"] = true
         XCTAssertThrowsError(try HubStorageReceipt.decode(JSONSerialization.data(withJSONObject: extra)))
-        var fractional = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        fractional["ingest_sequence"] = 2.0
-        let fractionalResponse = try JSONSerialization.data(withJSONObject: ["storage_receipt": fractional])
-        XCTAssertThrowsError(try HubProducerContract.validateResponse(responseData: fractionalResponse, expected: expected))
+        // Encode literal JSON: JSONSerialization would normalize Swift 2.0 to 2
+        // before this test reaches the production parser.
+        let validLiteral = try XCTUnwrap(String(data: data, encoding: .utf8))
+        for invalidInteger in ["2.0", "2e0", "true"] {
+            let invalidLiteral = validLiteral.replacingOccurrences(of: "\"ingest_sequence\":2",
+                                                                   with: "\"ingest_sequence\":\(invalidInteger)")
+            let invalidResponse = Data("{\"storage_receipt\":\(invalidLiteral)}".utf8)
+            XCTAssertThrowsError(try HubProducerContract.validateResponse(responseData: invalidResponse, expected: expected))
+        }
     }
 }

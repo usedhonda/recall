@@ -2,64 +2,139 @@ import XCTest
 @testable import recall
 
 final class HubDurableOutboxTests: XCTestCase {
-    private func assertThrowsAsync(_ operation: () async throws -> Void,
-                                   file: StaticString = #filePath,
-                                   line: UInt = #line) async {
-        do { try await operation(); XCTFail("expected error", file: file, line: line) }
-        catch { }
-    }
-    private func makeOutbox(bytes: Int64 = 1024, items: Int64 = 4, tombstones: Int64 = 4) throws -> (HubDurableOutbox, URL) {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("hub-outbox-\(UUID().uuidString).sqlite")
-        let budget = try HubDurableOutbox.LaneBudget(maxBytes: bytes, maxItems: items, maxTombstones: tombstones)
-        return (try HubDurableOutbox(url: url, budgets: ["audio": budget, "location": budget]), url)
+    private func event(_ id: String, route: HubRecallRoute = .gpsDelivery,
+                       value: Int = 1) throws -> HubProducerEnvelope {
+        try HubProducerContract.makeEnvelope(route: route, deviceID: "fixture-device", observationID: id,
+            occurredAt: Date(timeIntervalSince1970: 1), timeBasis: "timestamp",
+            sourcePayloadJSON: Data("{\"value\":\(value)}".utf8),
+            originalBytes: route == .audioOriginal ? Data("audio-fixture".utf8) : nil)
     }
 
-    private func envelope(_ id: String, lane: String = "audio", body: String = "body") throws -> HubDurableOutbox.Envelope {
-        let data = Data(body.utf8)
-        return try HubDurableOutbox.Envelope(id: id, lane: lane, encoded: data, identity: "identity-\(id)", sha256: "hash-\(id)", byteLength: Int64(data.count))
+    private func budgets(bytes: Int64 = 100_000, slots: Int64 = 8) throws -> [String: HubDurableOutbox.LaneBudget] {
+        let budget = try HubDurableOutbox.LaneBudget(maxBytes: bytes, maxItems: 8, maxTombstones: slots)
+        return ["audio-original": budget, "gps-delivery": budget]
     }
 
-    func testLeaseExpiryReopensWithStableBytes() async throws {
-        let (outbox, url) = try makeOutbox(); defer { try? FileManager.default.removeItem(at: url) }
-        try await outbox.enqueue(envelope("one"))
-        let first = try await outbox.leaseNext(lane: "audio", now: Date(timeIntervalSince1970: 10), duration: 1)
-        let reopened = try await outbox.leaseNext(lane: "audio", now: Date(timeIntervalSince1970: 12), duration: 1)
-        XCTAssertEqual(first?.envelope, reopened?.envelope)
-        let bytes = try await outbox.pendingBytes(lane: "audio")
-        XCTAssertEqual(bytes, 4)
+    private func url() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("hub-\(UUID().uuidString).sqlite")
     }
 
-    func testMismatchedReceiptNeverAcknowledges() async throws {
-        let (outbox, url) = try makeOutbox(); defer { try? FileManager.default.removeItem(at: url) }
-        try await outbox.enqueue(envelope("one"))
-        let bad = HubDurableOutbox.Receipt(id: "one", lane: "audio", identity: "wrong", sha256: "hash-one", byteLength: 4, eventID: "event")
-        await assertThrowsAsync { try await outbox.acknowledge(bad) }
-        let bytes = try await outbox.pendingBytes(lane: "audio")
-        XCTAssertEqual(bytes, 4)
+    private func response(_ event: HubProducerEnvelope, eventID: String = "00000000-0000-4000-8000-000000000001",
+                          overrideLength: Int? = nil) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["storage_receipt": [
+            "receipt_version": 1, "source": "recall", "external_id": event.externalID,
+            "event_id": eventID, "sha256": event.originalSHA256.map { $0 as Any } ?? NSNull(),
+            "byte_length": overrideLength ?? event.originalByteLength, "ingest_sequence": 1
+        ]])
     }
 
-    func testLostResponseDuplicateReceiptIsIdempotentAndPersistent() async throws {
-        let (outbox, url) = try makeOutbox(); defer { try? FileManager.default.removeItem(at: url) }
-        try await outbox.enqueue(envelope("one"))
-        let receipt = HubDurableOutbox.Receipt(id: "one", lane: "audio", identity: "identity-one", sha256: "hash-one", byteLength: 4, eventID: "event")
-        try await outbox.acknowledge(receipt)
-        try await outbox.acknowledge(receipt)
-        let reopened = try HubDurableOutbox(url: url, budgets: ["audio": try .init(maxBytes: 1024, maxItems: 4, maxTombstones: 4), "location": try .init(maxBytes: 1024, maxItems: 4, maxTombstones: 4)])
-        let bytes = try await reopened.pendingBytes(lane: "audio")
-        XCTAssertEqual(bytes, 0)
-        await assertThrowsAsync { try await reopened.acknowledge(HubDurableOutbox.Receipt(id: "one", lane: "audio", identity: "identity-one", sha256: "hash-one", byteLength: 4, eventID: "other")) }
+    func testReopenedLeasePreservesBytesAndNeverDrainsBeforeACK() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let original = try event("one")
+        let first = try HubDurableOutbox(url: path, budgets: budgets())
+        try await first.enqueue(original)
+        let lease = try await first.leaseNext(lane: "gps-delivery", now: Date(timeIntervalSince1970: 10), duration: 2)
+        let reopened = try HubDurableOutbox(url: path, budgets: budgets())
+        let locked = try await reopened.leaseNext(lane: "gps-delivery", now: Date(timeIntervalSince1970: 11), duration: 2)
+        XCTAssertNil(locked)
+        let retried = try await reopened.leaseNext(lane: "gps-delivery", now: Date(timeIntervalSince1970: 13), duration: 2)
+        XCTAssertEqual(lease?.encodedJSON, retried?.encodedJSON)
+        XCTAssertEqual(retried?.encodedJSON, original.encodedJSON)
+        let bytes = try await reopened.pendingBytes(lane: "gps-delivery")
+        XCTAssertEqual(bytes, Int64(original.encodedJSON.count))
     }
 
-    func testBudgetsAreIndependentAndFullRejectsOnlyOwnLane() async throws {
-        let (outbox, url) = try makeOutbox(bytes: 4, items: 2); defer { try? FileManager.default.removeItem(at: url) }
-        try await outbox.enqueue(envelope("a", lane: "audio"))
-        await assertThrowsAsync { try await outbox.enqueue(envelope("b", lane: "audio")) }
-        try await outbox.enqueue(envelope("l", lane: "location"))
+    func testOriginalReceiptMismatchRetainsAndValidACKPersistsBinding() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let original = try event("one", route: .audioOriginal)
+        let box = try HubDurableOutbox(url: path, budgets: budgets())
+        try await box.enqueue(original)
+        do {
+            try await box.acknowledge(responseData: response(original, overrideLength: 0), externalID: original.externalID)
+            XCTFail("wrong original length must not ACK")
+        } catch {}
+        let remaining = try await box.pendingBytes(lane: "audio-original")
+        XCTAssertEqual(remaining, Int64(original.encodedJSON.count))
+        let ack = try response(original)
+        try await box.acknowledge(responseData: ack, externalID: original.externalID)
+        let reopened = try HubDurableOutbox(url: path, budgets: budgets())
+        try await reopened.acknowledge(responseData: ack, externalID: original.externalID)
+        let receipt = try await reopened.storedReceipt(externalID: original.externalID)
+        XCTAssertEqual(receipt?.sha256, original.originalSHA256)
+        let pending = try await reopened.pendingBytes(lane: "audio-original")
+        XCTAssertEqual(pending, 0)
+        do {
+            try await reopened.acknowledge(responseData: response(original,
+                eventID: "00000000-0000-4000-8000-000000000002"), externalID: original.externalID)
+            XCTFail("stored event ID cannot change")
+        } catch {}
     }
 
-    func testInvalidPersistencePathDoesNotReportSuccess() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("missing.sqlite")
-        let budget = try HubDurableOutbox.LaneBudget(maxBytes: 10, maxItems: 1, maxTombstones: 1)
-        XCTAssertThrowsError(try HubDurableOutbox(url: url, budgets: ["audio": budget]))
+    func testDuplicateSameBodyIsIdempotentBeforeAndAfterACKButChangedBodyConflicts() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let box = try HubDurableOutbox(url: path, budgets: budgets())
+        let original = try event("one")
+        try await box.enqueue(original)
+        try await box.enqueue(original)
+        do { try await box.enqueue(event("one", value: 2)); XCTFail("immutable conflict") } catch {}
+        try await box.acknowledge(responseData: response(original), externalID: original.externalID)
+        try await box.enqueue(original)
+        do { try await box.enqueue(event("one", value: 2)); XCTFail("tombstone conflict") } catch {}
+        let lease = try await box.leaseNext(lane: "gps-delivery", duration: 1)
+        XCTAssertNil(lease)
+    }
+
+    func testFullLaneDoesNotConsumeOtherLaneAndReservesReceiptSlots() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let box = try HubDurableOutbox(url: path, budgets: budgets(slots: 1))
+        let audio = try event("audio", route: .audioOriginal)
+        try await box.enqueue(audio)
+        do { try await box.enqueue(event("next", route: .audioOriginal)); XCTFail("receipt slot reserved") } catch {}
+        try await box.enqueue(event("gps"))
+        try await box.acknowledge(responseData: response(audio), externalID: audio.externalID)
+        do { try await box.enqueue(event("next", route: .audioOriginal)); XCTFail("tombstone retained") } catch {}
+    }
+
+    func testEncodedByteBudgetNotOriginalByteCount() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let original = try event("one")
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: Int64(original.encodedJSON.count)))
+        try await box.enqueue(original)
+        do { try await box.enqueue(event("two")); XCTFail("zero original bytes still uses encoded space") } catch {}
+    }
+
+    func testConcurrentInstancesCannotOveradmitOrDoubleLease() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let policy = try budgets(slots: 1)
+        let a = try HubDurableOutbox(url: path, budgets: policy)
+        let b = try HubDurableOutbox(url: path, budgets: policy)
+        let e1 = try event("one"), e2 = try event("two")
+        let successes = await withTaskGroup(of: Bool.self) { group in
+            group.addTask { do { try await a.enqueue(e1); return true } catch { return false } }
+            group.addTask { do { try await b.enqueue(e2); return true } catch { return false } }
+            var count = 0
+            for await success in group { if success { count += 1 } }
+            return count
+        }
+        XCTAssertEqual(successes, 1)
+        async let first = a.leaseNext(lane: "gps-delivery", duration: 30)
+        async let second = b.leaseNext(lane: "gps-delivery", duration: 30)
+        let leases = try await [first, second]
+        XCTAssertEqual(leases.compactMap { $0 }.count, 1)
+    }
+
+    func testPersistenceFailureDoesNotCreateEmptySuccessQueue() throws {
+        let path = url().appendingPathComponent("missing.sqlite")
+        XCTAssertThrowsError(try HubDurableOutbox(url: path, budgets: budgets()))
+        let corrupt = url()
+        defer { try? FileManager.default.removeItem(at: corrupt) }
+        try Data("not sqlite".utf8).write(to: corrupt)
+        XCTAssertThrowsError(try HubDurableOutbox(url: corrupt, budgets: budgets()))
     }
 }

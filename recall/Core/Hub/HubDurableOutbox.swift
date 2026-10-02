@@ -1,87 +1,54 @@
+import CryptoKit
 import Foundation
 import SQLite3
 
-/// Durable, lane-isolated storage for Hub envelopes. This is deliberately a
-/// storage primitive: admission to physical/staging files is a separate layer.
-public actor HubDurableOutbox {
-    public struct LaneBudget: Sendable, Equatable {
-        public let maxBytes: Int64
-        public let maxItems: Int64
-        public let maxTombstones: Int64
+/// Inactive producer foundation. Explicit lane budgets bound encoded pending
+/// bytes and retained receipt slots, not total filesystem/capture staging use.
+actor HubDurableOutbox {
+    struct LaneBudget: Sendable {
+        let maxBytes: Int64
+        let maxItems: Int64
+        let maxTombstones: Int64
 
-        public init(maxBytes: Int64, maxItems: Int64, maxTombstones: Int64) throws {
-            guard maxBytes > 0, maxItems > 0, maxTombstones > 0 else {
-                throw Error.invalidBudget
-            }
+        init(maxBytes: Int64, maxItems: Int64, maxTombstones: Int64) throws {
+            guard maxBytes > 0, maxItems > 0, maxTombstones > 0 else { throw Failure.invalidBudget }
             self.maxBytes = maxBytes
             self.maxItems = maxItems
             self.maxTombstones = maxTombstones
         }
     }
 
-    public struct Envelope: Sendable, Equatable {
-        public let id: String
-        public let lane: String
-        public let encoded: Data
-        public let identity: String
-        public let sha256: String?
-        public let byteLength: Int64
-
-        public init(id: String, lane: String, encoded: Data, identity: String,
-                    sha256: String?, byteLength: Int64) throws {
-            guard !id.isEmpty, !lane.isEmpty, !identity.isEmpty,
-                  byteLength >= 0 else { throw Error.invalidEnvelope }
-            self.id = id; self.lane = lane; self.encoded = encoded
-            self.identity = identity; self.sha256 = sha256?.lowercased()
-            self.byteLength = byteLength
-        }
+    struct Lease: Sendable {
+        let externalID: String
+        let encodedJSON: Data
+        let expectedReceipt: HubExpectedStorageReceipt
+        let expiresAt: Date
     }
 
-    public struct LeasedEnvelope: Sendable, Equatable {
-        public let envelope: Envelope
-        public let leaseUntil: Date
-    }
-
-    public struct Receipt: Sendable, Equatable {
-        public let id: String
-        public let lane: String
-        public let identity: String
-        public let sha256: String?
-        public let byteLength: Int64
-        public let eventID: String
-
-        public init(id: String, lane: String, identity: String, sha256: String,
-                    byteLength: Int64, eventID: String) {
-            self.id = id; self.lane = lane; self.identity = identity
-            self.sha256 = sha256?.lowercased(); self.byteLength = byteLength
-            self.eventID = eventID
-        }
-    }
-
-    public enum Error: Swift.Error, Equatable, Sendable {
-        case invalidBudget, invalidEnvelope, invalidLease
-        case laneBudgetExceeded, tombstoneBudgetExceeded
-        case immutableConflict, notFound, receiptMismatch
-        case sqlite(String)
+    enum Failure: Error, Equatable {
+        case invalidBudget, invalidEnvelope, invalidLease, laneFull, receiptSlotsFull
+        case immutableConflict, notFound, receiptMismatch, corruptRecord
+        case storage(Int32)
     }
 
     private let db: OpaquePointer
+    private let budgets: [String: LaneBudget]
 
-    public init(url: URL, budgets: [String: LaneBudget]) throws {
-        guard !budgets.isEmpty, budgets.keys.allSatisfy({ !$0.isEmpty }) else { throw Error.invalidBudget }
+    init(url: URL, budgets: [String: LaneBudget]) throws {
+        guard !budgets.isEmpty, budgets.keys.allSatisfy({ !$0.isEmpty }) else { throw Failure.invalidBudget }
+        self.budgets = budgets
         var handle: OpaquePointer?
-        let rc = sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
-        guard rc == SQLITE_OK, let handle else { throw Error.sqlite("open:\(rc)") }
+        let code = sqlite3_open_v2(url.path, &handle,
+            SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
+        guard code == SQLITE_OK, let handle else {
+            if let handle { sqlite3_close(handle) }
+            throw Failure.storage(code)
+        }
         db = handle
         do {
-            try exec("PRAGMA synchronous=FULL")
-            try exec("PRAGMA foreign_keys=ON")
-            try exec("CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, lane TEXT NOT NULL, envelope BLOB NOT NULL, identity TEXT NOT NULL, sha256 TEXT NOT NULL, byte_length INTEGER NOT NULL, state INTEGER NOT NULL, lease_until REAL, created_at REAL NOT NULL)")
-            try exec("CREATE TABLE IF NOT EXISTS tombstones (id TEXT PRIMARY KEY, lane TEXT NOT NULL, identity TEXT NOT NULL, sha256 TEXT NOT NULL, byte_length INTEGER NOT NULL, event_id TEXT NOT NULL, bound_at REAL NOT NULL)")
-            try exec("CREATE TABLE IF NOT EXISTS lane_budgets (lane TEXT PRIMARY KEY, max_bytes INTEGER NOT NULL, max_items INTEGER NOT NULL, max_tombstones INTEGER NOT NULL)")
-            for (lane, budget) in budgets {
-                try upsertBudget(lane: lane, budget: budget)
-            }
+            sqlite3_busy_timeout(db, 1_000)
+            try execute("PRAGMA synchronous=FULL")
+            try execute("CREATE TABLE IF NOT EXISTS hub_outbox_v1 (id TEXT PRIMARY KEY, lane TEXT NOT NULL, body BLOB, body_hash TEXT NOT NULL, original_hash TEXT NOT NULL, original_bytes INTEGER NOT NULL, state INTEGER NOT NULL DEFAULT 0, lease_until REAL NOT NULL DEFAULT 0, receipt BLOB)")
         } catch {
             sqlite3_close(handle)
             throw error
@@ -90,112 +57,183 @@ public actor HubDurableOutbox {
 
     deinit { sqlite3_close(db) }
 
-    public func enqueue(_ envelope: Envelope) throws {
-        guard let budget = try budget(for: envelope.lane) else { throw Error.invalidBudget }
-        let existing = try queryOne("SELECT lane,identity,COALESCE(sha256,''),byte_length FROM outbox WHERE id=? UNION ALL SELECT lane,identity,COALESCE(sha256,''),byte_length FROM tombstones WHERE id=? LIMIT 1", binds: [.text(envelope.id), .text(envelope.id)])
-        if let existing {
-            if existing[0] != envelope.lane || existing[1] != envelope.identity || existing[2] != (envelope.sha256 ?? "") || existing[3] != String(envelope.byteLength) { throw Error.immutableConflict }
-            throw Error.immutableConflict
+    /// Same ID and bytes is a retry, including after ACK. Different immutable
+    /// bytes conflict. Reserve a receipt slot now so ACK cannot exhaust it later.
+    func enqueue(_ envelope: HubProducerEnvelope) throws {
+        let lane = envelope.route.rawValue
+        guard let budget = budgets[lane] else { throw Failure.invalidBudget }
+        guard envelope.source == "recall", !envelope.externalID.isEmpty,
+              !envelope.encodedJSON.isEmpty,
+              envelope.encodedJSON.count <= HubProducerContract.maximumEncodedJSONBytes,
+              envelope.originalByteLength >= 0 else { throw Failure.invalidEnvelope }
+        let hash = Self.digest(envelope.encodedJSON)
+        try transaction {
+            if let existing = try row(envelope.externalID) {
+                guard existing.lane == lane, existing.bodyHash == hash,
+                      existing.originalHash == envelope.originalSHA256,
+                      existing.originalBytes == envelope.originalByteLength else { throw Failure.immutableConflict }
+                return
+            }
+            let used = try scalar("SELECT COALESCE(SUM(length(body)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+            let pending = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=? AND state!=2", [.text(lane)])
+            let reserved = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+            let bytes = Int64(envelope.encodedJSON.count)
+            guard bytes <= budget.maxBytes, used <= budget.maxBytes - bytes,
+                  pending < budget.maxItems else { throw Failure.laneFull }
+            guard reserved < budget.maxTombstones else { throw Failure.receiptSlotsFull }
+            try execute("INSERT INTO hub_outbox_v1(id,lane,body,body_hash,original_hash,original_bytes) VALUES(?,?,?,?,?,?)",
+                [.text(envelope.externalID), .text(lane), .blob(envelope.encodedJSON), .text(hash),
+                 .text(envelope.originalSHA256 ?? ""), .int(Int64(envelope.originalByteLength))])
         }
-        let used = try scalarInt64("SELECT COALESCE(SUM(length(envelope)),0) FROM outbox WHERE lane=?", binds: [.text(envelope.lane)])
-        let count = try scalarInt64("SELECT COUNT(*) FROM outbox WHERE lane=?", binds: [.text(envelope.lane)])
-        let tombstones = try scalarInt64("SELECT COUNT(*) FROM tombstones WHERE lane=?", binds: [.text(envelope.lane)])
-        guard used <= budget.maxBytes - envelope.byteLength, count < budget.maxItems else { throw Error.laneBudgetExceeded }
-        guard tombstones <= budget.maxTombstones else { throw Error.tombstoneBudgetExceeded }
-        try exec("BEGIN IMMEDIATE")
+    }
+
+    /// Leasing never removes bytes. Expiry permits another attempt of the exact
+    /// same body; separate instances serialize selection/update in one transaction.
+    func leaseNext(lane: String, now: Date = Date(), duration: TimeInterval) throws -> Lease? {
+        guard budgets[lane] != nil else { throw Failure.invalidBudget }
+        let start = now.timeIntervalSince1970
+        let end = start + duration
+        guard start.isFinite, duration.isFinite, duration > 0, end.isFinite else { throw Failure.invalidLease }
+        return try transaction {
+            let statement = try prepare("SELECT id FROM hub_outbox_v1 WHERE lane=? AND (state=0 OR (state=1 AND lease_until<=?)) ORDER BY rowid LIMIT 1",
+                                        [.text(lane), .double(start)])
+            defer { sqlite3_finalize(statement) }
+            guard try step(statement) == SQLITE_ROW else { return nil }
+            let id = try textColumn(statement, 0)
+            guard let record = try row(id), let body = record.body else { throw Failure.corruptRecord }
+            try execute("UPDATE hub_outbox_v1 SET state=1, lease_until=? WHERE id=?", [.double(end), .text(id)])
+            return Lease(externalID: id, encodedJSON: body, expectedReceipt: record.expected(id),
+                         expiresAt: Date(timeIntervalSince1970: end))
+        }
+    }
+
+    /// The only ACK entry point. Expectations and prior binding come from disk,
+    /// not from the caller or server. Body release and receipt persistence commit
+    /// atomically, so a crash leaves either a retryable body or a durable receipt.
+    func acknowledge(responseData: Data, externalID: String) throws {
+        try transaction {
+            guard let record = try row(externalID) else { throw Failure.notFound }
+            let prior = try record.receipt.map { try HubStorageReceipt.decode($0) }
+            let receipt = try HubProducerContract.validateResponse(responseData: responseData,
+                expected: record.expected(externalID), boundEventID: prior?.eventID)
+            if let prior {
+                guard receipt == prior else { throw Failure.receiptMismatch }
+                return
+            }
+            let encoded = try JSONSerialization.data(withJSONObject: [
+                "receipt_version": receipt.receiptVersion, "source": receipt.source,
+                "external_id": receipt.externalID, "event_id": receipt.eventID,
+                "sha256": receipt.sha256.map { $0 as Any } ?? NSNull(),
+                "byte_length": receipt.byteLength, "ingest_sequence": receipt.ingestSequence
+            ])
+            try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, lease_until=0 WHERE id=?",
+                        [.blob(encoded), .text(externalID)])
+        }
+    }
+
+    func pendingBytes(lane: String) throws -> Int64 {
+        try scalar("SELECT COALESCE(SUM(length(body)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+    }
+
+    func storedReceipt(externalID: String) throws -> HubStorageReceipt? {
+        try row(externalID)?.receipt.map { try HubStorageReceipt.decode($0) }
+    }
+
+    private struct Record {
+        let lane: String
+        let body: Data?
+        let bodyHash: String
+        let originalHash: String?
+        let originalBytes: Int
+        let receipt: Data?
+        func expected(_ id: String) -> HubExpectedStorageReceipt {
+            HubExpectedStorageReceipt(source: "recall", externalID: id, sha256: originalHash, byteLength: originalBytes)
+        }
+    }
+
+    private func row(_ id: String) throws -> Record? {
+        let statement = try prepare("SELECT lane,body,body_hash,original_hash,original_bytes,receipt,state FROM hub_outbox_v1 WHERE id=?", [.text(id)])
+        defer { sqlite3_finalize(statement) }
+        guard try step(statement) == SQLITE_ROW else { return nil }
+        let hash = try textColumn(statement, 3)
+        let bytes = sqlite3_column_int64(statement, 4)
+        guard bytes >= 0, let byteCount = Int(exactly: bytes) else { throw Failure.corruptRecord }
+        let body = blobColumn(statement, 1)
+        let receipt = blobColumn(statement, 5)
+        let state = sqlite3_column_int(statement, 6)
+        guard (state == 2 && body == nil && receipt != nil) ||
+              ((state == 0 || state == 1) && body != nil && receipt == nil) else { throw Failure.corruptRecord }
+        return Record(lane: try textColumn(statement, 0), body: body,
+                      bodyHash: try textColumn(statement, 2), originalHash: hash.isEmpty ? nil : hash,
+                      originalBytes: byteCount, receipt: receipt)
+    }
+
+    private func transaction<T>(_ operation: () throws -> T) throws -> T {
+        try execute("BEGIN IMMEDIATE")
         do {
-            try insert(envelope)
-            try exec("COMMIT")
-        } catch { _ = try? exec("ROLLBACK"); throw error }
+            let result = try operation()
+            try execute("COMMIT")
+            return result
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
     }
 
-    func enqueue(_ producer: HubProducerEnvelope) throws {
-        let envelope = try Envelope(id: producer.externalID, lane: producer.route.domain,
-                                    encoded: producer.encodedJSON, identity: producer.source,
-                                    sha256: producer.originalSHA256,
-                                    byteLength: Int64(producer.originalByteLength))
-        try enqueue(envelope)
-    }
-
-    public func leaseNext(lane: String, now: Date = Date(), duration: TimeInterval) throws -> LeasedEnvelope? {
-        guard duration > 0 else { throw Error.invalidLease }
-        let nowValue = now.timeIntervalSince1970
-        let row = try queryEnvelope("SELECT id,lane,envelope,identity,sha256,byte_length FROM outbox WHERE lane=? AND (state=0 OR (state=1 AND lease_until<=?)) ORDER BY created_at,id LIMIT 1", binds: [.text(lane), .double(nowValue)])
-        guard let envelope = row else { return nil }
-        let until = nowValue + duration
-        try exec("UPDATE outbox SET state=1, lease_until=? WHERE id=?", binds: [.double(until), .text(envelope.id)])
-        return LeasedEnvelope(envelope: envelope, leaseUntil: Date(timeIntervalSince1970: until))
-    }
-
-    /// Verifies the complete receipt and atomically binds eventID while moving
-    /// the payload to its metadata-only tombstone. A duplicate receipt for the
-    /// same immutable ID/event is idempotent; a different receipt is rejected.
-    public func acknowledge(_ receipt: Receipt, receivedAt: Date = Date()) throws {
-        try exec("BEGIN IMMEDIATE")
+    private enum Binding { case text(String), blob(Data), int(Int64), double(Double) }
+    private func prepare(_ sql: String, _ values: [Binding] = []) throws -> OpaquePointer {
+        var statement: OpaquePointer?
+        let code = sqlite3_prepare_v2(db, sql, -1, &statement, nil)
+        guard code == SQLITE_OK, let statement else { throw Failure.storage(code) }
         do {
-            if let row = try queryOne("SELECT lane,identity,sha256,byte_length FROM outbox WHERE id=?", binds: [.text(receipt.id)]) {
-                guard row[0] == receipt.lane, row[1] == receipt.identity,
-                      row[2] == (receipt.sha256 ?? ""), row[3] == String(receipt.byteLength) else { throw Error.receiptMismatch }
-                try exec("INSERT INTO tombstones(id,lane,identity,sha256,byte_length,event_id,bound_at) VALUES(?,?,?,?,?,?,?)", binds: [.text(receipt.id), .text(receipt.lane), .text(receipt.identity), .text(receipt.sha256 ?? ""), .int(receipt.byteLength), .text(receipt.eventID), .double(receivedAt.timeIntervalSince1970)])
-                try exec("DELETE FROM outbox WHERE id=?", binds: [.text(receipt.id)])
-            } else if let row = try queryOne("SELECT lane,identity,sha256,byte_length,event_id FROM tombstones WHERE id=?", binds: [.text(receipt.id)]) {
-                guard row[0] == receipt.lane, row[1] == receipt.identity, row[2] == (receipt.sha256 ?? ""),
-                      row[3] == String(receipt.byteLength), row[4] == receipt.eventID else { throw Error.receiptMismatch }
-            } else { throw Error.notFound }
-            try exec("COMMIT")
-        } catch { _ = try? exec("ROLLBACK"); throw error }
+            for (index, value) in values.enumerated() {
+                let position = Int32(index + 1)
+                let code: Int32
+                switch value {
+                case .text(let string): code = sqlite3_bind_text(statement, position, string, -1, hubSQLiteTransient)
+                case .blob(let data): code = data.withUnsafeBytes { sqlite3_bind_blob(statement, position, $0.baseAddress, Int32(data.count), hubSQLiteTransient) }
+                case .int(let number): code = sqlite3_bind_int64(statement, position, number)
+                case .double(let number): code = sqlite3_bind_double(statement, position, number)
+                }
+                guard code == SQLITE_OK else { throw Failure.storage(code) }
+            }
+            return statement
+        } catch { sqlite3_finalize(statement); throw error }
     }
 
-    /// Validates a Hub response through the shared wire contract before the
-    /// durable ACK transaction. Callers pass the immutable ID/lane recorded at
-    /// enqueue time; no response bytes are logged or retained.
-    func acknowledge(responseData: Data, id: String, lane: String,
-                            identity: String, expected: HubExpectedStorageReceipt,
-                            boundEventID: String? = nil, receivedAt: Date = Date()) throws {
-        let receipt = try HubProducerContract.validateResponse(responseData: responseData,
-                                                               expected: expected,
-                                                               boundEventID: boundEventID)
-        try acknowledge(Receipt(id: id, lane: lane, identity: identity,
-                                sha256: receipt.sha256 ?? "", byteLength: receipt.byteLength,
-                                eventID: receipt.eventID), receivedAt: receivedAt)
+    private func step(_ statement: OpaquePointer) throws -> Int32 {
+        let code = sqlite3_step(statement)
+        guard code == SQLITE_ROW || code == SQLITE_DONE else { throw Failure.storage(code) }
+        return code
     }
 
-    public func pendingBytes(lane: String) throws -> Int64 { try scalarInt64("SELECT COALESCE(SUM(byte_length),0) FROM outbox WHERE lane=?", binds: [.text(lane)]) }
+    private func execute(_ sql: String, _ values: [Binding] = []) throws {
+        let statement = try prepare(sql, values)
+        defer { sqlite3_finalize(statement) }
+        // PRAGMAs may yield a row; ordinary mutations complete with SQLITE_DONE.
+        while try step(statement) == SQLITE_ROW {}
+    }
 
-    private enum Bind { case text(String), int(Int64), double(Double), blob(Data) }
-    private func upsertBudget(lane: String, budget: LaneBudget) throws { try exec("INSERT INTO lane_budgets VALUES(?,?,?,?) ON CONFLICT(lane) DO UPDATE SET max_bytes=excluded.max_bytes,max_items=excluded.max_items,max_tombstones=excluded.max_tombstones", binds: [.text(lane), .int(budget.maxBytes), .int(budget.maxItems), .int(budget.maxTombstones)]) }
-    private func budget(for lane: String) throws -> LaneBudget? {
-        guard let r = try queryOne("SELECT max_bytes,max_items,max_tombstones FROM lane_budgets WHERE lane=?", binds: [.text(lane)]) else { return nil }
-        return try LaneBudget(maxBytes: Int64(r[0])!, maxItems: Int64(r[1])!, maxTombstones: Int64(r[2])!)
+    private func scalar(_ sql: String, _ values: [Binding]) throws -> Int64 {
+        let statement = try prepare(sql, values)
+        defer { sqlite3_finalize(statement) }
+        guard try step(statement) == SQLITE_ROW else { throw Failure.corruptRecord }
+        return sqlite3_column_int64(statement, 0)
     }
-    private func insert(_ e: Envelope) throws { try exec("INSERT INTO outbox VALUES(?,?,?,?,?,?,?,?,?)", binds: [.text(e.id), .text(e.lane), .blob(e.encoded), .text(e.identity), .text(e.sha256 ?? ""), .int(e.byteLength), .int(0), .double(0), .double(Date().timeIntervalSince1970)]) }
-    private func queryEnvelope(_ sql: String, binds: [Bind]) throws -> Envelope? {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { throw sqliteError() }
-        defer { sqlite3_finalize(stmt) }
-        try bind(stmt, binds)
-        let rc = sqlite3_step(stmt)
-        guard rc == SQLITE_ROW || rc == SQLITE_DONE else { throw sqliteError() }
-        guard rc == SQLITE_ROW else { return nil }
-        guard let bytes = sqlite3_column_blob(stmt, 2) else { throw Error.sqlite("invalid blob") }
-        let length = Int(sqlite3_column_bytes(stmt, 2))
-        let data = Data(bytes: bytes, count: length)
-        guard let idPtr = sqlite3_column_text(stmt, 0), let lanePtr = sqlite3_column_text(stmt, 1),
-              let identityPtr = sqlite3_column_text(stmt, 3), let hashPtr = sqlite3_column_text(stmt, 4) else { throw Error.sqlite("invalid row") }
-        return try Envelope(id: String(cString: idPtr), lane: String(cString: lanePtr), encoded: data,
-                            identity: String(cString: identityPtr), sha256: String(cString: hashPtr),
-                            byteLength: sqlite3_column_int64(stmt, 5))
+
+    private func textColumn(_ statement: OpaquePointer, _ column: Int32) throws -> String {
+        guard let value = sqlite3_column_text(statement, column) else { throw Failure.corruptRecord }
+        return String(cString: value)
     }
-    private func scalarInt64(_ sql: String, binds: [Bind]) throws -> Int64 { Int64((try queryOne(sql, binds: binds))?.first ?? "0") ?? 0 }
-    private func queryOne(_ sql: String, binds: [Bind]) throws -> [String]? { try queryRow(sql, binds: binds) }
-    private func queryRow(_ sql: String, binds: [Bind]) throws -> [String]? {
-        var stmt: OpaquePointer?; guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { throw sqliteError() }; defer { sqlite3_finalize(stmt) }
-        try bind(stmt, binds); let rc = sqlite3_step(stmt); guard rc == SQLITE_ROW || rc == SQLITE_DONE else { throw sqliteError() }; guard rc == SQLITE_ROW else { return nil }
-        return (0..<sqlite3_column_count(stmt)).map { String(cString: sqlite3_column_text(stmt, $0)) }
+
+    private func blobColumn(_ statement: OpaquePointer, _ column: Int32) -> Data? {
+        guard let value = sqlite3_column_blob(statement, column) else { return nil }
+        return Data(bytes: value, count: Int(sqlite3_column_bytes(statement, column)))
     }
-    private func exec(_ sql: String, binds: [Bind] = []) throws { var stmt: OpaquePointer?; guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { throw sqliteError() }; defer { sqlite3_finalize(stmt) }; try bind(stmt, binds); guard sqlite3_step(stmt) == SQLITE_DONE else { throw sqliteError() } }
-    private func bind(_ stmt: OpaquePointer?, _ binds: [Bind]) throws { for (i, b) in binds.enumerated() { let idx = Int32(i + 1); let rc: Int32; switch b { case .text(let v): rc = sqlite3_bind_text(stmt, idx, v, -1, SQLITE_TRANSIENT); case .int(let v): rc = sqlite3_bind_int64(stmt, idx, v); case .double(let v): rc = sqlite3_bind_double(stmt, idx, v); case .blob(let d): rc = d.withUnsafeBytes { sqlite3_bind_blob(stmt, idx, $0.baseAddress, Int32(d.count), SQLITE_TRANSIENT) } }; guard rc == SQLITE_OK else { throw sqliteError() } } }
-    private func sqliteError() -> Error { Error.sqlite(String(cString: sqlite3_errmsg(db))) }
+
+    private static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+private let hubSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

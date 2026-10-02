@@ -159,7 +159,9 @@ enum HubProducerContract {
                              occurredAt: Date, timeBasis: String, sourcePayloadJSON: Data,
                              parents: [HubProducerParent] = [], originalBytes: Data? = nil,
                              originalSHA256: String? = nil, originalByteLength: Int? = nil) throws -> HubProducerEnvelope {
-        guard let payload = try? JSONSerialization.jsonObject(with: sourcePayloadJSON),
+        guard String(data: sourcePayloadJSON, encoding: .utf8) != nil,
+              sourcePayloadJSON.first(where: { ![9, 10, 13, 32].contains($0) }) == UInt8(ascii: "{"),
+              let payload = try? JSONSerialization.jsonObject(with: sourcePayloadJSON),
               let payloadObject = payload as? [String: Any],
               JSONSerialization.isValidJSONObject(payloadObject) else { throw HubProducerError.invalidSourcePayload }
         let externalID = try canonicalExternalID(route: route, deviceID: deviceID, observationID: observationID)
@@ -195,8 +197,7 @@ enum HubProducerContract {
         metadata.append(sourcePayloadJSON)
         metadata.append(UInt8(ascii: "}"))
         var envelope: [String: Any] = ["source": source, "domain": route.domain, "kind": route.kind,
-                                       "occurred_at": occurred, "external_id": externalID, "identity": NSNull(),
-                                       "metadata": NSNull()]
+                                       "occurred_at": occurred, "external_id": externalID, "identity": NSNull()]
         if let bytes = originalBytes { envelope["payload_base64"] = bytes.base64EncodedString() }
         else if let hash { envelope["blob_sha256"] = hash }
         var envelopeBase = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
