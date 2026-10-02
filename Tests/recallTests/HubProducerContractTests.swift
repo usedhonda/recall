@@ -33,6 +33,16 @@ final class HubProducerContractTests: XCTestCase {
         XCTAssertEqual(envelope.originalByteLength, 3)
     }
 
+    func testSourcePayloadNumberLiteralsAreNotRounded() throws {
+        let source = Data(#"{"integer":9007199254740993,"decimal":1.234567890123456789}"#.utf8)
+        let envelope = try HubProducerContract.makeEnvelope(route: .wifi, deviceID: "phone",
+                                                              observationID: "o2", occurredAt: date,
+                                                              timeBasis: "occurred_at", sourcePayloadJSON: source)
+        let wire = try XCTUnwrap(String(data: envelope.encodedJSON, encoding: .utf8))
+        XCTAssertTrue(wire.contains("9007199254740993"))
+        XCTAssertTrue(wire.contains("1.234567890123456789"))
+    }
+
     func testSourcePayloadMustBeObjectAndEnvelopeHasSizeLimit() throws {
         XCTAssertThrowsError(try HubProducerContract.makeEnvelope(route: .wifi, deviceID: "d",
                                                                    observationID: "o", occurredAt: date,
@@ -59,5 +69,9 @@ final class HubProducerContractTests: XCTestCase {
         var extra = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         extra["extra"] = true
         XCTAssertThrowsError(try HubStorageReceipt.decode(JSONSerialization.data(withJSONObject: extra)))
+        var fractional = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        fractional["ingest_sequence"] = 2.0
+        let fractionalResponse = try JSONSerialization.data(withJSONObject: ["storage_receipt": fractional])
+        XCTAssertThrowsError(try HubProducerContract.validateResponse(responseData: fractionalResponse, expected: expected))
     }
 }

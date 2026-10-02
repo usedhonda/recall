@@ -181,19 +181,31 @@ enum HubProducerContract {
         if (route == .audioOriginal || route == .glassesOriginal) && hash == nil {
             throw HubProducerError.conflictingOriginal
         }
-        let metadata: [String: Any] = ["schema_version": 1, "device_id": deviceID,
-                                        "observation_id": observationID, "source_payload": payloadObject,
+        let metadataWithoutPayload: [String: Any] = ["schema_version": 1, "device_id": deviceID,
+                                        "observation_id": observationID,
                                         "time_basis": timeBasis, "parents": parents.map { [
                                             "source": $0.source, "external_id": $0.externalID,
                                             "event_id": $0.eventID.map { $0 as Any } ?? NSNull()
                                         ] }]
         let occurred = ISO8601DateFormatter.hub.string(from: occurredAt)
+        let metadataBase = try JSONSerialization.data(withJSONObject: metadataWithoutPayload, options: [.sortedKeys])
+        guard metadataBase.last == UInt8(ascii: "}") else { throw HubProducerError.invalidSourcePayload }
+        var metadata = Data(metadataBase.dropLast())
+        metadata.append(contentsOf: Data(",\"source_payload\":".utf8))
+        metadata.append(sourcePayloadJSON)
+        metadata.append(UInt8(ascii: "}"))
         var envelope: [String: Any] = ["source": source, "domain": route.domain, "kind": route.kind,
                                        "occurred_at": occurred, "external_id": externalID, "identity": NSNull(),
-                                       "metadata": metadata]
+                                       "metadata": NSNull()]
         if let bytes = originalBytes { envelope["payload_base64"] = bytes.base64EncodedString() }
         else if let hash { envelope["blob_sha256"] = hash }
-        let encoded = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
+        var envelopeBase = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
+        guard envelopeBase.last == UInt8(ascii: "}") else { throw HubProducerError.invalidSourcePayload }
+        envelopeBase.removeLast()
+        envelopeBase.append(contentsOf: Data(",\"metadata\":".utf8))
+        envelopeBase.append(metadata)
+        envelopeBase.append(UInt8(ascii: "}"))
+        let encoded = envelopeBase
         guard encoded.count <= maximumEncodedJSONBytes else { throw HubProducerError.envelopeTooLarge }
         return HubProducerEnvelope(source: source, route: route, deviceID: deviceID, observationID: observationID,
                                    externalID: externalID, originalSHA256: hash,
