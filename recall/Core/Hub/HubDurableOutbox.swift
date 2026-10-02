@@ -24,16 +24,15 @@ public actor HubDurableOutbox {
         public let lane: String
         public let encoded: Data
         public let identity: String
-        public let sha256: String
+        public let sha256: String?
         public let byteLength: Int64
 
         public init(id: String, lane: String, encoded: Data, identity: String,
-                    sha256: String, byteLength: Int64) throws {
+                    sha256: String?, byteLength: Int64) throws {
             guard !id.isEmpty, !lane.isEmpty, !identity.isEmpty,
-                  !sha256.isEmpty, byteLength >= 0,
-                  Int64(encoded.count) == byteLength else { throw Error.invalidEnvelope }
+                  byteLength >= 0 else { throw Error.invalidEnvelope }
             self.id = id; self.lane = lane; self.encoded = encoded
-            self.identity = identity; self.sha256 = sha256.lowercased()
+            self.identity = identity; self.sha256 = sha256?.lowercased()
             self.byteLength = byteLength
         }
     }
@@ -47,14 +46,14 @@ public actor HubDurableOutbox {
         public let id: String
         public let lane: String
         public let identity: String
-        public let sha256: String
+        public let sha256: String?
         public let byteLength: Int64
         public let eventID: String
 
         public init(id: String, lane: String, identity: String, sha256: String,
                     byteLength: Int64, eventID: String) {
             self.id = id; self.lane = lane; self.identity = identity
-            self.sha256 = sha256.lowercased(); self.byteLength = byteLength
+            self.sha256 = sha256?.lowercased(); self.byteLength = byteLength
             self.eventID = eventID
         }
     }
@@ -93,12 +92,12 @@ public actor HubDurableOutbox {
 
     public func enqueue(_ envelope: Envelope) throws {
         guard let budget = try budget(for: envelope.lane) else { throw Error.invalidBudget }
-        let existing = try queryOne("SELECT lane, identity, sha256, byte_length FROM outbox WHERE id=? OR id IN (SELECT id FROM tombstones WHERE id=?)", binds: [.text(envelope.id), .text(envelope.id)])
+        let existing = try queryOne("SELECT lane, identity, COALESCE(sha256,''), byte_length FROM outbox WHERE id=? OR id IN (SELECT id FROM tombstones WHERE id=?)", binds: [.text(envelope.id), .text(envelope.id)])
         if let existing {
-            if existing[0] != envelope.lane || existing[1] != envelope.identity || existing[2] != envelope.sha256 || existing[3] != String(envelope.byteLength) { throw Error.immutableConflict }
+            if existing[0] != envelope.lane || existing[1] != envelope.identity || existing[2] != (envelope.sha256 ?? "") || existing[3] != String(envelope.byteLength) { throw Error.immutableConflict }
             throw Error.immutableConflict
         }
-        let used = try scalarInt64("SELECT COALESCE(SUM(byte_length),0) FROM outbox WHERE lane=?", binds: [.text(envelope.lane)])
+        let used = try scalarInt64("SELECT COALESCE(SUM(length(envelope)),0) FROM outbox WHERE lane=?", binds: [.text(envelope.lane)])
         let count = try scalarInt64("SELECT COUNT(*) FROM outbox WHERE lane=?", binds: [.text(envelope.lane)])
         let tombstones = try scalarInt64("SELECT COUNT(*) FROM tombstones WHERE lane=?", binds: [.text(envelope.lane)])
         guard used <= budget.maxBytes - envelope.byteLength, count < budget.maxItems else { throw Error.laneBudgetExceeded }
@@ -108,6 +107,14 @@ public actor HubDurableOutbox {
             try insert(envelope)
             try exec("COMMIT")
         } catch { _ = try? exec("ROLLBACK"); throw error }
+    }
+
+    func enqueue(_ producer: HubProducerEnvelope) throws {
+        let envelope = try Envelope(id: producer.externalID, lane: producer.route.domain,
+                                    encoded: producer.encodedJSON, identity: producer.source,
+                                    sha256: producer.originalSHA256,
+                                    byteLength: Int64(producer.originalByteLength))
+        try enqueue(envelope)
     }
 
     public func leaseNext(lane: String, now: Date = Date(), duration: TimeInterval) throws -> LeasedEnvelope? {
@@ -128,11 +135,11 @@ public actor HubDurableOutbox {
         do {
             if let row = try queryOne("SELECT lane,identity,sha256,byte_length FROM outbox WHERE id=?", binds: [.text(receipt.id)]) {
                 guard row[0] == receipt.lane, row[1] == receipt.identity,
-                      row[2] == receipt.sha256, row[3] == String(receipt.byteLength) else { throw Error.receiptMismatch }
-                try exec("INSERT INTO tombstones(id,lane,identity,sha256,byte_length,event_id,bound_at) VALUES(?,?,?,?,?,?,?)", binds: [.text(receipt.id), .text(receipt.lane), .text(receipt.identity), .text(receipt.sha256), .int(receipt.byteLength), .text(receipt.eventID), .double(receivedAt.timeIntervalSince1970)])
+                      row[2] == (receipt.sha256 ?? ""), row[3] == String(receipt.byteLength) else { throw Error.receiptMismatch }
+                try exec("INSERT INTO tombstones(id,lane,identity,sha256,byte_length,event_id,bound_at) VALUES(?,?,?,?,?,?,?)", binds: [.text(receipt.id), .text(receipt.lane), .text(receipt.identity), .text(receipt.sha256 ?? ""), .int(receipt.byteLength), .text(receipt.eventID), .double(receivedAt.timeIntervalSince1970)])
                 try exec("DELETE FROM outbox WHERE id=?", binds: [.text(receipt.id)])
             } else if let row = try queryOne("SELECT lane,identity,sha256,byte_length,event_id FROM tombstones WHERE id=?", binds: [.text(receipt.id)]) {
-                guard row[0] == receipt.lane, row[1] == receipt.identity, row[2] == receipt.sha256,
+                guard row[0] == receipt.lane, row[1] == receipt.identity, row[2] == (receipt.sha256 ?? ""),
                       row[3] == String(receipt.byteLength), row[4] == receipt.eventID else { throw Error.receiptMismatch }
             } else { throw Error.notFound }
             try exec("COMMIT")
@@ -142,7 +149,7 @@ public actor HubDurableOutbox {
     /// Validates a Hub response through the shared wire contract before the
     /// durable ACK transaction. Callers pass the immutable ID/lane recorded at
     /// enqueue time; no response bytes are logged or retained.
-    public func acknowledge(responseData: Data, id: String, lane: String,
+    func acknowledge(responseData: Data, id: String, lane: String,
                             identity: String, expected: HubExpectedStorageReceipt,
                             boundEventID: String? = nil, receivedAt: Date = Date()) throws {
         let receipt = try HubProducerContract.validateResponse(responseData: responseData,
@@ -161,7 +168,7 @@ public actor HubDurableOutbox {
         guard let r = try queryOne("SELECT max_bytes,max_items,max_tombstones FROM lane_budgets WHERE lane=?", binds: [.text(lane)]) else { return nil }
         return try LaneBudget(maxBytes: Int64(r[0])!, maxItems: Int64(r[1])!, maxTombstones: Int64(r[2])!)
     }
-    private func insert(_ e: Envelope) throws { try exec("INSERT INTO outbox VALUES(?,?,?,?,?,?,?,?,?)", binds: [.text(e.id), .text(e.lane), .blob(e.encoded), .text(e.identity), .text(e.sha256), .int(e.byteLength), .int(0), .double(0), .double(Date().timeIntervalSince1970)]) }
+    private func insert(_ e: Envelope) throws { try exec("INSERT INTO outbox VALUES(?,?,?,?,?,?,?,?,?)", binds: [.text(e.id), .text(e.lane), .blob(e.encoded), .text(e.identity), .text(e.sha256 ?? ""), .int(e.byteLength), .int(0), .double(0), .double(Date().timeIntervalSince1970)]) }
     private func queryEnvelope(_ sql: String, binds: [Bind]) throws -> Envelope? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { throw sqliteError() }
