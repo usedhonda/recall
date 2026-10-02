@@ -69,10 +69,13 @@ final class UploadManager {
             let failedChunks = try modelContext.fetch(descriptor)
             for chunk in failedChunks {
                 chunk.uploadStatus = .pending
+                chunk.discardReason = nil
+                chunk.uploadedAt = nil
                 chunk.uploadAttempts = 0
                 chunk.lastUploadAttempt = nil
             }
             try modelContext.save()
+            refreshCounts(modelContext: modelContext)
             Self.logger.info("Reset \(failedChunks.count) failed chunks to pending")
         } catch {
             Self.logger.error("Failed to reset failed chunks: \(error.localizedDescription)")
@@ -94,8 +97,11 @@ final class UploadManager {
             guard !stuck.isEmpty else { return }
             for chunk in stuck {
                 chunk.uploadStatus = .pending
+                chunk.discardReason = nil
+                chunk.uploadedAt = nil
             }
             try modelContext.save()
+            refreshCounts(modelContext: modelContext)
             Self.logger.info("Reconciled \(stuck.count) stuck uploads -> pending")
             activity.log(.upload, "Reconciled \(stuck.count) stuck -> pending")
         } catch {
@@ -189,8 +195,7 @@ final class UploadManager {
             if chunk.duration < 1.0 {
                 Self.logger.info("Skipping short chunk: \(chunk.fileName) (\(chunk.duration, format: .fixed(precision: 1))s < 1.0s)")
                 activity.log(.upload, "Skipped short chunk \(chunk.fileName) (\(String(format: "%.1f", chunk.duration))s)")
-                chunk.uploadStatus = .uploaded
-                chunk.uploadedAt = Date()
+                markDiscarded(chunk, reason: .short)
                 try? modelContext.save()
                 try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
                 refreshCounts(modelContext: modelContext)
@@ -208,8 +213,7 @@ final class UploadManager {
             if chunk.maxVadProb < 0.30 && chunk.maxContinuousVoiceMs < 200 && chunk.voiceFrameRatio < 0.05 {
                 Self.logger.info("Skipping noise chunk: \(chunk.fileName) (mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(chunk.voiceFrameRatio, format: .fixed(precision: 2)))")
                 activity.log(.upload, "Deleted silent chunk \(chunk.fileName) (peak=\(String(format: "%.2f", chunk.maxVadProb)) mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(String(format: "%.2f", chunk.voiceFrameRatio)))")
-                chunk.uploadStatus = .uploaded
-                chunk.uploadedAt = Date()
+                markDiscarded(chunk, reason: .noise)
                 try? modelContext.save()
                 try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
                 refreshCounts(modelContext: modelContext)
@@ -251,7 +255,10 @@ final class UploadManager {
         guard FileManager.default.fileExists(atPath: chunk.filePath) else {
             Self.logger.warning("Chunk file missing: \(chunk.filePath), marking as failed")
             chunk.uploadStatus = .failed
+            chunk.discardReason = nil
+            chunk.uploadedAt = nil
             try? modelContext.save()
+            refreshCounts(modelContext: modelContext)
             return
         }
 
@@ -259,9 +266,10 @@ final class UploadManager {
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunk.filePath)[.size] as? Int) ?? 0
         if fileSize == 0 {
             activity.log(.upload, "Skipped 0-byte chunk \(chunk.fileName)")
-            chunk.uploadStatus = .uploaded
+            markDiscarded(chunk, reason: .empty)
             try? modelContext.save()
             try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+            refreshCounts(modelContext: modelContext)
             return
         }
 
@@ -306,6 +314,7 @@ final class UploadManager {
         }
 
         chunk.uploadStatus = .uploading
+        chunk.discardReason = nil
         chunk.lastUploadAttempt = Date()
         try? modelContext.save()
 
@@ -323,8 +332,7 @@ final class UploadManager {
                 metadata: metadata
             )
 
-            chunk.uploadStatus = .uploaded
-            chunk.uploadedAt = Date()
+            markUploaded(chunk, at: Date())
             try? modelContext.save()
 
             // Delete local file after successful upload
@@ -339,6 +347,8 @@ final class UploadManager {
         } catch {
             consecutiveFailures += 1
             chunk.uploadStatus = .failed
+            chunk.discardReason = nil
+            chunk.uploadedAt = nil
             chunk.uploadAttempts += 1
             chunk.lastUploadAttempt = Date()
             try? modelContext.save()
@@ -370,8 +380,11 @@ final class UploadManager {
         guard let stale = try? modelContext.fetch(descriptor), !stale.isEmpty else { return }
         for chunk in stale {
             chunk.uploadStatus = .pending
+            chunk.discardReason = nil
+            chunk.uploadedAt = nil
         }
         try? modelContext.save()
+        refreshCounts(modelContext: modelContext)
         Self.logger.info("Reset \(stale.count) stale uploads -> pending")
         activity.log(.upload, "Reset \(stale.count) stale -> pending")
     }
@@ -397,10 +410,11 @@ final class UploadManager {
         guard let stale = try? modelContext.fetch(descriptor), !stale.isEmpty else { return }
 
         for chunk in stale {
-            chunk.uploadStatus = .uploaded // mark done to prevent retry
+            markDiscarded(chunk, reason: .expired)
             Task { try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath) }
         }
         try? modelContext.save()
+        refreshCounts(modelContext: modelContext)
         activity.log(.upload, "Dropped \(stale.count) stale chunks (>10min old)")
     }
 
@@ -424,16 +438,19 @@ final class UploadManager {
         for chunk in failedChunks {
             if chunk.uploadAttempts >= Self.maxUploadAttempts {
                 // Permanently skip — too many failures
-                chunk.uploadStatus = .uploaded // mark as "done" to stop retrying
+                markDiscarded(chunk, reason: .retryExhausted)
                 activity.log(.upload, "Dropped after \(chunk.uploadAttempts) attempts: \(chunk.fileName)")
                 dropped += 1
             } else {
                 chunk.uploadStatus = .pending
+                chunk.discardReason = nil
+                chunk.uploadedAt = nil
                 chunk.lastUploadAttempt = nil
                 retried += 1
             }
         }
         try? modelContext.save()
+        refreshCounts(modelContext: modelContext)
         if retried > 0 {
             activity.log(.upload, "Auto-retry \(retried) failed -> pending (dropped \(dropped))")
         } else if dropped > 0 {
@@ -454,13 +471,14 @@ final class UploadManager {
 
             switch completed.status {
             case .uploaded:
-                chunk.uploadStatus = .uploaded
-                chunk.uploadedAt = completed.completedAt
+                markUploaded(chunk, at: completed.completedAt)
                 try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
                 activity.log(.upload, "BG uploaded \(chunk.fileName)")
 
             case .failed:
                 chunk.uploadStatus = .failed
+                chunk.discardReason = nil
+                chunk.uploadedAt = nil
                 chunk.uploadAttempts += 1
                 chunk.lastUploadAttempt = completed.completedAt
                 activity.log(.error, "BG upload failed: \(chunk.fileName) (#\(chunk.uploadAttempts)) \(completed.detail)")
@@ -478,6 +496,8 @@ final class UploadManager {
                 if backgroundSnapshot.pendingChunkIDs.contains(chunk.id) { continue }
 
                 chunk.uploadStatus = .pending
+                chunk.discardReason = nil
+                chunk.uploadedAt = nil
                 activity.log(.upload, "Recovered stale upload \(chunk.fileName) -> pending")
                 didChange = true
             }
@@ -506,6 +526,18 @@ final class UploadManager {
             predicate: #Predicate<AudioChunk> { $0.id == id }
         )
         return try? modelContext.fetch(descriptor).first
+    }
+
+    func markUploaded(_ chunk: AudioChunk, at date: Date) {
+        chunk.uploadStatus = .uploaded
+        chunk.discardReason = nil
+        chunk.uploadedAt = date
+    }
+
+    func markDiscarded(_ chunk: AudioChunk, reason: AudioChunk.DiscardReason) {
+        chunk.uploadStatus = .discarded
+        chunk.discardReason = reason
+        chunk.uploadedAt = nil
     }
 
     // MARK: - Error Classification

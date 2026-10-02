@@ -1,5 +1,10 @@
 # Handoff: vad-collapse
 
+> Historical checkpoint. Current upload accounting, server/runtime observations and
+> remaining verification boundaries: [handoff 005](005-upload-outcomes-and-hub-reconciliation.md).
+> Older "pending" and server configuration statements below are not current status.
+
+
 - Goal / why: the speech detector decides what recall records and sends. When it is wrong
   the transcriber answers silence with a stock phrase it learned from subtitles, and that
   fiction reaches Chi as if the owner had said it.

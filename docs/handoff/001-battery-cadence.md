@@ -1,5 +1,10 @@
 # Handoff: battery-cadence
 
+> Historical checkpoint. Current upload accounting, server/runtime observations and
+> remaining verification boundaries: [handoff 005](005-upload-outcomes-and-hub-reconciliation.md).
+> Older "pending" and server configuration statements below are not current status.
+
+
 - Goal / why: Owner observed fast battery drain while audio was not recording. On-device logs
   showed the independent streams (Health / Location / helpers) running at full cadence 24h a
   day with no change detection. Goal: cut each stream's own cost without coupling streams.

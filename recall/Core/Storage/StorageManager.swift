@@ -17,8 +17,9 @@ actor StorageManager {
         logger.info("Storage \(currentSize) exceeds cap \(capBytes), cleaning up")
 
         let uploaded = AudioChunk.UploadStatus.uploaded.rawValue
+        let discarded = AudioChunk.UploadStatus.discarded.rawValue
         let descriptor = FetchDescriptor<AudioChunk>(
-            predicate: #Predicate { $0.uploadStatusRaw == uploaded },
+            predicate: #Predicate { $0.uploadStatusRaw == uploaded || $0.uploadStatusRaw == discarded },
             sortBy: [SortDescriptor(\.startedAt, order: .forward)]
         )
 

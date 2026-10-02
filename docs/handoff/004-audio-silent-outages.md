@@ -1,5 +1,10 @@
 # Handoff: audio-silent-outages
 
+> Historical checkpoint. Current upload accounting, server/runtime observations and
+> remaining verification boundaries: [handoff 005](005-upload-outcomes-and-hub-reconciliation.md).
+> Older "pending" and server configuration statements below are not current status.
+
+
 - Goal / why: recall records everything the owner says so Chi can remember the day. On
   2026-09-17 three stretches were found where recording stopped **without anyone being able
   to see it** (one of them possibly deliberate) — the app stays alive, telemetry keeps flowing, and only the audio is gone.

@@ -1,5 +1,10 @@
 # Handoff: location-greetings
 
+> Historical checkpoint. Current upload accounting, server/runtime observations and
+> remaining verification boundaries: [handoff 005](005-upload-outcomes-and-hub-reconciliation.md).
+> Older "pending" and server configuration statements below are not current status.
+
+
 - Goal / why: The location stream exists so Chi's "いってらっしゃい" / "ただいま" land on time
   (owner, 2026-09-13). Battery work and cadence tiers are means; the metric is seconds from
   leaving/arriving home to the greeting.

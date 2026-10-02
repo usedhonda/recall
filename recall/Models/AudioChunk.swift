@@ -10,6 +10,9 @@ final class AudioChunk {
     var duration: TimeInterval
     var fileSize: Int64
     var uploadStatusRaw: String
+    /// Why this chunk was terminally discarded, when `uploadStatus` is `.discarded`.
+    /// Kept as a raw optional string so SwiftData predicates remain supported.
+    var discardReasonRaw: String?
     var uploadAttempts: Int
     var lastUploadAttempt: Date?
     var uploadedAt: Date?
@@ -33,6 +36,14 @@ final class AudioChunk {
         set { uploadStatusRaw = newValue.rawValue }
     }
 
+    var discardReason: DiscardReason? {
+        get {
+            guard let discardReasonRaw else { return nil }
+            return DiscardReason(rawValue: discardReasonRaw)
+        }
+        set { discardReasonRaw = newValue?.rawValue }
+    }
+
     init(
         filePath: String,
         fileName: String,
@@ -53,6 +64,7 @@ final class AudioChunk {
         self.duration = duration
         self.fileSize = fileSize
         self.uploadStatusRaw = UploadStatus.pending.rawValue
+        self.discardReasonRaw = nil
         self.uploadAttempts = 0
         self.createdAt = Date()
         self.avgRMS = avgRMS
@@ -68,5 +80,14 @@ final class AudioChunk {
         case uploading
         case uploaded
         case failed
+        case discarded
+    }
+
+    enum DiscardReason: String, Codable {
+        case short
+        case noise
+        case empty
+        case expired
+        case retryExhausted = "retry_exhausted"
     }
 }
