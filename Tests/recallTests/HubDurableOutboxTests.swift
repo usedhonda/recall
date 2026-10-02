@@ -25,7 +25,8 @@ final class HubDurableOutboxTests: XCTestCase {
         let first = try await outbox.leaseNext(lane: "audio", now: Date(timeIntervalSince1970: 10), duration: 1)
         let reopened = try await outbox.leaseNext(lane: "audio", now: Date(timeIntervalSince1970: 12), duration: 1)
         XCTAssertEqual(first?.envelope, reopened?.envelope)
-        XCTAssertEqual(try await outbox.pendingBytes(lane: "audio"), 4)
+        let bytes = try await outbox.pendingBytes(lane: "audio")
+        XCTAssertEqual(bytes, 4)
     }
 
     func testMismatchedReceiptNeverAcknowledges() async throws {
@@ -33,7 +34,8 @@ final class HubDurableOutboxTests: XCTestCase {
         try await outbox.enqueue(envelope("one"))
         let bad = HubDurableOutbox.Receipt(id: "one", lane: "audio", identity: "wrong", sha256: "hash-one", byteLength: 4, eventID: "event")
         await assertThrowsAsync { try await outbox.acknowledge(bad) }
-        XCTAssertEqual(try await outbox.pendingBytes(lane: "audio"), 4)
+        let bytes = try await outbox.pendingBytes(lane: "audio")
+        XCTAssertEqual(bytes, 4)
     }
 
     func testLostResponseDuplicateReceiptIsIdempotentAndPersistent() async throws {
@@ -43,7 +45,8 @@ final class HubDurableOutboxTests: XCTestCase {
         try await outbox.acknowledge(receipt)
         try await outbox.acknowledge(receipt)
         let reopened = try HubDurableOutbox(url: url, budgets: ["audio": try .init(maxBytes: 1024, maxItems: 4, maxTombstones: 4), "location": try .init(maxBytes: 1024, maxItems: 4, maxTombstones: 4)])
-        XCTAssertEqual(try await reopened.pendingBytes(lane: "audio"), 0)
+        let bytes = try await reopened.pendingBytes(lane: "audio")
+        XCTAssertEqual(bytes, 0)
         await assertThrowsAsync { try await reopened.acknowledge(HubDurableOutbox.Receipt(id: "one", lane: "audio", identity: "identity-one", sha256: "hash-one", byteLength: 4, eventID: "other")) }
     }
 
