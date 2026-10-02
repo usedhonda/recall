@@ -41,6 +41,31 @@ The queue reserves a bounded receipt slot when accepting each pending item.
 Receipt tombstones are not automatically pruned; reaching their explicit limit
 rejects new admissions without preventing ACK of already accepted items.
 
+### Request bytes versus Hub read representation
+
+The producer wrapper uses Foundation `JSONSerialization` with sorted keys, while
+`source_payload` is inserted from its validated original UTF-8 object bytes.
+This preserves that input's numeric literals locally; it does not define a
+cross-language canonical JSON format. The complete encoded request is stored as
+a SQLite BLOB, returned unchanged by leasing, and assigned directly to HTTP
+body on retry. Rebuilding the envelope on retry is not the supported path.
+The runtime audio adapter that first supplies this payload is still absent;
+legacy audio multipart numeric fields are strings.
+
+Three hashes have different meanings: the outbox body fingerprint covers complete
+POST bytes, the original SHA-256 covers blob bytes, and the Hub content hash is
+Hub-owned canonical event identity/content checking. They are not interchangeable.
+
+Code inspection at Hub `d28455e` found HTTP JSON parsing (`hub/http.py:141`),
+canonical parsed-metadata serialization (`hub/store.py:128-130`), and metadata
+parsing/reserialization on read (`hub/store.py:301`, `hub/__main__.py:153,177`).
+Consequently, MCP read does not promise the producer's original JSON bytes or
+number spelling. Saving an inbox's received representation is not proof of
+original-request byte equality. Downstream comparisons must use the Hub-owned
+read/content contract, not a guessed reconstruction of producer bytes or a
+separately implemented Hub canonicalizer. That downstream comparison contract
+and lossless numeric range have been referred to the Hub owner for resolution.
+
 ## Capacity and activation boundaries
 
 Preserve the existing `storageCapMB` setting's audio-only meaning. It is not a
