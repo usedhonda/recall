@@ -12,6 +12,7 @@ final class HubDeliveryService {
     private var workers: [String: Task<Void, Never>] = [:]
     private var lastRefresh = Date.distantPast
     private var lastReported: [String: Date] = [:]
+    private var originalMutations: [HubRecallRoute: UUID] = [:]
     private(set) var lastFailure: String?
 
     func start() {
@@ -31,9 +32,29 @@ final class HubDeliveryService {
     func isEnabled(_ route: HubRecallRoute) -> Bool { HubProvisioning.shared.enabledRoutes.contains(route.rawValue) }
     func legacyDisabled(_ route: HubRecallRoute) -> Bool { HubProvisioning.shared.legacyDisabledRoutes.contains(route.rawValue) }
 
+    /// Held across source-file creation or source-size snapshot + outbox commit.
+    /// Contention is backpressure, never permission to bypass the byte budget.
+    func beginOriginalMutation(_ route: HubRecallRoute) -> UUID? {
+        guard originalMutations[route] == nil else { return nil }
+        let token = UUID()
+        originalMutations[route] = token
+        return token
+    }
+
+    func finishOriginalMutation(_ route: HubRecallRoute, token: UUID) {
+        guard originalMutations[route] == token else { return }
+        originalMutations.removeValue(forKey: route)
+    }
+
     func admit(route: HubRecallRoute, observationID: String, occurredAt: Date, timeBasis: String,
                sourcePayloadJSON: Data, originalBytes: Data? = nil) async throws -> String {
         guard isEnabled(route) else { throw Failure.routeDisabled }
+        let mutationToken: UUID?
+        if route == .glassesOriginal {
+            guard let token = beginOriginalMutation(route) else { throw HubDurableOutbox.Failure.laneFull }
+            mutationToken = token
+        } else { mutationToken = nil }
+        defer { if let mutationToken { finishOriginalMutation(route, token: mutationToken) } }
         refreshRuntime()
         guard let configuration, let outbox else { throw Failure.notConfigured }
         if route == .gpsDelivery,

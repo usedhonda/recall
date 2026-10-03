@@ -102,8 +102,12 @@ page/journal overhead or a guarantee against physical disk exhaustion.
 The audio writer start guard and exclusive writer token do not prove a maximum
 encoded-chunk reservation. That capture staging boundary remains unaccepted;
 do not activate audio based on the guard alone. Pending buffers are preserved
-when capacity prevents finalization. Glasses import reserves source bytes plus
-base64 expansion and metadata headroom before copying. Final outbox admission
+when capacity prevents finalization. The live glasses handoff holds a shared
+original-lane gate across source-size accounting, copy and model persistence;
+outbox admission holds the same gate across its source snapshot and DB commit.
+Glasses admission includes source bytes plus base64 expansion and metadata
+headroom before copying. This margin is not a claim that arbitrary metadata or
+oversize originals fit the inline envelope. Final outbox admission
 still checks the actual serialized envelope size, not an estimated raw limit.
 
 Gap counters are bounded local control records. Failed admission or physical
@@ -166,3 +170,15 @@ and Hub receive time cannot substitute for an actual capture end.
 
 No runtime route is accepted by compilation or unit tests alone. Retention,
 collection consent, visible UI, and foreground/read-state behavior are unchanged.
+
+## First device integration evidence
+
+A signed device build was installed and launched without foreground activation.
+The authoritative device log confirmed private Keychain import. Non-audio routes
+were configured (GPS, Health aggregates, geofence, Wi-Fi, channel reports,
+now-playing and glasses); audio activation and all legacy-stop flags remain off.
+The first natural device snapshot contained verified durable storage receipts
+for two GPS deliveries, one Health snapshot and one Wi-Fi observation. This is
+producer receipt evidence, not proof for missing routes or consumer cutover.
+The Hub owner received a correlation request for scoped MCP/consumer checks;
+message queue acceptance is not proof that the owner completed those checks.

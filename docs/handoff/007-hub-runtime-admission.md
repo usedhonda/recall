@@ -88,3 +88,25 @@ Device lock-state reported passcode required. No app replacement or launch was
 attempted, preserving the running recorder. Device configuration remains local
 and disabled. Source-capacity acceptance, device reflection, Keychain import and
 natural producer-to-consumer evidence remain outstanding.
+
+## Current device checkpoint (supersedes local-only state above)
+
+- Fixed the active glasses handoff copy/outbox admission race using one shared
+  lane gate; protected filename collisions from overwriting retained originals.
+  One focused contention regression and Simulator/device builds passed.
+- Installed the signed build and launched with `--no-activate`, without
+  terminating first or manipulating foreground/read-state settings. The prior
+  lock-state observation was not sufficient to declare background launch blocked;
+  the actual launch operation succeeded.
+- Private Keychain import is confirmed in the authoritative device log. Seven
+  non-audio routes enabled; audio disabled; all legacy-stop flags remain empty.
+- Natural durable device ACKs: GPS 2, Health aggregate 1, Wi-Fi 1. Copied SQLite
+  quick_check passed; each receipt matched its stored source external ID.
+- Sent event references to the Hub owner for scoped MCP and required consumer
+  correlation. That response is pending, not MCP/consumer acceptance.
+- No synthetic observation or forced geofence/media/glasses event was emitted.
+  Channel report, now-playing, geofence and glasses natural receipt evidence
+  remains to be collected. Audio capture byte reservations remain unresolved.
+
+The retired PhotoKit scanner is not started by the app and was not re-enabled.
+Glasses headroom estimates never replace actual serialized envelope limits.

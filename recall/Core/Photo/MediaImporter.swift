@@ -47,11 +47,19 @@ final class MediaImporter {
             throw ImportError.noResources
         }
 
-        let fileName = filename(for: asset, suggestedExtension: extensionFromUTI(metadata.uti) ?? "heic")
-        let destination = mediaDirectory.appendingPathComponent(fileName)
+        var fileName = filename(for: asset, suggestedExtension: extensionFromUTI(metadata.uti) ?? "heic")
+        var destination = mediaDirectory.appendingPathComponent(fileName)
 
         if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
+            // Never replace a retained original that may still be awaiting Hub
+            // acknowledgement. Choose a collision suffix instead.
+            let stem = destination.deletingPathExtension().lastPathComponent
+            let ext = destination.pathExtension
+            repeat {
+                let suffix = UUID().uuidString.lowercased().prefix(8)
+                destination = mediaDirectory.appendingPathComponent("\(stem)_\(suffix).\(ext)")
+            } while FileManager.default.fileExists(atPath: destination.path)
+            fileName = destination.lastPathComponent
         }
 
         let options = PHAssetResourceRequestOptions()
@@ -164,11 +172,18 @@ final class MediaImporter {
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         let timestamp = formatter.string(from: capturedAt)
         let safeId = captureId.components(separatedBy: CharacterSet(charactersIn: "/.:")).joined(separator: "_").prefix(24)
-        let fileName = "glasses_\(timestamp)_\(safeId).\(ext)"
-        let destination = mediaDirectory.appendingPathComponent(fileName)
-
+        var fileName = "glasses_\(timestamp)_\(safeId).\(ext)"
+        var destination = mediaDirectory.appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
+            // A retained/unacknowledged original owns its filename. Never replace
+            // it; use a collision suffix while the lane mutation lock is held.
+            let stem = destination.deletingPathExtension().lastPathComponent
+            let ext = destination.pathExtension
+            repeat {
+                let suffix = UUID().uuidString.lowercased().prefix(8)
+                destination = mediaDirectory.appendingPathComponent("\(stem)_\(suffix).\(ext)")
+            } while FileManager.default.fileExists(atPath: destination.path)
+            fileName = destination.lastPathComponent
         }
         try data.write(to: destination, options: .atomic)
 

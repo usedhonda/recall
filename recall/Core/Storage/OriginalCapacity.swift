@@ -6,7 +6,6 @@ import Foundation
 final class OriginalCapacity {
     static let shared = OriginalCapacity()
     private var audioReservations: Set<UUID> = []
-    private var glassesReservations: [UUID: Int64] = [:]
 
     private init() {}
 
@@ -50,6 +49,9 @@ final class OriginalCapacity {
     func reserveGlasses(_ bytes: Int64) async -> UUID? {
         let hub = HubDeliveryService.shared
         guard hub.isEnabled(.glassesOriginal) else { return UUID() }
+        guard let token = hub.beginOriginalMutation(.glassesOriginal) else { return nil }
+        var admitted = false
+        defer { if !admitted { hub.finishOriginalMutation(.glassesOriginal, token: token) } }
         do {
             let queue = try await hub.retainedBytes(route: .glassesOriginal)
             let files = try HubDeliveryService.originalDirectoryBytes(for: .glassesOriginal)
@@ -58,13 +60,11 @@ final class OriginalCapacity {
             let cap: Int64 = 512 * 1024 * 1024
             guard bytes >= 0, bytes <= cap else { return nil }
             let needed = bytes + 4 * ((bytes + 2) / 3) + 65_536
-            let reserved = glassesReservations.values.reduce(Int64(0), +)
-            guard needed <= cap, files + queue + reserved <= cap - needed else {
+            guard needed <= cap, files + queue <= cap - needed else {
                 await hub.recordGap(route: .glassesOriginal, reason: "capacity_exhausted")
                 return nil
             }
-            let token = UUID()
-            glassesReservations[token] = needed
+            admitted = true
             return token
         } catch {
             await hub.recordGap(route: .glassesOriginal, reason: "capacity_read_failed")
@@ -73,6 +73,6 @@ final class OriginalCapacity {
     }
 
     func releaseGlasses(_ token: UUID) {
-        glassesReservations.removeValue(forKey: token)
+        HubDeliveryService.shared.finishOriginalMutation(.glassesOriginal, token: token)
     }
 }
