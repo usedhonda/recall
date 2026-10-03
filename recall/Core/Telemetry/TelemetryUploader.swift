@@ -77,7 +77,8 @@ final class TelemetryUploader: NSObject {
     // MARK: - Public API
 
     /// Upload location samples via background URLSession (Lane B fallback)
-    func upload(samples: [LocationSample], healthPayload: HealthPayload? = nil) async throws {
+    func upload(samples: [LocationSample], healthPayload: HealthPayload? = nil,
+                nowPlayingSnapshot: NowPlayingSnapshot?) async throws {
         guard !samples.isEmpty || healthPayload != nil else { return }
         guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
             Self.log("network policy: telemetry laneB skipped")
@@ -92,7 +93,7 @@ final class TelemetryUploader: NSObject {
         // Snapshot nowPlaying so background uploads carry the same context as
         // foreground sends (Cdx audit: previously only foreground sendLocation/
         // sendHealth attached `nowPlaying`, leaving background batches blind).
-        let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
+        let nowPlaying = await legacyNowPlaying(nowPlayingSnapshot)
 
         let batch = TelemetrySampleBatch(
             samples: samples.map { TelemetrySample(from: $0) },
@@ -125,6 +126,7 @@ final class TelemetryUploader: NSObject {
     /// Carries the self-describing records (with measuredAt + source) under `health2`.
     @MainActor
     func uploadHealthOnly(_ payload: HealthPayload) async {
+        let nowPlayingSnapshot = TelemetryService.shared.nowPlayingManager.snapshot
         do {
             let hubExternalID = try await HubTelemetryAdmission.admit(
                 route: .healthSnapshot,
@@ -132,6 +134,16 @@ final class TelemetryUploader: NSObject {
                 occurredAt: payload.collectedAt,
                 payload: payload
             )
+            if let snapshot = nowPlayingSnapshot {
+                do {
+                    _ = try await HubTelemetryAdmission.admit(route: .nowPlaying,
+                                                              observationID: snapshot.deliveryID.uuidString,
+                                                              occurredAt: snapshot.timestamp,
+                                                              payload: snapshot)
+                } catch {
+                    TelemetryUploader.log("nowPlaying Hub admission failed")
+                }
+            }
             if !HubTelemetryAdmission.legacyAllowed(.healthSnapshot) {
                 guard let hubExternalID,
                       try await HubDeliveryService.shared.isAcknowledged(externalID: hubExternalID) else {
@@ -168,13 +180,15 @@ final class TelemetryUploader: NSObject {
                 samples: [],
                 healthPayload: payload,
                 serverURL: settings.telemetryServerURL,
-                token: token
+                token: token,
+                nowPlayingSnapshot: nowPlayingSnapshot
             )
             TelemetryUploader.log("healthOnly OK")
         } catch {
             TelemetryUploader.log("healthOnly FAIL \(error.localizedDescription) -> laneB")
             do {
-                try await upload(samples: [], healthPayload: payload)
+                try await upload(samples: [], healthPayload: payload,
+                                 nowPlayingSnapshot: nowPlayingSnapshot)
             } catch {
                 TelemetryUploader.log("healthOnly laneB FAIL \(error.localizedDescription)")
             }
@@ -199,6 +213,7 @@ final class TelemetryUploader: NSObject {
 
         let samples = await LocationQueue.shared.peek(max: 50)
         guard !samples.isEmpty else { return }
+        let nowPlayingSnapshot = TelemetryService.shared.nowPlayingManager.snapshot
 
         var hubIDs: [UUID: String] = [:]
         var hubAcked = true
@@ -274,7 +289,7 @@ final class TelemetryUploader: NSObject {
                 health = nil
             }
         }
-        if let snapshot = await MainActor.run(body: { TelemetryService.shared.nowPlayingManager.snapshot }) {
+        if let snapshot = nowPlayingSnapshot {
             do {
                 _ = try await HubTelemetryAdmission.admit(route: .nowPlaying,
                                                           observationID: snapshot.deliveryID.uuidString,
@@ -284,7 +299,6 @@ final class TelemetryUploader: NSObject {
                 TelemetryUploader.log("nowPlaying Hub admission failed")
             }
         }
-
         // Lane A: immediate upload with beginBackgroundTask
         var taskId: UIBackgroundTaskIdentifier = .invalid
         taskId = UIApplication.shared.beginBackgroundTask {
@@ -302,7 +316,8 @@ final class TelemetryUploader: NSObject {
                 samples: legacySamples,
                 healthPayload: health,
                 serverURL: settings.telemetryServerURL,
-                token: token
+                token: token,
+                nowPlayingSnapshot: nowPlayingSnapshot
             )
             guard await LocationQueue.shared.markLegacyDelivered(Set(legacySamples.map(\.id))) else {
                 TelemetryUploader.log("legacy delivery recorded failure; queue retained")
@@ -317,7 +332,8 @@ final class TelemetryUploader: NSObject {
             TelemetryUploader.log("laneA FAIL \(detail) -> laneB")
             lastUploadResult = "error: \(detail)"
             do {
-                try await upload(samples: legacySamples, healthPayload: health)
+                try await upload(samples: legacySamples, healthPayload: health,
+                                 nowPlayingSnapshot: nowPlayingSnapshot)
                 guard await LocationQueue.shared.markLegacyDelivered(Set(legacySamples.map(\.id))) else {
                     TelemetryUploader.log("legacy delivery recorded failure; queue retained")
                     return
@@ -341,14 +357,15 @@ final class TelemetryUploader: NSObject {
         samples: [LocationSample],
         healthPayload: HealthPayload? = nil,
         serverURL: String,
-        token: String
+        token: String,
+        nowPlayingSnapshot: NowPlayingSnapshot?
     ) async throws {
         guard await canUploadTelemetry(samples: samples, healthPayload: healthPayload) else {
             TelemetryUploader.log("network policy: telemetry immediate skipped")
             throw URLError(.notConnectedToInternet)
         }
         // Same nowPlaying snapshot rule as `upload(samples:healthPayload:)`.
-        let nowPlaying = await MainActor.run { TelemetryService.shared.nowPlayingManager.snapshot }
+        let nowPlaying = await legacyNowPlaying(nowPlayingSnapshot)
 
         let batch = TelemetrySampleBatch(
             samples: samples.map { TelemetrySample(from: $0) },
@@ -371,6 +388,16 @@ final class TelemetryUploader: NSObject {
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             throw URLError(.badServerResponse)
+        }
+    }
+
+    private func legacyNowPlaying(_ snapshot: NowPlayingSnapshot?) async -> NowPlayingSnapshot? {
+        return await MainActor.run {
+            NowPlayingTelemetryProjection.legacySnapshot(
+                snapshot,
+                streamEnabled: TelemetryService.shared.nowPlayingManager.isEnabled,
+                legacyAllowed: HubTelemetryAdmission.legacyAllowed(.nowPlaying)
+            )
         }
     }
 

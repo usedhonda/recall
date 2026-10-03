@@ -140,3 +140,26 @@ conditions before device reflection; collect natural audio/storage+STT intent
 and remaining route receipts; obtain actual live consumer selection and per-route
 cutover acceptance. Audio remains disabled on the device. No synthetic production
 event, credential rotation, or legacy stop is authorized by these local results.
+
+### Additional non-audio gap closure
+
+A subsequent read-only device outbox copy contained 64 GPS, four Health and one
+Wi-Fi storage receipts, zero pending rows, and matching receipt/source IDs for
+all 69 rows. This extends device evidence only, not scoped MCP/consumer coverage.
+The old deployed build recorded 200 `invalid_source_clock` status gaps, directly
+supporting the channel-clock repair above. No new route was activated to obtain
+this evidence.
+
+Source tracing found and repaired two more boundaries locally:
+- Now-playing is captured once per existing delivery and shared across Hub and
+  legacy attempts. Background Health-only attachment now enters Hub admission.
+  Each legacy batch checks its own media cutover flag without suppressing other
+  data. No new media polling or observation was introduced.
+- Hub glasses handoffs accept whole/fractional capture clocks, but retain a
+  malformed committed pair and record a gap instead of claiming current time as
+  capture time. The disabled-Hub legacy branch remains unchanged.
+
+Five new focused tests and the Simulator build passed. These changes are not
+device-reflected; geofence, now-playing, channel reports and glasses still lack
+natural route acceptance. The incident restart question is pending; credentials
+have not been rotated and private activation configuration has not been staged.

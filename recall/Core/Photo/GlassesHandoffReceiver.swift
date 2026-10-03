@@ -131,7 +131,18 @@ final class GlassesHandoffReceiver {
             guard fm.fileExists(atPath: imageURL.path), let bytes = try? Data(contentsOf: imageURL) else {
                 continue  // image missing/partial — retry on next drain
             }
-            let capturedAt = ISO8601DateFormatter().date(from: manifest.capturedAt) ?? Date()
+            let capturedAt: Date
+            if HubDeliveryService.shared.isEnabled(.glassesOriginal) {
+                guard let parsed = Self.parseCaptureDate(manifest.capturedAt) else {
+                    await HubDeliveryService.shared.recordGap(route: .glassesOriginal, reason: "invalid_capture_clock")
+                    ActivityLogger.shared.log(.error, "[handoff] invalid capture clock; committed pair retained")
+                    continue
+                }
+                capturedAt = parsed
+            } else {
+                // Preserve the legacy route's existing behavior when Hub delivery is disabled.
+                capturedAt = ISO8601DateFormatter().date(from: manifest.capturedAt) ?? Date()
+            }
             // Geotag: prefer the sidecar's own coordinates (future-proofing); when
             // vibeterm ships nil (it dropped its location capability for App Store
             // privacy review), fall back to recall's current fix — recall is an
@@ -184,6 +195,22 @@ final class GlassesHandoffReceiver {
         case "image/png": return "png"
         default: return "jpg"
         }
+    }
+
+    /// Accept both whole-second and fractional ISO-8601 timestamps from vibeterm.
+    /// Hub-enabled handoffs must not fall back to receipt/import time.
+    static func parseCaptureDate(_ value: String) -> Date? {
+        let base: ISO8601DateFormatter.Options = [
+            .withInternetDateTime,
+            .withDashSeparatorInDate,
+            .withColonSeparatorInTime,
+            .withColonSeparatorInTimeZone
+        ]
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = base.union(.withFractionalSeconds)
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = base
+        return formatter.date(from: value)
     }
 
     private func mimeUTI(_ mime: String) -> String {

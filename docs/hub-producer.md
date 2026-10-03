@@ -95,6 +95,18 @@ Channel report source clocks accept both the reporter's whole-second ISO8601
 format and fractional timestamps in retained payloads. This parsing repair does
 not change report cadence, collection scope, or legacy cutover state.
 
+Each existing telemetry delivery captures now-playing once and passes that
+snapshot unchanged to Hub admission and the legacy immediate/background attempts.
+Background Health-only delivery also archives its already-collected attachment.
+Legacy construction rechecks the media toggle and route-specific cutover flag;
+stopping legacy now-playing does not strip GPS/Health or suppress Hub admission.
+No new observer or collection cadence is introduced.
+
+For Hub-enabled glasses handoffs, whole-second and fractional capture timestamps
+are accepted. Invalid capture timestamps retain the committed image/sidecar pair
+and record `invalid_capture_clock`; they are not replaced by import/current time.
+Such pairs are explicitly unadmitted, not proof of complete glasses coverage.
+
 Approved independent limits are GPS 32 MiB, Health aggregate snapshots 64 MiB,
 status 32 MiB, glasses 512 MiB and control 16 MiB. Audio retains the existing
 `storageCapMB` setting. Outbox bodies use their actual encoded byte length;

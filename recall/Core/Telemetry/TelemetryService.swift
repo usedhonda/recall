@@ -1,6 +1,14 @@
 import Foundation
 import Observation
 
+enum NowPlayingTelemetryProjection {
+    static func legacySnapshot(_ snapshot: NowPlayingSnapshot?, streamEnabled: Bool,
+                               legacyAllowed: Bool) -> NowPlayingSnapshot? {
+        guard streamEnabled, legacyAllowed else { return nil }
+        return snapshot
+    }
+}
+
 /// Orchestrates all telemetry data streams (health, location)
 @Observable
 @MainActor
@@ -85,6 +93,7 @@ final class TelemetryService {
     // MARK: - Location Send
 
     func sendLocation(_ payload: LocationPayload) async -> LocationSendResult {
+        let nowPlayingSnapshot = nowPlayingManager.snapshot
         do {
             let hubExternalID = try await HubTelemetryAdmission.admit(
                 route: .gpsDelivery,
@@ -92,7 +101,7 @@ final class TelemetryService {
                 occurredAt: payload.timestamp,
                 payload: payload
             )
-            if let snapshot = nowPlayingManager.snapshot {
+            if let snapshot = nowPlayingSnapshot {
                 do { _ = try await HubTelemetryAdmission.admit(route: .nowPlaying, observationID: snapshot.deliveryID.uuidString, occurredAt: snapshot.timestamp, payload: snapshot) }
                 catch { ActivityLogger.shared.log(.telemetry, "nowPlaying Hub admission failed") }
             }
@@ -127,7 +136,11 @@ final class TelemetryService {
 
         let batch = TelemetrySampleBatch(
             samples: [TelemetrySample(from: payload)],
-            nowPlaying: nowPlayingManager.snapshot
+            nowPlaying: NowPlayingTelemetryProjection.legacySnapshot(
+                nowPlayingSnapshot,
+                streamEnabled: nowPlayingManager.isEnabled,
+                legacyAllowed: HubTelemetryAdmission.legacyAllowed(.nowPlaying)
+            )
         )
 
         let encoder = JSONEncoder()
@@ -172,6 +185,7 @@ final class TelemetryService {
     // MARK: - Health Send
 
     func sendHealth(_ payload: HealthPayload) async -> HealthSendResult {
+        let nowPlayingSnapshot = nowPlayingManager.snapshot
         do {
             let hubExternalID = try await HubTelemetryAdmission.admit(
                 route: .healthSnapshot,
@@ -179,7 +193,7 @@ final class TelemetryService {
                 occurredAt: payload.collectedAt,
                 payload: payload
             )
-            if let snapshot = nowPlayingManager.snapshot {
+            if let snapshot = nowPlayingSnapshot {
                 do { _ = try await HubTelemetryAdmission.admit(route: .nowPlaying, observationID: snapshot.deliveryID.uuidString, occurredAt: snapshot.timestamp, payload: snapshot) }
                 catch { ActivityLogger.shared.log(.telemetry, "nowPlaying Hub admission failed") }
             }
@@ -215,7 +229,11 @@ final class TelemetryService {
         let batch = TelemetrySampleBatch(
             samples: [],
             health2: payload,
-            nowPlaying: nowPlayingManager.snapshot
+            nowPlaying: NowPlayingTelemetryProjection.legacySnapshot(
+                nowPlayingSnapshot,
+                streamEnabled: nowPlayingManager.isEnabled,
+                legacyAllowed: HubTelemetryAdmission.legacyAllowed(.nowPlaying)
+            )
         )
 
         let encoder = JSONEncoder()
