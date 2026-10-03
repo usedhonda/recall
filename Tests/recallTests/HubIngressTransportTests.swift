@@ -89,4 +89,12 @@ final class HubIngressTransportTests: XCTestCase {
             XCTFail("Ambiguous response loss must remain retryable")
         } catch { XCTAssertEqual(error as? HubIngressTransport.Failure, .unavailable) }
     }
+
+    func testRawResponseExposesStatusAndBodyForDurableAckOwner() async throws {
+        let body = Data("{\"storage_receipt\":{}}".utf8)
+        StubProtocol.respond = { _ in (201, body) }
+        let raw = try await transport().submitRaw(encodedJSON: Data("{}".utf8))
+        XCTAssertEqual(raw.status, 201)
+        XCTAssertEqual(raw.body, body)
+    }
 }

@@ -7,12 +7,16 @@ import SQLite3
 actor HubDurableOutbox {
     struct LaneBudget: Sendable {
         let maxBytes: Int64
+        /// Conservative reservation for physical originals represented by a row.
+        /// Metadata rows use zero; audio/glasses rows reserve their original length.
+        let maxOriginalBytes: Int64
         let maxItems: Int64
         let maxTombstones: Int64
 
-        init(maxBytes: Int64, maxItems: Int64, maxTombstones: Int64) throws {
-            guard maxBytes > 0, maxItems > 0, maxTombstones > 0 else { throw Failure.invalidBudget }
-            self.maxBytes = maxBytes
+        init(maxBytes: Int64, maxItems: Int64, maxTombstones: Int64,
+             maxOriginalBytes: Int64 = .max) throws {
+            guard maxBytes > 0, maxOriginalBytes >= 0, maxItems > 0, maxTombstones > 0 else { throw Failure.invalidBudget }
+            self.maxBytes = maxBytes; self.maxOriginalBytes = maxOriginalBytes
             self.maxItems = maxItems
             self.maxTombstones = maxTombstones
         }
@@ -60,7 +64,7 @@ actor HubDurableOutbox {
     /// Same ID and bytes is a retry, including after ACK. Different immutable
     /// bytes conflict. Reserve a receipt slot now so ACK cannot exhaust it later.
     func enqueue(_ envelope: HubProducerEnvelope) throws {
-        let lane = envelope.route.rawValue
+        let lane = lane(for: envelope.route)
         guard let budget = budgets[lane] else { throw Failure.invalidBudget }
         guard envelope.source == "recall", !envelope.externalID.isEmpty,
               !envelope.encodedJSON.isEmpty,
@@ -78,13 +82,32 @@ actor HubDurableOutbox {
             let pending = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=? AND state!=2", [.text(lane)])
             let reserved = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
             let bytes = Int64(envelope.encodedJSON.count)
+            let originalBytes = Int64(envelope.originalByteLength)
+            let usedOriginal = try scalar("SELECT COALESCE(SUM(CASE WHEN state!=2 THEN original_bytes ELSE 0 END),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
             guard bytes <= budget.maxBytes, used <= budget.maxBytes - bytes,
+                  originalBytes <= budget.maxOriginalBytes,
+                  usedOriginal <= budget.maxOriginalBytes - originalBytes,
                   pending < budget.maxItems else { throw Failure.laneFull }
             guard reserved < budget.maxTombstones else { throw Failure.receiptSlotsFull }
             try execute("INSERT INTO hub_outbox_v1(id,lane,body,body_hash,original_hash,original_bytes) VALUES(?,?,?,?,?,?)",
                 [.text(envelope.externalID), .text(lane), .blob(envelope.encodedJSON), .text(hash),
                  .text(envelope.originalSHA256 ?? ""), .int(Int64(envelope.originalByteLength))])
         }
+    }
+
+    static func lane(for route: HubRecallRoute) -> String {
+        switch route {
+        case .gpsDelivery: return "metadata-gps"
+        case .healthSnapshot: return "metadata-health"
+        case .geofence, .wifi, .channelReport, .nowPlaying: return "metadata-status"
+        case .audioOriginal: return "audio-original"
+        case .glassesOriginal: return "glasses-original"
+        }
+    }
+
+    private func lane(for route: HubRecallRoute) -> String {
+        let grouped = Self.lane(for: route)
+        return budgets[grouped] != nil ? grouped : route.rawValue
     }
 
     /// Leasing never removes bytes. Expiry permits another attempt of the exact

@@ -60,6 +60,19 @@ final class HubIngressTransport: @unchecked Sendable {
     /// Retry directly from a durable lease without rebuilding archival metadata.
     func submit(encodedJSON: Data, expected: HubExpectedStorageReceipt,
                 boundEventID: String? = nil) async throws -> HubStorageReceipt {
+        let (status, data) = try await submitRaw(encodedJSON: encodedJSON)
+        guard status == 200 || status == 201 else { throw Failure.rejected(status) }
+        do {
+            return try HubProducerContract.validateResponse(
+                responseData: data, expected: expected, boundEventID: boundEventID)
+        } catch {
+            throw Failure.invalidResponse
+        }
+    }
+
+    /// Returns the body only to the caller that owns durable receipt validation.
+    /// The transport never logs or interprets it and still rejects redirects.
+    func submitRaw(encodedJSON: Data) async throws -> (status: Int, body: Data) {
         guard !encodedJSON.isEmpty,
               encodedJSON.count <= HubProducerContract.maximumEncodedJSONBytes else {
             throw Failure.invalidConfiguration
@@ -80,14 +93,6 @@ final class HubIngressTransport: @unchecked Sendable {
             throw Failure.unavailable
         }
         guard let http = response as? HTTPURLResponse else { throw Failure.invalidResponse }
-        guard http.statusCode == 200 || http.statusCode == 201 else {
-            throw Failure.rejected(http.statusCode)
-        }
-        do {
-            return try HubProducerContract.validateResponse(
-                responseData: data, expected: expected, boundEventID: boundEventID)
-        } catch {
-            throw Failure.invalidResponse
-        }
+        return (http.statusCode, data)
     }
 }

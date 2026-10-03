@@ -108,6 +108,18 @@ final class HubDurableOutboxTests: XCTestCase {
         do { try await box.enqueue(event("two")); XCTFail("zero original bytes still uses encoded space") } catch {}
     }
 
+    func testOriginalReservationIsIndependentLaneBudget() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let policy = ["audio-original": try HubDurableOutbox.LaneBudget(
+            maxBytes: 100_000, maxItems: 8, maxTombstones: 8, maxOriginalBytes: 3)]
+        let box = try HubDurableOutbox(url: path, budgets: policy)
+        let first = try event("one", route: .audioOriginal)
+        do { try await box.enqueue(first); XCTFail("fixture is larger than reservation") } catch {
+            XCTAssertEqual(error as? HubDurableOutbox.Failure, .laneFull)
+        }
+    }
+
     func testConcurrentInstancesCannotOveradmitOrDoubleLease() async throws {
         let path = url()
         defer { try? FileManager.default.removeItem(at: path) }
