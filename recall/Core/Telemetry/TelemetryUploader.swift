@@ -201,6 +201,7 @@ final class TelemetryUploader: NSObject {
         guard !samples.isEmpty else { return }
 
         var hubIDs: [UUID: String] = [:]
+        var hubAcked = true
         do {
             for sample in samples {
                 if let externalID = try await HubTelemetryAdmission.admit(
@@ -211,11 +212,9 @@ final class TelemetryUploader: NSObject {
                 ) { hubIDs[sample.id] = externalID }
             }
             for externalID in hubIDs.values {
-                guard try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else {
-                    TelemetryUploader.log("GPS Hub admission pending samples=\(samples.count)")
-                    return
-                }
+                hubAcked = hubAcked && (try await HubDeliveryService.shared.isAcknowledged(externalID: externalID))
             }
+            if !hubAcked { TelemetryUploader.log("GPS Hub admission pending samples=\(samples.count)") }
         } catch {
             TelemetryUploader.log("GPS Hub admission failed samples=\(samples.count)")
             return
@@ -228,7 +227,8 @@ final class TelemetryUploader: NSObject {
         let settings = AppSettings.shared
         let legacyAllowed = HubTelemetryAdmission.legacyAllowed(.gpsDelivery)
         if !legacyAllowed {
-            await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
+            guard hubIDs.count == samples.count, hubAcked else { return }
+            if hubIDs.isEmpty || hubAcked { await LocationQueue.shared.remove(ids: Set(samples.map(\.id))) }
             TelemetryUploader.log("GPS Hub store-only ACK samples=\(samples.count)")
             return
         }
@@ -302,7 +302,7 @@ final class TelemetryUploader: NSObject {
             do {
                 try await upload(samples: samples, healthPayload: health)
                 TelemetryUploader.log("laneB OK samples=\(samples.count)")
-                await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
+                if hubIDs.isEmpty || hubAcked { await LocationQueue.shared.remove(ids: Set(samples.map(\.id))) }
             } catch {
                 let detail2 = error.localizedDescription
                 TelemetryUploader.log("laneB FAIL \(detail2) re-queued=\(samples.count)")
