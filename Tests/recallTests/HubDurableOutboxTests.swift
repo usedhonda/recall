@@ -29,7 +29,7 @@ final class HubDurableOutboxTests: XCTestCase {
         if event.route == .audioOriginal {
             response["processing_receipt"] = [
                 "receipt_version": 1, "intent_committed": true,
-                "job_id": "job-\(event.externalID)", "original_event_id": eventID,
+                "job_id": "123e4567-e89b-12d3-a456-426614174001", "original_event_id": eventID,
                 "pipeline_version": "local-stt-v1", "state": processingState
             ]
         }
@@ -77,7 +77,7 @@ final class HubDurableOutboxTests: XCTestCase {
         try await box.acknowledge(responseData: ack, externalID: original.externalID)
         var changedJob = try XCTUnwrap(JSONSerialization.jsonObject(with: ack) as? [String: Any])
         var processing = try XCTUnwrap(changedJob["processing_receipt"] as? [String: Any])
-        processing["job_id"] = "another-job"
+        processing["job_id"] = "123e4567-e89b-12d3-a456-426614174002"
         changedJob["processing_receipt"] = processing
         do {
             try await box.acknowledge(responseData: JSONSerialization.data(withJSONObject: changedJob), externalID: original.externalID)

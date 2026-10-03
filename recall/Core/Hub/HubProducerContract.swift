@@ -152,7 +152,9 @@ struct HubProcessingReceipt: Codable, Equatable, Sendable {
         catch { throw HubProducerError.invalidProcessingReceipt }
         guard receipt.receiptVersion == 1,
               receipt.intentCommitted,
-              !receipt.jobID.isEmpty,
+              receipt.jobID.count == 36,
+              receipt.jobID == receipt.jobID.lowercased(),
+              UUID(uuidString: receipt.jobID).map({ $0.uuidString.lowercased() == receipt.jobID }) == true,
               receipt.originalEventID == expectedOriginalEventID,
               receipt.pipelineVersion == "local-stt-v1" else { throw HubProducerError.invalidProcessingReceipt }
         return receipt

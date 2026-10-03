@@ -83,7 +83,7 @@ final class HubProducerContractTests: XCTestCase {
     func testProcessingReceiptRequiresImmutableBindingAndAllowsMutableState() throws {
         let eventID = "123e4567-e89b-12d3-a456-426614174000"
         let base: [String: Any] = ["receipt_version": 1, "intent_committed": true,
-            "job_id": "job-1", "original_event_id": eventID,
+            "job_id": "123e4567-e89b-12d3-a456-426614174001", "original_event_id": eventID,
             "pipeline_version": "local-stt-v1", "state": "pending"]
         let pending = try HubProcessingReceipt.decode(JSONSerialization.data(withJSONObject: base), expectedOriginalEventID: eventID)
         XCTAssertEqual(pending.state, .pending)
@@ -93,6 +93,10 @@ final class HubProducerContractTests: XCTestCase {
         XCTAssertThrowsError(try HubProcessingReceipt.decode(JSONSerialization.data(withJSONObject: changedTuple), expectedOriginalEventID: eventID))
         var missing = base; missing.removeValue(forKey: "job_id")
         XCTAssertThrowsError(try HubProcessingReceipt.decode(JSONSerialization.data(withJSONObject: missing), expectedOriginalEventID: eventID))
+        var invalidJob = base; invalidJob["job_id"] = "job-1"
+        XCTAssertThrowsError(try HubProcessingReceipt.decode(JSONSerialization.data(withJSONObject: invalidJob), expectedOriginalEventID: eventID))
+        var uppercaseJob = base; uppercaseJob["job_id"] = "123E4567-E89B-12D3-A456-426614174001"
+        XCTAssertThrowsError(try HubProcessingReceipt.decode(JSONSerialization.data(withJSONObject: uppercaseJob), expectedOriginalEventID: eventID))
         var changedEvent = base; changedEvent["original_event_id"] = "other-event"
         XCTAssertThrowsError(try HubProcessingReceipt.decode(JSONSerialization.data(withJSONObject: changedEvent), expectedOriginalEventID: eventID))
     }
