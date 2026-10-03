@@ -136,7 +136,6 @@ final class ChannelStatusReporter {
         guard sendEdge || sendLevel else { return }
 
         let ok = await send(entries: entries, sentAt: nowISO, audio: audio)
-        if ok { lastSentAudioClass = audio.healthClass }
         // Reset the hourly clock only on a successful send that needed repeating, so a
         // failed send stays retried by the next tick.
         if ok && needsLevel {
@@ -217,13 +216,18 @@ final class ChannelStatusReporter {
             }
             let id = defaults.string(forKey: "hub.channel.pending.id") ?? UUID().uuidString
             if defaults.string(forKey: "hub.channel.pending.id") == nil { defaults.set(id, forKey: "hub.channel.pending.id") }
+            guard let sourceTime = ISO8601DateFormatter.channel.date(from: payload.sentAt) else {
+                await HubDeliveryService.shared.recordGap(route: .channelReport, reason: "invalid_source_clock")
+                return false
+            }
             if let externalID = try await HubTelemetryAdmission.admit(route: .channelReport, observationID: id,
-                                                                       occurredAt: ISO8601DateFormatter.channel.date(from: sentAt) ?? Date(), payload: payload),
+                                                                       occurredAt: sourceTime, payload: payload),
                !HubTelemetryAdmission.legacyAllowed(.channelReport) {
                 guard try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else { return false }
                 defaults.removeObject(forKey: "hub.channel.pending.fingerprint")
                 defaults.removeObject(forKey: "hub.channel.pending.payload")
                 defaults.removeObject(forKey: "hub.channel.pending.id")
+                lastSentAudioClass = AudioStateSignal.healthClass(of: payload.audioState)
                 return true
             }
         } catch {
@@ -259,6 +263,7 @@ final class ChannelStatusReporter {
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.fingerprint")
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.payload")
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.id")
+            lastSentAudioClass = AudioStateSignal.healthClass(of: payload.audioState)
             return true
         } catch {
             ActivityLogger.shared.log(.telemetry, "channel_status send failed: \(error.localizedDescription)")

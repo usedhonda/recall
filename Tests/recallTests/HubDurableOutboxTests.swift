@@ -20,12 +20,20 @@ final class HubDurableOutboxTests: XCTestCase {
     }
 
     private func response(_ event: HubProducerEnvelope, eventID: String = "00000000-0000-4000-8000-000000000001",
-                          overrideLength: Int? = nil) throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["storage_receipt": [
+                          overrideLength: Int? = nil, processingState: String = "pending") throws -> Data {
+        var response: [String: Any] = ["storage_receipt": [
             "receipt_version": 1, "source": "recall", "external_id": event.externalID,
             "event_id": eventID, "sha256": event.originalSHA256.map { $0 as Any } ?? NSNull(),
             "byte_length": overrideLength ?? event.originalByteLength, "ingest_sequence": 1
-        ]])
+        ]]
+        if event.route == .audioOriginal {
+            response["processing_receipt"] = [
+                "receipt_version": 1, "intent_committed": true,
+                "job_id": "job-\(event.externalID)", "original_event_id": eventID,
+                "pipeline_version": "local-stt-v1", "state": processingState
+            ]
+        }
+        return try JSONSerialization.data(withJSONObject: response)
     }
 
     func testReopenedLeasePreservesBytesAndNeverDrainsBeforeACK() async throws {
@@ -58,9 +66,27 @@ final class HubDurableOutboxTests: XCTestCase {
         let remaining = try await box.pendingBytes(lane: "audio-original")
         XCTAssertEqual(remaining, Int64(original.encodedJSON.count))
         let ack = try response(original)
+        var storageOnly = try XCTUnwrap(JSONSerialization.jsonObject(with: ack) as? [String: Any])
+        storageOnly.removeValue(forKey: "processing_receipt")
+        do {
+            try await box.acknowledge(responseData: JSONSerialization.data(withJSONObject: storageOnly), externalID: original.externalID)
+            XCTFail("storage alone cannot release audio")
+        } catch { XCTAssertEqual(error as? HubProducerError, .invalidProcessingReceipt) }
+        let noReceipt = try await box.storedReceipt(externalID: original.externalID)
+        XCTAssertNil(noReceipt)
         try await box.acknowledge(responseData: ack, externalID: original.externalID)
+        var changedJob = try XCTUnwrap(JSONSerialization.jsonObject(with: ack) as? [String: Any])
+        var processing = try XCTUnwrap(changedJob["processing_receipt"] as? [String: Any])
+        processing["job_id"] = "another-job"
+        changedJob["processing_receipt"] = processing
+        do {
+            try await box.acknowledge(responseData: JSONSerialization.data(withJSONObject: changedJob), externalID: original.externalID)
+            XCTFail("the durable job binding must not change")
+        } catch { XCTAssertEqual(error as? HubDurableOutbox.Failure, .receiptMismatch) }
+        let completed = try response(original, processingState: "completed")
+        try await box.acknowledge(responseData: completed, externalID: original.externalID)
         let reopened = try HubDurableOutbox(url: path, budgets: budgets())
-        try await reopened.acknowledge(responseData: ack, externalID: original.externalID)
+        try await reopened.acknowledge(responseData: completed, externalID: original.externalID)
         let receipt = try await reopened.storedReceipt(externalID: original.externalID)
         XCTAssertEqual(receipt?.sha256, original.originalSHA256)
         let pending = try await reopened.pendingBytes(lane: "audio-original")
@@ -103,9 +129,27 @@ final class HubDurableOutboxTests: XCTestCase {
         let path = url()
         defer { try? FileManager.default.removeItem(at: path) }
         let original = try event("one")
-        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: Int64(original.encodedJSON.count)))
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: Int64(original.encodedJSON.count) + 4096))
         try await box.enqueue(original)
         do { try await box.enqueue(event("two")); XCTFail("zero original bytes still uses encoded space") } catch {}
+    }
+
+    func testSourceFileBudgetAndReceiptReservationSurviveACK() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let original = try event("reserved", route: .audioOriginal)
+        let required = Int64(original.encodedJSON.count) + 4096
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: required + 10))
+        do {
+            try await box.enqueue(original, externalOriginalBytes: 11)
+            XCTFail("source files share the finite original budget")
+        } catch { XCTAssertEqual(error as? HubDurableOutbox.Failure, .laneFull) }
+        try await box.enqueue(original, externalOriginalBytes: 10)
+        let before = try await box.retainedBytes(lane: "audio-original")
+        XCTAssertEqual(before, required)
+        try await box.acknowledge(responseData: response(original), externalID: original.externalID)
+        let after = try await box.retainedBytes(lane: "audio-original")
+        XCTAssertEqual(after, 4096)
     }
 
     func testOriginalReservationIsIndependentLaneBudget() async throws {
@@ -148,5 +192,22 @@ final class HubDurableOutboxTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: corrupt) }
         try Data("not sqlite".utf8).write(to: corrupt)
         XCTAssertThrowsError(try HubDurableOutbox(url: corrupt, budgets: budgets()))
+    }
+
+    func testExternalReservationSharesBudgetAndCanBeReleased() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let original = try event("reserved")
+        let required = Int64(original.encodedJSON.count) + 4096
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: required + 100))
+        try await box.setExternalReservation(lane: "gps-delivery", key: "location", bytes: 101)
+        let reserved = try await box.externalReservedBytes(lane: "gps-delivery")
+        XCTAssertEqual(reserved, 101)
+        do { try await box.enqueue(original); XCTFail("reservation must consume lane capacity") } catch {}
+        try await box.setExternalReservation(lane: "gps-delivery", key: "location", bytes: 0)
+        let released = try await box.externalReservedBytes(lane: "gps-delivery")
+        XCTAssertEqual(released, 0)
+        try await box.enqueue(original)
+        try await box.enqueue(original)
     }
 }

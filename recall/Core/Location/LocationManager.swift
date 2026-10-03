@@ -377,7 +377,9 @@ final class LocationManager: NSObject {
                     recordNetworkError(detail)
                 }
                 let sample = LocationSample(from: location, quality: quality, fixId: lastGoodFixId)
-                await LocationQueue.shared.enqueue(sample)
+                if !(await LocationQueue.shared.enqueue(sample)) {
+                    ActivityLogger.shared.log(.telemetry, "location queue admission rejected")
+                }
                 totalQueuedBackgroundSends += 1
                 lastSentLocation = location
                 noteSendTime()
@@ -870,7 +872,9 @@ final class LocationManager: NSObject {
                         self.recordNetworkError(detail)
                     }
                     let sample = LocationSample(from: location, quality: quality, fixId: lastGoodFixId)
-                    await LocationQueue.shared.enqueue(sample)
+                    if !(await LocationQueue.shared.enqueue(sample)) {
+                        ActivityLogger.shared.log(.telemetry, "location queue admission rejected")
+                    }
                     self.totalQueuedBackgroundSends += 1
                     self.lastSentLocation = location
                     self.noteSendTime()

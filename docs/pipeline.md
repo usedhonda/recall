@@ -113,9 +113,11 @@ policy belongs to VoiceLog; do not infer it from this client's defaults.
 
 ## 5. VoiceLog contract (Mac mini)
 
-The independent Hub producer foundation and its remaining activation boundaries
-are documented in [hub-producer.md](hub-producer.md). It does not replace the
-runtime paths described below until per-route admission is verified.
+The independent Hub producer foundation, opt-in runtime adapters, private
+provisioning and remaining acceptance boundaries are documented in
+[hub-producer.md](hub-producer.md). Audio release requires matching storage and
+durable Hub STT intent receipts. Existing routes below remain the reaction owners
+until per-route consumer evidence authorizes their synchronized cutover.
 
 recall uploads audio chunks to the VoiceLog server on the Mac mini (Tailscale peer).
 VoiceLog is an independent service at `~/projects/Mac/voicelog/`.

@@ -140,9 +140,10 @@ final class MediaImporter {
         longitude: Double? = nil,
         modelContext: ModelContext
     ) async throws -> MediaChunk? {
-        guard await OriginalCapacity.shared.canImportGlasses(bytes: Int64(data.count)) else {
+        guard let reservation = await OriginalCapacity.shared.reserveGlasses(Int64(data.count)) else {
             throw ImportError.copyFailed("glasses source capacity exhausted")
         }
+        defer { OriginalCapacity.shared.releaseGlasses(reservation) }
         // Stable, namespaced dedup key — identical across re-deliveries of the same
         // shutter event, so a re-drop dedupes instead of double-importing.
         let stableId = "dat:\(captureId)"

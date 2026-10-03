@@ -17,7 +17,10 @@ actor ChunkFileManager {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         let name = formatter.string(from: startedAt) + ".caf"
-        return chunksDirectory.appendingPathComponent(name)
+        let preferred = chunksDirectory.appendingPathComponent(name)
+        if !FileManager.default.fileExists(atPath: preferred.path) { return preferred }
+        // A same-second or resumed chunk must never overwrite an unACKed original.
+        return chunksDirectory.appendingPathComponent(formatter.string(from: startedAt) + "_" + UUID().uuidString.lowercased() + ".caf")
     }
 
     func deleteChunk(at path: String) throws {

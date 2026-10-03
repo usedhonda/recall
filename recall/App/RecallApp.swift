@@ -24,6 +24,9 @@ struct RecallApp: App {
             ContentView()
                 .environment(recordingViewModel)
                 .task {
+                    do { try HubProvisioning.shared.loadAndImport() }
+                    catch { ActivityLogger.shared.log(.error, "Hub private configuration unavailable; active routes remain protected") }
+                    HubDeliveryService.shared.start()
                     recordingViewModel.setModelContainer(sharedModelContainer)
                     if !LaunchContext.launchedInBackground {
                         LaunchContext.markUserForeground()

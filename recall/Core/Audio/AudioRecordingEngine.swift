@@ -50,6 +50,7 @@ final class AudioRecordingEngine {
     private var currentWriter: ChunkWriter?
     private var currentChunkURL: URL?
     private var currentChunkStartedAt: Date?
+    private var audioReservationToken: UUID?
     private var chunkSampleTime: CMTime = .zero
     private var segmentBuffer: [Float] = []
 
@@ -560,6 +561,7 @@ final class AudioRecordingEngine {
             logger.info("Voice detected, starting recording")
             activity.log(.vad, "Voice detected — RMS=\(String(format: "%.3f", currentRMS)) VAD=\(String(format: "%.2f", vadProbability))")
             await startNewChunk()
+            guard currentWriter != nil else { return }
             state = .recording
             activity.log(.state, "Recording started")
 
@@ -605,7 +607,7 @@ final class AudioRecordingEngine {
     // MARK: - Chunk Lifecycle
 
     private func startNewChunk() async {
-        guard await OriginalCapacity.shared.canStartAudioChunk() else {
+        guard let reservation = await OriginalCapacity.shared.reserveAudioChunk() else {
             activity.log(.state, "Audio capture paused: source capacity exhausted")
             return
         }
@@ -618,10 +620,12 @@ final class AudioRecordingEngine {
         do {
             try writer.start()
         } catch {
+            OriginalCapacity.shared.releaseAudioChunk(reservation)
             logger.error("Failed to start chunk writer: \(error.localizedDescription)")
             return
         }
 
+        audioReservationToken = reservation
         currentWriter = writer
         currentChunkURL = url
         currentChunkStartedAt = effectiveStart
@@ -776,6 +780,12 @@ final class AudioRecordingEngine {
             return
         }
 
+        guard let reservation = await OriginalCapacity.shared.reserveAudioChunk() else {
+            activity.log(.state, "Pending audio flush deferred: source capacity exhausted")
+            return
+        }
+        defer { OriginalCapacity.shared.releaseAudioChunk(reservation) }
+
         let url = await chunkFileManager.generateChunkURL(startedAt: pendingStart)
         let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate)
         do {
@@ -824,6 +834,10 @@ final class AudioRecordingEngine {
     }
 
     private func cleanupCurrentChunkState() {
+        if let token = audioReservationToken {
+            audioReservationToken = nil
+            OriginalCapacity.shared.releaseAudioChunk(token)
+        }
         currentWriter = nil
         currentChunkURL = nil
         currentChunkStartedAt = nil

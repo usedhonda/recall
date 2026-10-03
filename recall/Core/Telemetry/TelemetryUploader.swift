@@ -212,7 +212,8 @@ final class TelemetryUploader: NSObject {
                 ) { hubIDs[sample.id] = externalID }
             }
             for externalID in hubIDs.values {
-                hubAcked = hubAcked && (try await HubDeliveryService.shared.isAcknowledged(externalID: externalID))
+                let acknowledged = try await HubDeliveryService.shared.isAcknowledged(externalID: externalID)
+                hubAcked = hubAcked && acknowledged
             }
             if !hubAcked { TelemetryUploader.log("GPS Hub admission pending samples=\(samples.count)") }
         } catch {
@@ -237,6 +238,21 @@ final class TelemetryUploader: NSObject {
             TelemetryUploader.log("triggerUpload NO_CONFIG re-queued=\(samples.count)")
             return
         }
+        var legacySamples: [LocationSample] = []
+        for sample in samples where !(await LocationQueue.shared.legacyDelivered(sample.id)) {
+            legacySamples.append(sample)
+        }
+        if legacySamples.isEmpty {
+            if hubIDs.isEmpty {
+                await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
+                return
+            }
+            if !hubIDs.isEmpty && !hubAcked { return }
+            if !hubIDs.isEmpty && hubAcked {
+                await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
+            }
+            return
+        }
 
         // Query health data to piggyback on location upload
         var health = await queryHealthForBackground()
@@ -249,16 +265,13 @@ final class TelemetryUploader: NSObject {
                     payload: healthPayload
                 )
                 if !HubTelemetryAdmission.legacyAllowed(.healthSnapshot) {
-                    guard let externalID,
-                          try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else {
-                        TelemetryUploader.log("health Hub admission pending")
-                        return
-                    }
+                    // The durable Health outbox continues independently of this GPS batch.
+                    _ = externalID
                     health = nil
                 }
             } catch {
                 TelemetryUploader.log("health Hub admission failed")
-                return
+                health = nil
             }
         }
         if let snapshot = await MainActor.run(body: { TelemetryService.shared.nowPlayingManager.snapshot }) {
@@ -286,12 +299,16 @@ final class TelemetryUploader: NSObject {
 
         do {
             try await uploadImmediate(
-                samples: samples,
+                samples: legacySamples,
                 healthPayload: health,
                 serverURL: settings.telemetryServerURL,
                 token: token
             )
-            TelemetryUploader.log("laneA OK samples=\(samples.count) health=\(health != nil)")
+            guard await LocationQueue.shared.markLegacyDelivered(Set(legacySamples.map(\.id))) else {
+                TelemetryUploader.log("legacy delivery recorded failure; queue retained")
+                return
+            }
+            TelemetryUploader.log("laneA OK samples=\(legacySamples.count) health=\(health != nil)")
             await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
             lastUploadTime = Date()
             lastUploadResult = "success"
@@ -300,8 +317,12 @@ final class TelemetryUploader: NSObject {
             TelemetryUploader.log("laneA FAIL \(detail) -> laneB")
             lastUploadResult = "error: \(detail)"
             do {
-                try await upload(samples: samples, healthPayload: health)
-                TelemetryUploader.log("laneB OK samples=\(samples.count)")
+                try await upload(samples: legacySamples, healthPayload: health)
+                guard await LocationQueue.shared.markLegacyDelivered(Set(legacySamples.map(\.id))) else {
+                    TelemetryUploader.log("legacy delivery recorded failure; queue retained")
+                    return
+                }
+                TelemetryUploader.log("laneB OK samples=\(legacySamples.count)")
                 if hubIDs.isEmpty || hubAcked { await LocationQueue.shared.remove(ids: Set(samples.map(\.id))) }
             } catch {
                 let detail2 = error.localizedDescription

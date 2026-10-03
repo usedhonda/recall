@@ -1,9 +1,9 @@
 # Audio source payload and clock provenance
 
-Code snapshot: Recall `1159b99`. The Hub foundation `945a04b` implements generic
-envelope/receipt/outbox/transport primitives, not an adopted audio field partition
-or runtime producer adapter. The following separates current code from a proposed
-partition. It is not audio route acceptance or an A/B release decision.
+Legacy provenance was established at Recall `1159b99`. The opt-in runtime now
+freezes persisted source observations and explicit unknown capture evidence;
+this is not device deployment or consumer acceptance. The selected release
+contract is original storage plus durable Hub STT intent, not a pending A/B choice.
 
 ## Current multipart fields
 
@@ -52,7 +52,7 @@ creation time, and Hub receipt time must not substitute for capture end or
 authorize a fresh-conversation notification. Any future clock estimate needs
 an explicit basis, uncertainty/unknown state, and processing-owner acceptance.
 
-## Proposed partition — not yet implemented
+## Opt-in archive partition — not yet route-accepted
 
 - Freeze persisted chunk observations, canonical identity, bytes, and complete
   envelope before first admission; retries must not reread mutable settings.
@@ -65,8 +65,8 @@ an explicit basis, uncertainty/unknown state, and processing-owner acceptance.
 - Do not invent capture-end values for existing chunks. Establish sample-span
   provenance before making a new capture-clock guarantee.
 
-The current Hub decision authority is `docs/contracts/audio-dispatch-boundary.md`
-in its repository (owner-reported commit `437284e`); its producer profile is
+The current Hub decision authority is `docs/contracts/audio-platform-completion.md`
+and `stt-jobs.md` in its repository; its producer profile is
 `docs/contracts/recall-producer-v1.md`. The VoiceLog integration owner has now
 acknowledged API/queue/worker/dispatch-ledger responsibility. That ownership
 acknowledgement does not prove a processing inbox, complete merge-parent linkage,

@@ -44,6 +44,7 @@ final class UploadManager {
         activity.log(.upload, "Upload queue started (server: \(serverURL.isEmpty ? "NOT SET" : serverURL))")
 
         processingTask = Task { [weak self] in
+            await self?.cleanupHubAckedFiles(modelContext: modelContext)
             await self?.reconcileUploadState(modelContext: modelContext)
             await self?.processLoop(modelContext: modelContext)
         }
@@ -133,7 +134,6 @@ final class UploadManager {
     private func processLoop(modelContext: ModelContext) async {
         while shouldContinue, !Task.isCancelled {
             await reconcileUploadState(modelContext: modelContext)
-            await reconcileHubAcknowledgements(modelContext: modelContext)
 
             // Check connectivity
             guard ConnectivityMonitor.shared.canUploadAudio else {
@@ -193,7 +193,7 @@ final class UploadManager {
             }
 
             // Skip trivially short chunks (< 1.0s) — poor Whisper quality
-            if chunk.duration < 1.0 {
+            if chunk.duration < 1.0 && chunk.hubExternalID == nil {
                 Self.logger.info("Skipping short chunk: \(chunk.fileName) (\(chunk.duration, format: .fixed(precision: 1))s < 1.0s)")
                 activity.log(.upload, "Skipped short chunk \(chunk.fileName) (\(String(format: "%.1f", chunk.duration))s)")
                 markDiscarded(chunk, reason: .short)
@@ -211,7 +211,7 @@ final class UploadManager {
             // An average can hide one word inside half a minute of quiet, so the peak
             // decides: unless no single frame of the whole chunk ever came near speech,
             // it is uploaded and the server judges it.
-            if chunk.maxVadProb < 0.30 && chunk.maxContinuousVoiceMs < 200 && chunk.voiceFrameRatio < 0.05 {
+            if chunk.hubExternalID == nil && chunk.maxVadProb < 0.30 && chunk.maxContinuousVoiceMs < 200 && chunk.voiceFrameRatio < 0.05 {
                 Self.logger.info("Skipping noise chunk: \(chunk.fileName) (mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(chunk.voiceFrameRatio, format: .fixed(precision: 2)))")
                 activity.log(.upload, "Deleted silent chunk \(chunk.fileName) (peak=\(String(format: "%.2f", chunk.maxVadProb)) mcv=\(chunk.maxContinuousVoiceMs)ms vfr=\(String(format: "%.2f", chunk.voiceFrameRatio)))")
                 markDiscarded(chunk, reason: .noise)
@@ -222,7 +222,7 @@ final class UploadManager {
             }
 
             // Check backoff for previously failed attempts
-            if chunk.uploadAttempts > 0, let lastAttempt = chunk.lastUploadAttempt {
+            if !HubDeliveryService.shared.isEnabled(.audioOriginal), chunk.uploadAttempts > 0, let lastAttempt = chunk.lastUploadAttempt {
                 let backoff = min(pow(2.0, Double(chunk.uploadAttempts)), Self.maxBackoffSeconds)
                 let elapsed = Date().timeIntervalSince(lastAttempt)
                 if elapsed < backoff {
@@ -240,7 +240,11 @@ final class UploadManager {
         uploadProgress = ""
     }
 
-    private func uploadChunk(_ chunk: AudioChunk, modelContext: ModelContext) async {
+    private func uploadChunk(_ chunk: AudioChunk, modelContext: ModelContext, preserveForHub: Bool = false) async {
+        if HubDeliveryService.shared.isEnabled(.audioOriginal) && !preserveForHub {
+            await uploadHubOriginal(chunk, context: modelContext)
+            return
+        }
         let settings = AppSettings.shared
         guard let baseURL = URL(string: settings.uploadServerURL),
               let scheme = baseURL.scheme?.lowercased(),
@@ -319,22 +323,6 @@ final class UploadManager {
         chunk.lastUploadAttempt = Date()
         try? modelContext.save()
 
-        // Immutable source admission is independent from legacy transcript delivery.
-        // Keep the original on disk until Hub acknowledges it.
-        await admitAudioOriginalIfNeeded(chunk, data: try? Data(contentsOf: fileURL), settings: settings, modelContext: modelContext)
-        if HubDeliveryService.shared.legacyDisabled(.audioOriginal) {
-            await acknowledgeAudioOriginalIfPossible(chunk, modelContext: modelContext)
-            if chunk.hubAcknowledgedAt != nil {
-                markUploaded(chunk, at: Date())
-                try? modelContext.save()
-                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
-            } else {
-                chunk.uploadStatus = .pending
-                try? modelContext.save()
-            }
-            return
-        }
-
         // Always use foreground session — recall's audio background mode keeps
         // the process alive, so background URLSession is unnecessary and adds
         // failure modes (ATS edge cases, stuck tasks, delegate timing).
@@ -349,14 +337,15 @@ final class UploadManager {
                 metadata: metadata
             )
 
-            markUploaded(chunk, at: Date())
-            chunk.legacyUploadedAt = Date()
-            try? modelContext.save()
-
-            await acknowledgeAudioOriginalIfPossible(chunk, modelContext: modelContext)
-            if chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.audioOriginal) {
-                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+            if preserveForHub {
+                chunk.legacyUploadedAt = Date()
+                chunk.uploadStatus = .pending
+                chunk.uploadedAt = nil
+            } else {
+                markUploaded(chunk, at: Date())
             }
+            try modelContext.save()
+            if !preserveForHub { try await ChunkFileManager.shared.deleteChunk(at: chunk.filePath) }
 
             refreshCounts(modelContext: modelContext)
             uploadProgress = "Uploaded \(chunk.fileName)"
@@ -387,54 +376,85 @@ final class UploadManager {
         }
     }
 
-    private func admitAudioOriginalIfNeeded(_ chunk: AudioChunk, data: Data?, settings: AppSettings, modelContext: ModelContext) async {
-        guard chunk.hubExternalID == nil,
-              HubDeliveryService.shared.isEnabled(.audioOriginal),
-              let data else { return }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let payload: [String: String] = [
-            "device_id": settings.deviceId,
-            "file_name": chunk.fileName,
-            "started_at": formatter.string(from: chunk.startedAt),
-            "duration_sec": String(format: "%.3f", chunk.duration),
-            "source": "recall_audio"
-        ]
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else { return }
+    /// Storage and legacy processing are separate durable outcomes.
+    private func uploadHubOriginal(_ chunk: AudioChunk, context: ModelContext) async {
+        let hub = HubDeliveryService.shared
         do {
-            let externalID = try await HubDeliveryService.shared.admit(
-                route: .audioOriginal, observationID: chunk.id.uuidString, occurredAt: chunk.startedAt,
-                timeBasis: "capture", sourcePayloadJSON: jsonData, originalBytes: data)
-            chunk.hubExternalID = externalID
-            chunk.hubAdmittedAt = Date()
-            try? modelContext.save()
-            activity.log(.upload, "Hub admitted audio \(chunk.fileName) -> \(externalID)")
-        } catch {
-            activity.log(.error, "Hub audio admission pending \(chunk.fileName): \(error.localizedDescription)")
-        }
-    }
-
-    private func acknowledgeAudioOriginalIfPossible(_ chunk: AudioChunk, modelContext: ModelContext) async {
-        guard let externalID = chunk.hubExternalID, chunk.hubAcknowledgedAt == nil else { return }
-        do {
-            if try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) {
-                chunk.hubAcknowledgedAt = Date()
-                try? modelContext.save()
+            if chunk.hubAcknowledgedAt == nil {
+                if chunk.hubExternalID == nil {
+                    let bytes = try Data(contentsOf: URL(fileURLWithPath: chunk.filePath))
+                    guard !bytes.isEmpty else {
+                        await hub.recordGap(route: .audioOriginal, reason: "empty_original")
+                        return
+                    }
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime]
+                    var payload: [String: String] = [
+                        "device_id": AppSettings.shared.deviceId,
+                        "started_at": formatter.string(from: chunk.startedAt),
+                        "chunk_start_utc": formatter.string(from: chunk.startedAt),
+                        "duration_sec": String(chunk.duration),
+                        "capture_time_known": "false", "capture_end_known": "false",
+                        "capture_time_basis": "chunk_start_wall_clock_with_prepended_samples",
+                        "duration_basis": "written_samples_divided_by_sample_rate",
+                        "max_continuous_voice_ms": String(chunk.maxContinuousVoiceMs),
+                        "voice_frame_ratio": String(format: "%.4f", chunk.voiceFrameRatio),
+                        "max_vad_prob": String(format: "%.4f", chunk.maxVadProb)
+                    ]
+                    if chunk.avgRMS > 0 { payload["avg_rms"] = String(format: "%.6f", chunk.avgRMS) }
+                    if chunk.vadAvgProb > 0 { payload["vad_avg_prob"] = String(format: "%.4f", chunk.vadAvgProb) }
+                    if chunk.noiseFloorRMS > 0 { payload["noise_floor_rms"] = String(format: "%.6f", chunk.noiseFloorRMS) }
+                    chunk.hubExternalID = try await hub.admit(route: .audioOriginal,
+                        observationID: chunk.id.uuidString.lowercased(), occurredAt: chunk.startedAt,
+                        timeBasis: "chunk_start_utc", sourcePayloadJSON: JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+                        originalBytes: bytes)
+                    chunk.hubAdmittedAt = Date()
+                    try context.save()
+                }
+                if let id = chunk.hubExternalID, try await hub.isAcknowledged(externalID: id) {
+                    chunk.hubAcknowledgedAt = Date()
+                    try context.save()
+                }
+            }
+            // Expiration only suppresses stale legacy reactions, never storage.
+            let fresh = Date().timeIntervalSince(chunk.startedAt) <= Self.maxChunkAgeSeconds
+            if !hub.legacyDisabled(.audioOriginal) && fresh && chunk.legacyUploadedAt == nil {
+                await uploadChunk(chunk, modelContext: context, preserveForHub: true)
+            }
+            if chunk.hubAcknowledgedAt != nil &&
+                (hub.legacyDisabled(.audioOriginal) || !fresh || chunk.legacyUploadedAt != nil) {
+                markUploaded(chunk, at: Date())
+                try context.save()
+                try await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
             }
         } catch {
-            activity.log(.upload, "Hub audio acknowledgement pending \(chunk.fileName)")
+            chunk.uploadStatus = .failed
+            chunk.uploadedAt = nil
+            chunk.lastUploadAttempt = Date()
+            chunk.uploadAttempts += 1
+            try? context.save()
+            await hub.recordGap(route: .audioOriginal, reason: "original_delivery_failed")
         }
+        // Let other originals enter the durable outbox; never busy-loop one item.
+        chunk.lastUploadAttempt = Date()
+        chunk.uploadAttempts = max(1, chunk.uploadAttempts)
+        try? context.save()
+        refreshCounts(modelContext: context)
+        try? await Task.sleep(for: .seconds(1))
     }
 
-    private func reconcileHubAcknowledgements(modelContext: ModelContext) async {
-        let uploaded = AudioChunk.UploadStatus.uploaded.rawValue
-        let descriptor = FetchDescriptor<AudioChunk>(predicate: #Predicate { $0.uploadStatusRaw == uploaded && $0.hubExternalID != nil && $0.hubAcknowledgedAt == nil })
+    /// Crash recovery: a durable ACK may have been saved immediately before a
+    /// process kill, leaving the local file behind. Delete only after both the
+    /// ACK and the model state are durable.
+    private func cleanupHubAckedFiles(modelContext: ModelContext) async {
+        let uploadedRaw = AudioChunk.UploadStatus.uploaded.rawValue
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: #Predicate {
+            $0.hubAcknowledgedAt != nil && $0.uploadStatusRaw == uploadedRaw
+        })
         guard let chunks = try? modelContext.fetch(descriptor) else { return }
         for chunk in chunks {
-            await acknowledgeAudioOriginalIfPossible(chunk, modelContext: modelContext)
-            if chunk.hubAcknowledgedAt != nil {
-                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
-            }
+            guard FileManager.default.fileExists(atPath: chunk.filePath) else { continue }
+            try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
         }
     }
 
@@ -480,13 +500,15 @@ final class UploadManager {
         let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
         guard let stale = try? modelContext.fetch(descriptor), !stale.isEmpty else { return }
 
-        for chunk in stale where chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.audioOriginal) {
+        var dropped = 0
+        for chunk in stale where !HubDeliveryService.shared.isEnabled(.audioOriginal) {
             markDiscarded(chunk, reason: .expired)
             Task { try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath) }
+            dropped += 1
         }
         try? modelContext.save()
         refreshCounts(modelContext: modelContext)
-        activity.log(.upload, "Dropped \(stale.count) stale chunks (>10min old)")
+        if dropped > 0 { activity.log(.upload, "Dropped \(dropped) stale chunks (>10min old)") }
     }
 
     // MARK: - Auto-Retry
@@ -507,7 +529,7 @@ final class UploadManager {
         var retried = 0
         var dropped = 0
         for chunk in failedChunks {
-            if chunk.uploadAttempts >= Self.maxUploadAttempts && (chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.audioOriginal)) {
+            if chunk.uploadAttempts >= Self.maxUploadAttempts && !HubDeliveryService.shared.isEnabled(.audioOriginal) {
                 // Permanently skip — too many failures
                 markDiscarded(chunk, reason: .retryExhausted)
                 activity.log(.upload, "Dropped after \(chunk.uploadAttempts) attempts: \(chunk.fileName)")
@@ -582,13 +604,14 @@ final class UploadManager {
 
     private func fetchNextPending(modelContext: ModelContext) -> AudioChunk? {
         let pending = AudioChunk.UploadStatus.pending.rawValue
-        let predicate = #Predicate<AudioChunk> { $0.uploadStatusRaw == pending }
-        var descriptor = FetchDescriptor<AudioChunk>(
-            predicate: predicate,
-            sortBy: [SortDescriptor(\.startedAt, order: .forward)]
-        )
+        let hubEnabled = HubDeliveryService.shared.isEnabled(.audioOriginal)
+        let retryBefore = hubEnabled ? Date().addingTimeInterval(-5) : Date.distantFuture
+        let predicate = #Predicate<AudioChunk> {
+            $0.uploadStatusRaw == pending && ($0.lastUploadAttempt == nil || $0.lastUploadAttempt! < retryBefore)
+        }
+        var descriptor = FetchDescriptor<AudioChunk>(predicate: predicate,
+            sortBy: hubEnabled ? [SortDescriptor(\.lastUploadAttempt, order: .forward)] : [SortDescriptor(\.startedAt, order: .forward)])
         descriptor.fetchLimit = 1
-
         return try? modelContext.fetch(descriptor).first
     }
 

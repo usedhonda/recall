@@ -162,7 +162,10 @@ final class TelemetryService {
     // MARK: - Background Location Queue + Upload
 
     func queueAndUploadBackground(_ sample: LocationSample) async {
-        await LocationQueue.shared.enqueue(sample)
+        guard await LocationQueue.shared.enqueue(sample) else {
+            ActivityLogger.shared.log(.telemetry, "GPS queue admission rejected; not stored")
+            return
+        }
         await TelemetryUploader.shared.triggerUpload()
     }
 

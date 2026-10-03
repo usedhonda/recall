@@ -52,7 +52,10 @@ actor HubDurableOutbox {
         do {
             sqlite3_busy_timeout(db, 1_000)
             try execute("PRAGMA synchronous=FULL")
-            try execute("CREATE TABLE IF NOT EXISTS hub_outbox_v1 (id TEXT PRIMARY KEY, lane TEXT NOT NULL, body BLOB, body_hash TEXT NOT NULL, original_hash TEXT NOT NULL, original_bytes INTEGER NOT NULL, state INTEGER NOT NULL DEFAULT 0, lease_until REAL NOT NULL DEFAULT 0, receipt BLOB)")
+            try execute("CREATE TABLE IF NOT EXISTS hub_outbox_v1 (id TEXT PRIMARY KEY, lane TEXT NOT NULL, body BLOB, body_hash TEXT NOT NULL, original_hash TEXT NOT NULL, original_bytes INTEGER NOT NULL, state INTEGER NOT NULL DEFAULT 0, lease_until REAL NOT NULL DEFAULT 0, receipt BLOB, processing_receipt BLOB)")
+            try execute("CREATE TABLE IF NOT EXISTS hub_reservations_v1 (lane TEXT NOT NULL, reservation_key TEXT NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(lane,reservation_key))")
+            try migrateProcessingReceiptColumn()
+            try execute("CREATE TABLE IF NOT EXISTS hub_gaps_v1 (lane TEXT NOT NULL, reason TEXT NOT NULL, first_at REAL NOT NULL, last_at REAL NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(lane,reason))")
         } catch {
             sqlite3_close(handle)
             throw error
@@ -63,7 +66,7 @@ actor HubDurableOutbox {
 
     /// Same ID and bytes is a retry, including after ACK. Different immutable
     /// bytes conflict. Reserve a receipt slot now so ACK cannot exhaust it later.
-    func enqueue(_ envelope: HubProducerEnvelope) throws {
+    func enqueue(_ envelope: HubProducerEnvelope, externalOriginalBytes: Int64 = 0) throws {
         let lane = lane(for: envelope.route)
         guard let budget = budgets[lane] else { throw Failure.invalidBudget }
         guard envelope.source == "recall", !envelope.externalID.isEmpty,
@@ -78,13 +81,19 @@ actor HubDurableOutbox {
                       existing.originalBytes == envelope.originalByteLength else { throw Failure.immutableConflict }
                 return
             }
-            let used = try scalar("SELECT COALESCE(SUM(length(body)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+            // Reserve one SQLite page per retained identity/receipt in addition
+            // to actual JSON bytes. ACK cannot consume an unreserved receipt slot.
+            let used = try scalar("SELECT COALESCE(SUM(COALESCE(length(body),0)+4096),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+            let reservations = try scalar("SELECT COALESCE(SUM(bytes),0) FROM hub_reservations_v1 WHERE lane=?", [.text(lane)])
             let pending = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=? AND state!=2", [.text(lane)])
             let reserved = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
-            let bytes = Int64(envelope.encodedJSON.count)
+            let bytes = Int64(envelope.encodedJSON.count) + 4096
             let originalBytes = Int64(envelope.originalByteLength)
             let usedOriginal = try scalar("SELECT COALESCE(SUM(CASE WHEN state!=2 THEN original_bytes ELSE 0 END),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
-            guard bytes <= budget.maxBytes, used <= budget.maxBytes - bytes,
+            guard externalOriginalBytes >= 0, externalOriginalBytes <= budget.maxBytes,
+                  bytes <= budget.maxBytes - externalOriginalBytes,
+                  reservations <= budget.maxBytes - externalOriginalBytes - bytes,
+                  used <= budget.maxBytes - externalOriginalBytes - bytes - reservations,
                   originalBytes <= budget.maxOriginalBytes,
                   usedOriginal <= budget.maxOriginalBytes - originalBytes,
                   pending < budget.maxItems else { throw Failure.laneFull }
@@ -139,8 +148,35 @@ actor HubDurableOutbox {
             let prior = try record.receipt.map { try HubStorageReceipt.decode($0) }
             let receipt = try HubProducerContract.validateResponse(responseData: responseData,
                 expected: record.expected(externalID), boundEventID: prior?.eventID)
+            let processing: HubProcessingReceipt?
+            if record.lane == "audio-original" {
+                guard let processingObject = (try? JSONSerialization.jsonObject(with: responseData)) as? [String: Any],
+                      let processingValue = processingObject["processing_receipt"],
+                      let processingData = try? JSONSerialization.data(withJSONObject: processingValue) else {
+                    throw HubProducerError.invalidProcessingReceipt
+                }
+                processing = try HubProcessingReceipt.decode(processingData, expectedOriginalEventID: receipt.eventID)
+            } else {
+                processing = nil
+            }
             if let prior {
-                guard receipt == prior else { throw Failure.receiptMismatch }
+                let priorProcessing = record.processingReceipt.flatMap {
+                    try? HubProcessingReceipt.decode($0, expectedOriginalEventID: receipt.eventID)
+                }
+                let processingBindingMatches: Bool
+                if let priorProcessing, let processing {
+                    processingBindingMatches = priorProcessing.jobID == processing.jobID
+                        && priorProcessing.originalEventID == processing.originalEventID
+                        && priorProcessing.pipelineVersion == processing.pipelineVersion
+                } else {
+                    processingBindingMatches = priorProcessing == nil && processing == nil
+                }
+                guard receipt == prior, processingBindingMatches else { throw Failure.receiptMismatch }
+                if let processing, let priorProcessing,
+                   processing.state != priorProcessing.state {
+                    try execute("UPDATE hub_outbox_v1 SET processing_receipt=? WHERE id=?",
+                                [.blob(try JSONEncoder().encode(processing)), .text(externalID)])
+                }
                 return
             }
             let encoded = try JSONSerialization.data(withJSONObject: [
@@ -149,8 +185,15 @@ actor HubDurableOutbox {
                 "sha256": receipt.sha256.map { $0 as Any } ?? NSNull(),
                 "byte_length": receipt.byteLength, "ingest_sequence": receipt.ingestSequence
             ])
-            try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, lease_until=0 WHERE id=?",
-                        [.blob(encoded), .text(externalID)])
+            let processingEncoded = try processing.map { try JSONEncoder().encode($0) }
+            guard encoded.count + (processingEncoded?.count ?? 0) <= 3072 else { throw Failure.receiptMismatch }
+            if let processingEncoded {
+                try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, processing_receipt=?, lease_until=0 WHERE id=?",
+                            [.blob(encoded), .blob(processingEncoded), .text(externalID)])
+            } else {
+                try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, lease_until=0 WHERE id=?",
+                            [.blob(encoded), .text(externalID)])
+            }
         }
     }
 
@@ -158,8 +201,61 @@ actor HubDurableOutbox {
         try scalar("SELECT COALESCE(SUM(length(body)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
     }
 
+    /// Atomically reserve/release bytes owned by a producer outside this actor.
+    /// A zero reservation removes the key. Existing outbox rows remain untouched.
+    func setExternalReservation(lane: String, key: String, bytes: Int64) throws {
+        guard let budget = budgets[lane], !key.isEmpty, key.utf8.count <= 256, bytes >= 0 else {
+            throw Failure.invalidEnvelope
+        }
+        try transaction {
+            if bytes == 0 {
+                try execute("DELETE FROM hub_reservations_v1 WHERE lane=? AND reservation_key=?", [.text(lane), .text(key)])
+                return
+            }
+            let retained = try scalar("SELECT COALESCE(SUM(COALESCE(length(body),0)+4096),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+            let other = try scalar("SELECT COALESCE(SUM(bytes),0) FROM hub_reservations_v1 WHERE lane=? AND reservation_key<>?", [.text(lane), .text(key)])
+            guard bytes <= budget.maxBytes, retained <= budget.maxBytes - other - bytes else { throw Failure.laneFull }
+            try execute("INSERT INTO hub_reservations_v1(lane,reservation_key,bytes) VALUES(?,?,?) ON CONFLICT(lane,reservation_key) DO UPDATE SET bytes=excluded.bytes", [.text(lane), .text(key), .int(bytes)])
+        }
+    }
+
+    func externalReservedBytes(lane: String) throws -> Int64 {
+        try scalar("SELECT COALESCE(SUM(bytes),0) FROM hub_reservations_v1 WHERE lane=?", [.text(lane)])
+    }
+
+    func retainedBytes(lane: String) throws -> Int64 {
+        try scalar("SELECT COALESCE(SUM(COALESCE(length(body),0)+4096),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+    }
+
+    func contains(externalID: String) throws -> Bool { try row(externalID) != nil }
+
+    func matchesOriginal(externalID: String, sha256: String?, byteLength: Int) throws -> Bool {
+        guard let record = try row(externalID) else { return false }
+        return record.originalHash == sha256 && record.originalBytes == byteLength
+    }
+
+    /// Bounded body-free gap aggregation uses the independent control reserve.
+    /// At most 128 fixed route/reason pairs; full/corrupt/disk failures propagate.
+    func recordGap(lane: String, reason: String, at: Date = Date()) throws {
+        guard lane.utf8.count <= 64, reason.utf8.count <= 64 else { throw Failure.invalidEnvelope }
+        try transaction {
+            let present = try scalar("SELECT COUNT(*) FROM hub_gaps_v1 WHERE lane=? AND reason=?", [.text(lane), .text(reason)])
+            if present == 0 {
+                guard try scalar("SELECT COUNT(*) FROM hub_gaps_v1", []) < 128 else { throw Failure.receiptSlotsFull }
+            }
+            try execute("INSERT INTO hub_gaps_v1 VALUES(?,?,?,?,1) ON CONFLICT(lane,reason) DO UPDATE SET last_at=excluded.last_at,count=count+1",
+                        [.text(lane), .text(reason), .double(at.timeIntervalSince1970), .double(at.timeIntervalSince1970)])
+        }
+    }
+
     func storedReceipt(externalID: String) throws -> HubStorageReceipt? {
-        try row(externalID)?.receipt.map { try HubStorageReceipt.decode($0) }
+        guard let record = try row(externalID), let receiptData = record.receipt else { return nil }
+        if record.lane == "audio-original" {
+            guard let processingData = record.processingReceipt,
+                  let storage = try? HubStorageReceipt.decode(receiptData),
+                  (try? HubProcessingReceipt.decode(processingData, expectedOriginalEventID: storage.eventID)) != nil else { return nil }
+        }
+        return try HubStorageReceipt.decode(receiptData)
     }
 
     private struct Record {
@@ -169,13 +265,14 @@ actor HubDurableOutbox {
         let originalHash: String?
         let originalBytes: Int
         let receipt: Data?
+        let processingReceipt: Data?
         func expected(_ id: String) -> HubExpectedStorageReceipt {
             HubExpectedStorageReceipt(source: "recall", externalID: id, sha256: originalHash, byteLength: originalBytes)
         }
     }
 
     private func row(_ id: String) throws -> Record? {
-        let statement = try prepare("SELECT lane,body,body_hash,original_hash,original_bytes,receipt,state FROM hub_outbox_v1 WHERE id=?", [.text(id)])
+        let statement = try prepare("SELECT lane,body,body_hash,original_hash,original_bytes,receipt,state,processing_receipt FROM hub_outbox_v1 WHERE id=?", [.text(id)])
         defer { sqlite3_finalize(statement) }
         guard try step(statement) == SQLITE_ROW else { return nil }
         let hash = try textColumn(statement, 3)
@@ -184,11 +281,22 @@ actor HubDurableOutbox {
         let body = blobColumn(statement, 1)
         let receipt = blobColumn(statement, 5)
         let state = sqlite3_column_int(statement, 6)
+        let processingReceipt = blobColumn(statement, 7)
         guard (state == 2 && body == nil && receipt != nil) ||
               ((state == 0 || state == 1) && body != nil && receipt == nil) else { throw Failure.corruptRecord }
         return Record(lane: try textColumn(statement, 0), body: body,
                       bodyHash: try textColumn(statement, 2), originalHash: hash.isEmpty ? nil : hash,
-                      originalBytes: byteCount, receipt: receipt)
+                      originalBytes: byteCount, receipt: receipt, processingReceipt: processingReceipt)
+    }
+
+    private func migrateProcessingReceiptColumn() throws {
+        let statement = try prepare("PRAGMA table_info(hub_outbox_v1)")
+        defer { sqlite3_finalize(statement) }
+        var found = false
+        while try step(statement) == SQLITE_ROW {
+            if let name = sqlite3_column_text(statement, 1), String(cString: name) == "processing_receipt" { found = true }
+        }
+        if !found { try execute("ALTER TABLE hub_outbox_v1 ADD COLUMN processing_receipt BLOB") }
     }
 
     private func transaction<T>(_ operation: () throws -> T) throws -> T {

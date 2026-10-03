@@ -1,8 +1,9 @@
 # Hub producer adoption
 
-This document describes the producer foundation, not a completed migration.
-Existing runtime upload and telemetry paths remain unchanged until each route
-has a configured budget, private provisioning, and consumer acceptance.
+This document describes the producer foundation and opt-in runtime integration,
+not a completed migration. No device provisioning or natural route acceptance
+is established by this document. Legacy delivery remains enabled until each
+route has consumer acceptance and an explicit cutover configuration.
 
 ## Storage contract
 
@@ -49,8 +50,10 @@ This preserves that input's numeric literals locally; it does not define a
 cross-language canonical JSON format. The complete encoded request is stored as
 a SQLite BLOB, returned unchanged by leasing, and assigned directly to HTTP
 body on retry. Rebuilding the envelope on retry is not the supported path.
-The runtime audio adapter that first supplies this payload is still absent;
-legacy audio multipart numeric fields are strings.
+The opt-in audio adapter freezes persisted chunk fields and explicit unknown
+capture evidence. It excludes mutable reaction/language commands and current
+location/timezone from archival audio observations. Legacy multipart numeric
+fields remain strings; the archive does not silently convert their types.
 
 Three hashes have different meanings: the outbox body fingerprint covers complete
 POST bytes, the original SHA-256 covers blob bytes, and the Hub content hash is
@@ -88,55 +91,64 @@ never from interpreting the event-content fingerprint.
 
 ## Capacity and activation boundaries
 
-Preserve the existing `storageCapMB` setting's audio-only meaning. It is not a
-shared metadata, glasses, or control budget. Its existing enforcement helper
-has no runtime caller; a configured setting is not proof of enforced admission.
-Count original bytes once, including existing retained audio and in-progress
-reservations. Do not delete unACKed originals to create capacity.
+Approved independent limits are GPS 32 MiB, Health aggregate snapshots 64 MiB,
+status 32 MiB, glasses 512 MiB and control 16 MiB. Audio retains the existing
+`storageCapMB` setting. Outbox bodies use their actual encoded byte length;
+each retained identity reserves 4096 bytes for receipt/fingerprint bookkeeping.
+Tombstones are not silently pruned. Full lanes reject new admissions and retain
+previous unACKed items. These logical limits are not measurements of SQLite
+page/journal overhead or a guarantee against physical disk exhaustion.
 
-Metadata lanes, glasses, and control records need explicit independent limits
-before activation. No zero or unlimited default is implied. Full audio must
-not stop GPS, Health, or status. A failed physical write must propagate failure;
-if a gap cannot be persisted, do not claim a durable gap record or successful
-admission. Logical queue accounting does not measure filesystem overhead,
-SQLite journals, temporary files, or original capture reservations.
+The audio writer start guard and exclusive writer token do not prove a maximum
+encoded-chunk reservation. That capture staging boundary remains unaccepted;
+do not activate audio based on the guard alone. Pending buffers are preserved
+when capacity prevents finalization. Glasses import reserves source bytes plus
+base64 expansion and metadata headroom before copying. Final outbox admission
+still checks the actual serialized envelope size, not an estimated raw limit.
 
-## Remaining integration
+Gap counters are bounded local control records. Failed admission or physical
+writes do not produce a receipt. If recording the gap also fails, logs explicitly
+say that the gap was not persisted. No lane borrows another lane's capacity.
 
-The Hub-owned `docs/contracts/audio-dispatch-boundary.md` is the current audio
-decision record. Direct ingress is storage-only. The device-release choice is
-pending: A releases after a durably bound storage receipt and requires a durable
-downstream consumer inbox; B waits for storage plus a separate processing-admission
-ACK from an adapter. Neither processing handoff is implemented or accepted.
-The old adapter ledger proposal is historical candidate B, not the current
-`POST /v1/events` response contract. Do not change audio deletion until the choice
-and route acceptance are established. Retained Hub history alone is not a durable
-processing inbox; recovery beyond that history's retention horizon is a gap.
+## Runtime and provisioning
 
-- Freeze and persist each route's actual source payload before first delivery.
-- Wire independent admission, capture backpressure, and recoverable gap reporting
-  using approved budgets; protect originals from legacy expiry/removal paths.
-- Provision a distinct Hub endpoint and Recall source token through a private
-  device configuration path. The existing Gateway QR/token is not this path.
-  This workflow belongs to Recall: the Hub has no device enrollment/Keychain
-  installer. Its operator-side capability preflight does not configure a device.
-  Never copy the complete Hub source policy to the device.
-- Start the outbox reconciler at app startup and during normal operation; keep
-  leased items until matching receipts are persisted.
-- Audio needs an owner-provided durable commit-to-dispatch bridge, stable legacy
-  recording ID, and deduplicated processing jobs. Do not replay expired reactions.
-  The VoiceLog integration owner has now acknowledged API/queue/worker/dispatch
-  ledger responsibility; that is not handoff acceptance. Preserve capture
-  start/end, ASR completion, and Hub receipt clocks separately. DB creation time
-  or Hub receipt time is not capture end and cannot trigger a fresh-conversation
-  notification. Legacy recording-ID mapping is required for candidate B; candidate
-  A instead requires a durable downstream inbox/checkpoint and job identity.
-  See [audio-source-provenance.md](audio-source-provenance.md) for the current
-  field origins and why `startedAt + duration` cannot establish capture end.
-- Prove each route using actual producer ID -> Hub receipt -> scoped MCP read ->
-  required consumer correlation, without publishing personal payload values.
-- Stop old delivery only after the consumer owner's synchronized per-route GO.
-  While parallel, Hub ingestion is store-only; legacy delivery owns reactions.
+`HubProvisioning` imports a private device-bound configuration into a dedicated
+Keychain item before producer startup. The configuration contains only Recall's
+source token, independent HTTPS endpoint, device identity, enabled routes and
+per-route legacy-disable latches. It never copies the Hub's full source policy
+or borrows Gateway authentication. A missing/unreadable credential does not
+clear previously activated route latches or restore disabled legacy delivery.
 
-No runtime route is accepted by compilation or unit tests alone. No retention,
-collection consent, visible UI, or existing delivery policy is changed here.
+`scripts/provision-hub.py --config <private-file> --device <device>` stages the
+mode-600 configuration without printing its contents. The app removes the import
+file only after exact Keychain read-back. Staging alone is not proof of import,
+authenticated transport, or route acceptance. Source-specific provisioning by
+the operator remains required; endpoint/token values never belong in this repo.
+
+`HubDeliveryService` runs independently leased lanes at startup and retries
+persisted request bytes. Original upload managers keep legacy delivery success
+separate from Hub receipts. Expired audio may be stored, but never restarts a
+legacy reaction after the existing ten-minute processing deadline. Restart
+cleanup deletes only files whose durable model state already establishes ACK
+and completed release, not merely a successful HTTP response.
+
+The selected audio contract is Hub `audio-platform-completion.md` and
+`stt-jobs.md`: Hub owns local STT for every admitted original. Device release
+requires both matching original storage receipt v1 and a durable processing
+intent receipt. The immutable job/original/pipeline binding is stored atomically
+with local ACK; mutable job state is not ASR success. This supersedes historical
+A/B alternatives; there is no outstanding user A/B or capacity question.
+Capture end remains unknown. `startedAt + duration`, DB creation, upload time,
+and Hub receive time cannot substitute for an actual capture end.
+
+## Remaining acceptance
+
+- Complete and prove original capture staging reservations before audio activation.
+- Import Recall-only private configuration and verify its device Keychain receipt.
+- Prove each route using natural producer ID -> verified Hub receipts -> scoped
+  MCP read -> required consumer correlation, without publishing personal values.
+- Verify Hub job binding/recovery and preserve capture uncertainty in consumers.
+- Stop each old delivery only after its consumer owner's synchronized GO.
+
+No runtime route is accepted by compilation or unit tests alone. Retention,
+collection consent, visible UI, and foreground/read-state behavior are unchanged.

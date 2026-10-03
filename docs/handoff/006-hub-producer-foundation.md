@@ -1,4 +1,7 @@
-# Hub producer foundation — not activated
+# Hub producer foundation — historical checkpoint
+
+Superseded for current implementation status by [007-hub-runtime-admission.md](007-hub-runtime-admission.md).
+The unresolved capacity/A-B questions below are historical and have been resolved.
 
 ## Implemented
 

@@ -123,6 +123,42 @@ struct HubStorageReceipt: Codable, Equatable, Sendable {
     }
 }
 
+struct HubProcessingReceipt: Codable, Equatable, Sendable {
+    enum State: String, Codable, Sendable { case pending, leased, completed, failed, expired }
+    let receiptVersion: Int
+    let intentCommitted: Bool
+    let jobID: String
+    let originalEventID: String
+    let pipelineVersion: String
+    let state: State
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case receiptVersion = "receipt_version"
+        case intentCommitted = "intent_committed"
+        case jobID = "job_id"
+        case originalEventID = "original_event_id"
+        case pipelineVersion = "pipeline_version"
+        case state
+    }
+
+    static func decode(_ data: Data, expectedOriginalEventID: String) throws -> HubProcessingReceipt {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any],
+              Set(dictionary.keys) == Set(CodingKeys.allCases.map(\.stringValue)),
+              isStrictInteger(dictionary["receipt_version"]),
+              isStrictBoolean(dictionary["intent_committed"]) else { throw HubProducerError.invalidProcessingReceipt }
+        let receipt: HubProcessingReceipt
+        do { receipt = try JSONDecoder().decode(HubProcessingReceipt.self, from: data) }
+        catch { throw HubProducerError.invalidProcessingReceipt }
+        guard receipt.receiptVersion == 1,
+              receipt.intentCommitted,
+              !receipt.jobID.isEmpty,
+              receipt.originalEventID == expectedOriginalEventID,
+              receipt.pipelineVersion == "local-stt-v1" else { throw HubProducerError.invalidProcessingReceipt }
+        return receipt
+    }
+}
+
 enum HubProducerError: Error, Equatable {
     case invalidSourcePayload
     case invalidRoute
@@ -139,6 +175,8 @@ enum HubProducerError: Error, Equatable {
     case receiptByteLengthMismatch
     case receiptEventIDMismatch
     case metadataReceiptForOriginal
+    case invalidProcessingReceipt
+    case processingReceiptMismatch
 }
 
 enum HubProducerContract {
@@ -241,6 +279,12 @@ private func isStrictInteger(_ value: Any?) -> Bool {
     guard let number = value as? NSNumber else { return false }
     let type = String(cString: number.objCType)
     return type == "i" || type == "q" || type == "s" || type == "l" || type == "I" || type == "Q" || type == "S" || type == "L"
+}
+
+private func isStrictBoolean(_ value: Any?) -> Bool {
+    guard let number = value as? NSNumber else { return false }
+    let type = String(cString: number.objCType)
+    return type == "c" || type == "B"
 }
 
 private extension ISO8601DateFormatter {

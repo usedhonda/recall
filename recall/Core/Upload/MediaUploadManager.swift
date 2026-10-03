@@ -41,6 +41,7 @@ final class MediaUploadManager {
         activity.log(.upload, "[media] queue started")
 
         processingTask = Task { [weak self] in
+            await self?.cleanupHubAckedFiles(modelContainer: modelContainer)
             await self?.processLoop(modelContainer: modelContainer)
         }
     }
@@ -62,7 +63,6 @@ final class MediaUploadManager {
             }
 
             refreshCounts(context: context)
-            await reconcileHubAcknowledgements(context: context)
             dropExpired(context: context)
 
             if consecutiveFailures >= 3 {
@@ -74,7 +74,7 @@ final class MediaUploadManager {
             }
 
             guard let chunk = fetchNextPending(context: context) else {
-                if pendingCount == 0 {
+                if pendingCount == 0 && !(HubDeliveryService.shared.isEnabled(.glassesOriginal) && failedCount > 0) {
                     isUploading = false
                     return
                 }
@@ -83,7 +83,7 @@ final class MediaUploadManager {
             }
 
             // Honor backoff for failed chunks
-            if chunk.uploadAttempts > 0, let last = chunk.lastUploadAttempt {
+            if !HubDeliveryService.shared.isEnabled(.glassesOriginal), chunk.uploadAttempts > 0, let last = chunk.lastUploadAttempt {
                 let backoff = min(pow(2.0, Double(chunk.uploadAttempts)), Self.maxBackoffSeconds)
                 let elapsed = Date().timeIntervalSince(last)
                 if elapsed < backoff {
@@ -97,7 +97,11 @@ final class MediaUploadManager {
         isUploading = false
     }
 
-    private func uploadChunk(_ chunk: MediaChunk, context: ModelContext) async {
+    private func uploadChunk(_ chunk: MediaChunk, context: ModelContext, preserveForHub: Bool = false) async {
+        if chunk.source == .glasses && HubDeliveryService.shared.isEnabled(.glassesOriginal) && !preserveForHub {
+            await uploadHubOriginal(chunk, context: context)
+            return
+        }
         let settings = AppSettings.shared
         guard let baseURL = URL(string: settings.uploadServerURL),
               let scheme = baseURL.scheme?.lowercased(),
@@ -140,21 +144,6 @@ final class MediaUploadManager {
         chunk.lastUploadAttempt = Date()
         try? context.save()
 
-        await admitGlassesOriginalIfNeeded(chunk, data: fileData, deviceId: settings.deviceId, context: context)
-        if chunk.source == .glasses, HubDeliveryService.shared.legacyDisabled(.glassesOriginal) {
-            await acknowledgeGlassesOriginalIfPossible(chunk, context: context)
-            if chunk.hubAcknowledgedAt != nil {
-                chunk.uploadStatus = .uploaded
-                chunk.uploadedAt = Date()
-                try? context.save()
-                try? FileManager.default.removeItem(at: fileURL)
-            } else {
-                chunk.uploadStatus = .pending
-                try? context.save()
-            }
-            return
-        }
-
         do {
             let metadataJSON = try JSONSerialization.data(withJSONObject: metadata)
             guard let metadataString = String(data: metadataJSON, encoding: .utf8) else {
@@ -180,14 +169,16 @@ final class MediaUploadManager {
                 throw UploadError.serverError(statusCode: http.statusCode, message: bodyStr)
             }
 
-            chunk.uploadStatus = .uploaded
-            chunk.uploadedAt = Date()
-            chunk.legacyUploadedAt = Date()
-            try? context.save()
-            await acknowledgeGlassesOriginalIfPossible(chunk, context: context)
-            if chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.glassesOriginal) {
-                try? FileManager.default.removeItem(at: fileURL)
+            if preserveForHub {
+                chunk.legacyUploadedAt = Date()
+                chunk.uploadStatus = .pending
+                chunk.uploadedAt = nil
+            } else {
+                chunk.uploadStatus = .uploaded
+                chunk.uploadedAt = Date()
             }
+            try context.save()
+            if !preserveForHub { try FileManager.default.removeItem(at: fileURL) }
             consecutiveFailures = 0
             refreshCounts(context: context)
             activity.log(.upload, "[media] uploaded \(chunk.fileName) HTTP \(http.statusCode)")
@@ -202,57 +193,61 @@ final class MediaUploadManager {
         }
     }
 
-    private func admitGlassesOriginalIfNeeded(_ chunk: MediaChunk, data: Data, deviceId: String, context: ModelContext) async {
-        guard chunk.source == .glasses,
-              chunk.hubExternalID == nil,
-              HubDeliveryService.shared.isEnabled(.glassesOriginal) else { return }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let payload: [String: String] = [
-            "device_id": deviceId,
-            "file_name": chunk.fileName,
-            "captured_at": formatter.string(from: chunk.capturedAt),
-            "imported_at": formatter.string(from: chunk.importedAt),
-            "photo_local_id": chunk.photoLocalIdentifier,
-            "media_type": chunk.mediaTypeRaw,
-            "uti": chunk.uti,
-            "source": chunk.sourceRaw
-        ]
-        guard let json = try? JSONSerialization.data(withJSONObject: payload) else { return }
+    private func uploadHubOriginal(_ chunk: MediaChunk, context: ModelContext) async {
+        let hub = HubDeliveryService.shared
         do {
-            let externalID = try await HubDeliveryService.shared.admit(
-                route: .glassesOriginal, observationID: chunk.id.uuidString, occurredAt: chunk.capturedAt,
-                timeBasis: "capture", sourcePayloadJSON: json, originalBytes: data)
-            chunk.hubExternalID = externalID
-            chunk.hubAdmittedAt = Date()
+            if chunk.hubAcknowledgedAt == nil {
+                if chunk.hubExternalID == nil {
+                    let bytes = try Data(contentsOf: URL(fileURLWithPath: chunk.filePath))
+                    guard !bytes.isEmpty else {
+                        await hub.recordGap(route: .glassesOriginal, reason: "empty_original")
+                        return
+                    }
+                    let metadata = buildMetadata(chunk: chunk, deviceId: AppSettings.shared.deviceId)
+                    chunk.hubExternalID = try await hub.admit(route: .glassesOriginal,
+                        observationID: chunk.id.uuidString.lowercased(), occurredAt: chunk.capturedAt,
+                        timeBasis: "captured_at", sourcePayloadJSON: JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
+                        originalBytes: bytes)
+                    chunk.hubAdmittedAt = Date()
+                    try context.save()
+                }
+                if let id = chunk.hubExternalID, try await hub.isAcknowledged(externalID: id) {
+                    chunk.hubAcknowledgedAt = Date()
+                    try context.save()
+                }
+            }
+            if !hub.legacyDisabled(.glassesOriginal) && chunk.legacyUploadedAt == nil {
+                await uploadChunk(chunk, context: context, preserveForHub: true)
+            }
+            if chunk.hubAcknowledgedAt != nil && (hub.legacyDisabled(.glassesOriginal) || chunk.legacyUploadedAt != nil) {
+                chunk.uploadStatus = .uploaded
+                chunk.uploadedAt = Date()
+                try context.save()
+                try FileManager.default.removeItem(atPath: chunk.filePath)
+            }
+        } catch {
+            chunk.uploadStatus = .failed
+            chunk.uploadedAt = nil
             try? context.save()
-            activity.log(.upload, "Hub admitted glasses original \(chunk.fileName) -> \(externalID)")
-        } catch {
-            activity.log(.error, "Hub glasses admission pending \(chunk.fileName): \(error.localizedDescription)")
+            await hub.recordGap(route: .glassesOriginal, reason: "original_delivery_failed")
         }
+        chunk.lastUploadAttempt = Date()
+        chunk.uploadAttempts = max(1, chunk.uploadAttempts)
+        try? context.save()
+        refreshCounts(context: context)
+        try? await Task.sleep(for: .seconds(1))
     }
 
-    private func acknowledgeGlassesOriginalIfPossible(_ chunk: MediaChunk, context: ModelContext) async {
-        guard let externalID = chunk.hubExternalID, chunk.hubAcknowledgedAt == nil else { return }
-        do {
-            if try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) {
-                chunk.hubAcknowledgedAt = Date()
-                try? context.save()
-            }
-        } catch {
-            activity.log(.upload, "Hub glasses acknowledgement pending \(chunk.fileName)")
-        }
-    }
-
-    private func reconcileHubAcknowledgements(context: ModelContext) async {
-        let uploaded = MediaUploadStatus.uploaded.rawValue
-        let descriptor = FetchDescriptor<MediaChunk>(predicate: #Predicate { $0.uploadStatusRaw == uploaded && $0.hubExternalID != nil && $0.hubAcknowledgedAt == nil })
+    private func cleanupHubAckedFiles(modelContainer: ModelContainer) async {
+        let context = ModelContext(modelContainer)
+        let uploadedRaw = MediaUploadStatus.uploaded.rawValue
+        let descriptor = FetchDescriptor<MediaChunk>(predicate: #Predicate {
+            $0.hubAcknowledgedAt != nil && $0.uploadStatusRaw == uploadedRaw
+        })
         guard let chunks = try? context.fetch(descriptor) else { return }
-        for chunk in chunks where chunk.source == .glasses {
-            await acknowledgeGlassesOriginalIfPossible(chunk, context: context)
-            if chunk.hubAcknowledgedAt != nil {
-                try? FileManager.default.removeItem(atPath: chunk.filePath)
-            }
+        for chunk in chunks {
+            guard FileManager.default.fileExists(atPath: chunk.filePath) else { continue }
+            try? FileManager.default.removeItem(atPath: chunk.filePath)
         }
     }
 
@@ -297,14 +292,15 @@ final class MediaUploadManager {
     private func fetchNextPending(context: ModelContext) -> MediaChunk? {
         let pending = MediaUploadStatus.pending.rawValue
         let failed = MediaUploadStatus.failed.rawValue
-        let attemptCap = Self.maxAttempts
+        let hubEnabled = HubDeliveryService.shared.isEnabled(.glassesOriginal)
+        let attemptCap = hubEnabled ? Int.max : Self.maxAttempts
+        let retryBefore = hubEnabled ? Date().addingTimeInterval(-5) : Date.distantFuture
         let predicate = #Predicate<MediaChunk> {
             ($0.uploadStatusRaw == pending || $0.uploadStatusRaw == failed) && $0.uploadAttempts < attemptCap
+            && ($0.lastUploadAttempt == nil || $0.lastUploadAttempt! < retryBefore)
         }
-        var descriptor = FetchDescriptor<MediaChunk>(
-            predicate: predicate,
-            sortBy: [SortDescriptor(\.capturedAt, order: .forward)]
-        )
+        var descriptor = FetchDescriptor<MediaChunk>(predicate: predicate,
+            sortBy: hubEnabled ? [SortDescriptor(\.lastUploadAttempt, order: .forward)] : [SortDescriptor(\.capturedAt, order: .forward)])
         descriptor.fetchLimit = 1
         return (try? context.fetch(descriptor))?.first
     }
@@ -327,11 +323,13 @@ final class MediaUploadManager {
         }
         let descriptor = FetchDescriptor<MediaChunk>(predicate: predicate)
         guard let expired = try? context.fetch(descriptor), !expired.isEmpty else { return }
-        for chunk in expired where chunk.hubAcknowledgedAt != nil || chunk.sourceRaw != MediaImportSource.glasses.rawValue || !HubDeliveryService.shared.isEnabled(.glassesOriginal) {
+        var dropped = 0
+        for chunk in expired where chunk.source != .glasses || !HubDeliveryService.shared.isEnabled(.glassesOriginal) {
             try? FileManager.default.removeItem(atPath: chunk.filePath)
             context.delete(chunk)
+            dropped += 1
         }
         try? context.save()
-        activity.log(.upload, "[media] dropped \(expired.count) expired chunks (>7d)")
+        if dropped > 0 { activity.log(.upload, "[media] dropped \(dropped) expired chunks (>7d)") }
     }
 }
