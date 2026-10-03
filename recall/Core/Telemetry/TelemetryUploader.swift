@@ -128,7 +128,7 @@ final class TelemetryUploader: NSObject {
         do {
             let hubExternalID = try await HubTelemetryAdmission.admit(
                 route: .healthSnapshot,
-                observationID: Self.healthObservationID(for: payload),
+                observationID: payload.deliveryID.uuidString,
                 occurredAt: payload.collectedAt,
                 payload: payload
             )
@@ -244,7 +244,7 @@ final class TelemetryUploader: NSObject {
             do {
                 let externalID = try await HubTelemetryAdmission.admit(
                     route: .healthSnapshot,
-                    observationID: Self.healthObservationID(for: healthPayload),
+                    observationID: healthPayload.deliveryID.uuidString,
                     occurredAt: healthPayload.collectedAt,
                     payload: healthPayload
                 )
@@ -264,12 +264,11 @@ final class TelemetryUploader: NSObject {
         if let snapshot = await MainActor.run(body: { TelemetryService.shared.nowPlayingManager.snapshot }) {
             do {
                 _ = try await HubTelemetryAdmission.admit(route: .nowPlaying,
-                                                          observationID: Self.nowPlayingObservationID(snapshot),
+                                                          observationID: snapshot.deliveryID.uuidString,
                                                           occurredAt: snapshot.timestamp,
                                                           payload: snapshot)
             } catch {
                 TelemetryUploader.log("nowPlaying Hub admission failed")
-                return
             }
         }
 
@@ -317,28 +316,6 @@ final class TelemetryUploader: NSObject {
     }
 
     /// Upload samples immediately using default URLSession (Lane A)
-    @MainActor
-    private static func healthObservationID(for payload: HealthPayload) -> String {
-        let defaults = UserDefaults.standard
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let fingerprint = (try? encoder.encode(payload)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
-        if defaults.string(forKey: "hub.health.snapshot.fingerprint") != fingerprint {
-            defaults.set(fingerprint, forKey: "hub.health.snapshot.fingerprint")
-            defaults.set(UUID().uuidString, forKey: "hub.health.snapshot.id")
-        }
-        if let id = defaults.string(forKey: "hub.health.snapshot.id") { return id }
-        let id = UUID().uuidString
-        defaults.set(id, forKey: "hub.health.snapshot.id")
-        return id
-    }
-
-    @MainActor
-    private static func nowPlayingObservationID(_ snapshot: NowPlayingSnapshot) -> String {
-        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-        return ((try? encoder.encode(snapshot)) ?? Data()).base64EncodedString()
-    }
-
     private func uploadImmediate(
         samples: [LocationSample],
         healthPayload: HealthPayload? = nil,

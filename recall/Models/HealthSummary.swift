@@ -91,6 +91,9 @@ struct HealthRecord: Codable {
 /// record by `metricId` + `unit` + `aggregation` rather than relying on
 /// field names.
 struct HealthPayload: Codable {
+    /// Identity of this logical aggregate delivery. Retries reuse the value;
+    /// a new aggregate instance receives a new UUID. Kept out of legacy JSON.
+    let deliveryID: UUID = UUID()
     /// Time recall finished aggregating this snapshot.
     let collectedAt: Date
 
@@ -102,6 +105,10 @@ struct HealthPayload: Codable {
 
     /// Workouts with start/end already preserved.
     let workouts: [WorkoutSummary]?
+
+    enum CodingKeys: String, CodingKey {
+        case collectedAt, records, sleep, workouts
+    }
 }
 
 extension HealthPayload {

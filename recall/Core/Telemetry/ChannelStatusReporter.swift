@@ -202,10 +202,10 @@ final class ChannelStatusReporter {
             lastChunkAt: audio.lastChunkAt
         )
 
+        var payload = currentPayload
         do {
             let defaults = UserDefaults.standard
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-            let payload: ChannelStatusPayload
             if let pending = defaults.string(forKey: "hub.channel.pending.payload"),
                let pendingData = Data(base64Encoded: pending),
                let decoded = try? JSONDecoder().decode(ChannelStatusPayload.self, from: pendingData) {
@@ -300,7 +300,7 @@ private struct ChannelStatusPayload: Codable {
     }
 }
 
-private struct ChannelEntry: Encodable {
+private struct ChannelEntry: Codable {
     let channel: String
     let state: String
     let since: String

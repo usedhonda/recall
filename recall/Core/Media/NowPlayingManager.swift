@@ -73,10 +73,16 @@ final class NowPlayingManager {
 }
 
 struct NowPlayingSnapshot: Encodable {
+    /// Stable identity for one observed track update; omitted from legacy JSON.
+    let deliveryID: UUID = UUID()
     let title: String?
     let artist: String?
     let album: String?
     let timestamp: Date
+
+    enum CodingKeys: String, CodingKey {
+        case title, artist, album, timestamp
+    }
 }
 
 // MARK: - MediaRemote.framework Bridge (Private API, read-only)
