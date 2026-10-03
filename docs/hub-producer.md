@@ -113,7 +113,7 @@ say that the gap was not persisted. No lane borrows another lane's capacity.
 ## Runtime and provisioning
 
 `HubProvisioning` imports a private device-bound configuration into a dedicated
-Keychain item before producer startup. The configuration contains only Recall's
+Keychain item in AppDelegate, before background producer observers start. The configuration contains only Recall's
 source token, independent HTTPS endpoint, device identity, enabled routes and
 per-route legacy-disable latches. It never copies the Hub's full source policy
 or borrows Gateway authentication. A missing/unreadable credential does not
@@ -135,8 +135,9 @@ created exclusively with mode 0600, refuses existing files and symlinks, and alw
 sets `legacyDisabledRoutes` to an empty list. Conversion does not contact a device. The owner has announced source-export placement; its Recall-only profile was
 privately retrieved and validated. This is not device Keychain enrollment.
 Do not enable audio release from a source-code commit.
-The Hub owner is still reviewing server compatibility; a deployment notice and
-route evidence are separate requirements.
+The Hub owner has confirmed production reflection; authenticated operator
+capabilities match processing receipt v1 and `local-stt-v1`. Device receipt and
+route evidence remain separate requirements.
 
 `HubDeliveryService` runs independently leased lanes at startup and retries
 persisted request bytes. Original upload managers keep legacy delivery success

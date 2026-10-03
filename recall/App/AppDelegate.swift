@@ -15,6 +15,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // First, before any other line lands: how long was nobody running?
         ActivityLogger.shared.noteProcessStart()
         LaunchContext.recordLaunch(applicationState: application.applicationState)
+        // Background HealthKit delivery can precede creation of the SwiftUI scene.
+        // Load route latches and start recovery before any producer observer.
+        do { try HubProvisioning.shared.loadAndImport() }
+        catch { ActivityLogger.shared.log(.error, "Hub private configuration unavailable; active routes remain protected") }
+        HubDeliveryService.shared.start()
         ConnectivityMonitor.shared.start()
 
         // Set up HealthKit background delivery — must be in didFinishLaunchingWithOptions

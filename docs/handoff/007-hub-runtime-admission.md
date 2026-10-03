@@ -56,9 +56,9 @@ fill it. The transport and source integration do not authorize late notification
 ## Confirmed owner update
 
 The Hub owner confirmed processing receipt v1 and archive capture-unknown
-semantics. The server implementation is still undergoing compatibility review;
-its code/contract presence is not a deployment notice. Do not enable device
-audio release before that notice. The existing Recall validator matches the
+semantics. The owner subsequently confirmed production reflection, and an authenticated
+operator capability read matched the source, processing receipt version and
+initial pipeline. This is server/operator evidence, not device receipt evidence. The existing Recall validator matches the
 announced binding and initial pipeline.
 
 The source-only provision export uses `schema_version`, `source`, `base_url`,
@@ -75,3 +75,16 @@ read confirmed no existing Hub activation/cutover latches. Its Recall process
 is running; the available process API does not report foreground state. No app
 replacement, launch, device-file transfer, or foreground change was performed.
 Do not equate the locally prepared private config with Keychain enrollment.
+
+### Deployed receipt contract integration
+
+The processing job identifier now requires a canonical lowercase UUID, matching
+the deployed owner's validation requirement. The two affected receipt regressions
+passed. Hub configuration/recovery startup moved from the SwiftUI scene task to
+AppDelegate before background HealthKit observers. Simulator and signed device
+builds passed; no foreground/recording-intent code was changed.
+
+Device lock-state reported passcode required. No app replacement or launch was
+attempted, preserving the running recorder. Device configuration remains local
+and disabled. Source-capacity acceptance, device reflection, Keychain import and
+natural producer-to-consumer evidence remain outstanding.
