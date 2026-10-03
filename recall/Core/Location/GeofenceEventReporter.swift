@@ -24,7 +24,8 @@ enum GeofenceEventReporter {
             occurredAt: ISO8601DateFormatter.geofence.string(from: occurredAt),
             fixId: fixId
         )
-        post(payload, label: "wifi_event \(transition) \(ssid ?? "unknown")")
+        post(payload, route: .wifi, observationID: UUID().uuidString, occurredAt: occurredAt,
+             label: "wifi_event \(transition) \(ssid ?? "unknown")")
     }
 
     static func report(
@@ -43,10 +44,13 @@ enum GeofenceEventReporter {
             fixId: fixId
         )
 
-        post(payload, label: "geofence_event \(anchor) \(transition)")
+        post(payload, route: .geofence, observationID: UUID().uuidString, occurredAt: occurredAt,
+             label: "geofence_event \(anchor) \(transition)")
     }
 
-    private static func post<Payload: Encodable>(_ payload: Payload, label: String) {
+    private static func post<Payload: Encodable>(_ payload: Payload, route: HubRecallRoute,
+                                                 observationID: String, occurredAt: Date, label: String) {
+        UserDefaults.standard.set(observationID, forKey: "hub.\(route.rawValue).pending.id")
         Task { @MainActor in
             var taskId: UIBackgroundTaskIdentifier = .invalid
             taskId = UIApplication.shared.beginBackgroundTask {
@@ -55,14 +59,28 @@ enum GeofenceEventReporter {
                     taskId = .invalid
                 }
             }
-            await send(payload, label: label)
+            await send(payload, route: route, observationID: observationID, occurredAt: occurredAt, label: label)
             if taskId != .invalid {
                 UIApplication.shared.endBackgroundTask(taskId)
             }
         }
     }
 
-    private static func send<Payload: Encodable>(_ payload: Payload, label: String) async {
+    private static func send<Payload: Encodable>(_ payload: Payload, route: HubRecallRoute,
+                                                 observationID: String, occurredAt: Date, label: String) async {
+        do {
+            if let externalID = try await HubTelemetryAdmission.admit(route: route, observationID: observationID,
+                                                                       occurredAt: occurredAt, payload: payload),
+               !HubTelemetryAdmission.legacyAllowed(route) {
+                guard try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else { return }
+                TelemetryService.shared.locationManager.noteCrossing(label, accepted: true)
+                UserDefaults.standard.removeObject(forKey: "hub.\(route.rawValue).pending.id")
+                return
+            }
+        } catch {
+            ActivityLogger.shared.log(.telemetry, "\(label): Hub admission failed")
+            return
+        }
         guard AppSettings.shared.hasValidTelemetryConfig,
               let token = KeychainHelper.shared.getToken(),
               let url = URL(string: "\(AppSettings.shared.telemetryServerURL)/api/telemetry") else { return }
@@ -88,6 +106,7 @@ enum GeofenceEventReporter {
             }
             ActivityLogger.shared.log(.telemetry, "\(label) sent: HTTP \(http.statusCode)")
             TelemetryService.shared.locationManager.noteCrossing(label, accepted: true)
+            UserDefaults.standard.removeObject(forKey: "hub.\(route.rawValue).pending.id")
         } catch {
             ActivityLogger.shared.log(.telemetry, "\(label) failed: \(error.localizedDescription)")
         }

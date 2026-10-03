@@ -85,6 +85,31 @@ final class TelemetryService {
     // MARK: - Location Send
 
     func sendLocation(_ payload: LocationPayload) async -> LocationSendResult {
+        do {
+            let hubExternalID = try await HubTelemetryAdmission.admit(
+                route: .gpsDelivery,
+                observationID: payload.deliveryID,
+                occurredAt: payload.timestamp,
+                payload: payload
+            )
+            if let snapshot = nowPlayingManager.snapshot {
+                _ = try await HubTelemetryAdmission.admit(
+                    route: .nowPlaying,
+                    observationID: Self.nowPlayingObservationID(snapshot),
+                    occurredAt: snapshot.timestamp,
+                    payload: snapshot
+                )
+            }
+            if !HubTelemetryAdmission.legacyAllowed(.gpsDelivery) {
+                guard let hubExternalID,
+                      try await HubDeliveryService.shared.isAcknowledged(externalID: hubExternalID) else {
+                    return .httpError("Hub admission pending")
+                }
+                return .sent(status: 200, received: 1, healthReceived: nil, body: nil)
+            }
+        } catch {
+            return .httpError("Hub admission failed")
+        }
         guard ConnectivityMonitor.shared.canSendLocation else {
             return .httpError("waiting for WiFi (location wifi-only)")
         }
@@ -148,6 +173,31 @@ final class TelemetryService {
     // MARK: - Health Send
 
     func sendHealth(_ payload: HealthPayload) async -> HealthSendResult {
+        do {
+            let hubExternalID = try await HubTelemetryAdmission.admit(
+                route: .healthSnapshot,
+                observationID: Self.healthObservationID(payload),
+                occurredAt: payload.collectedAt,
+                payload: payload
+            )
+            if let snapshot = nowPlayingManager.snapshot {
+                _ = try await HubTelemetryAdmission.admit(
+                    route: .nowPlaying,
+                    observationID: Self.nowPlayingObservationID(snapshot),
+                    occurredAt: snapshot.timestamp,
+                    payload: snapshot
+                )
+            }
+            if !HubTelemetryAdmission.legacyAllowed(.healthSnapshot) {
+                guard let hubExternalID,
+                      try await HubDeliveryService.shared.isAcknowledged(externalID: hubExternalID) else {
+                    return .error("Hub admission pending")
+                }
+                return .sent(status: 200, body: "")
+            }
+        } catch {
+            return .error("Hub admission failed")
+        }
         guard ConnectivityMonitor.shared.canSendHealth else {
             return .error("waiting for WiFi (health wifi-only)")
         }
@@ -198,6 +248,24 @@ final class TelemetryService {
         } catch {
             return .error(error.localizedDescription)
         }
+    }
+
+    private static func healthObservationID(_ payload: HealthPayload) -> String {
+        let defaults = UserDefaults.standard
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let fingerprint = (try? encoder.encode(payload)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        if defaults.string(forKey: "hub.health.snapshot.fingerprint") != fingerprint {
+            defaults.set(fingerprint, forKey: "hub.health.snapshot.fingerprint")
+            defaults.set(UUID().uuidString, forKey: "hub.health.snapshot.id")
+        }
+        if let id = defaults.string(forKey: "hub.health.snapshot.id") { return id }
+        let id = UUID().uuidString; defaults.set(id, forKey: "hub.health.snapshot.id"); return id
+    }
+
+    private static func nowPlayingObservationID(_ snapshot: NowPlayingSnapshot) -> String {
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let data = (try? encoder.encode(snapshot)) ?? Data()
+        return data.base64EncodedString()
     }
 
     // MARK: - Reaction Settings Sync

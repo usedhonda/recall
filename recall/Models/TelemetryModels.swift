@@ -126,9 +126,9 @@ struct TelemetrySample: Encodable {
         )
     }
 
-    init(from payload: LocationPayload, id: String = UUID().uuidString) {
+    init(from payload: LocationPayload, id: String? = nil) {
         self.init(
-            id: id,
+            id: id ?? payload.deliveryID,
             lat: payload.latitude,
             lon: payload.longitude,
             accuracy: payload.accuracy,
@@ -160,6 +160,8 @@ struct TelemetryResponse: Decodable {
 
 /// Location data payload for foreground HTTP sends
 struct LocationPayload: Codable {
+    /// Stable identity for this logical fix across foreground/background retries.
+    let deliveryID: String
     let latitude: Double
     let longitude: Double
     let accuracy: Double
@@ -188,6 +190,7 @@ struct LocationPayload: Codable {
     let simulatedBySoftware: Bool?
 
     init(from location: CLLocation, quality: String, fixId: String? = nil) {
+        self.deliveryID = UUID().uuidString
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.accuracy = location.horizontalAccuracy

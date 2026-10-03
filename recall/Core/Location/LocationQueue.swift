@@ -108,6 +108,12 @@ actor LocationQueue {
         return drained
     }
 
+    /// Returns a stable batch without retiring it. Callers must remove only
+    /// after their durable delivery receipt has been verified.
+    func peek(max: Int) -> [LocationSample] {
+        Array(samples.prefix(min(max, samples.count)))
+    }
+
     func hasPending() -> Bool {
         !samples.isEmpty
     }

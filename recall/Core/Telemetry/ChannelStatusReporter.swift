@@ -193,6 +193,44 @@ final class ChannelStatusReporter {
     // MARK: - Send (reuses the immediate-telemetry auth path)
 
     private func send(entries: [ChannelEntry], sentAt: String, audio: AudioSnapshot) async -> Bool {
+        let currentPayload = ChannelStatusPayload(
+            deviceId: AppSettings.shared.deviceId,
+            sentAt: sentAt,
+            channels: entries,
+            audioState: audio.state,
+            audioStateSince: audio.since,
+            lastChunkAt: audio.lastChunkAt
+        )
+
+        do {
+            let defaults = UserDefaults.standard
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+            let payload: ChannelStatusPayload
+            if let pending = defaults.string(forKey: "hub.channel.pending.payload"),
+               let pendingData = Data(base64Encoded: pending),
+               let decoded = try? JSONDecoder().decode(ChannelStatusPayload.self, from: pendingData) {
+                payload = decoded
+            } else {
+                payload = currentPayload
+                defaults.set((try encoder.encode(payload)).base64EncodedString(), forKey: "hub.channel.pending.payload")
+                defaults.set(UUID().uuidString, forKey: "hub.channel.pending.id")
+            }
+            let id = defaults.string(forKey: "hub.channel.pending.id") ?? UUID().uuidString
+            if defaults.string(forKey: "hub.channel.pending.id") == nil { defaults.set(id, forKey: "hub.channel.pending.id") }
+            if let externalID = try await HubTelemetryAdmission.admit(route: .channelReport, observationID: id,
+                                                                       occurredAt: ISO8601DateFormatter.channel.date(from: sentAt) ?? Date(), payload: payload),
+               !HubTelemetryAdmission.legacyAllowed(.channelReport) {
+                guard try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else { return false }
+                defaults.removeObject(forKey: "hub.channel.pending.fingerprint")
+                defaults.removeObject(forKey: "hub.channel.pending.payload")
+                defaults.removeObject(forKey: "hub.channel.pending.id")
+                return true
+            }
+        } catch {
+            ActivityLogger.shared.log(.telemetry, "channel_status Hub admission failed")
+            return false
+        }
+
         guard AppSettings.shared.hasValidTelemetryConfig,
               let token = KeychainHelper.shared.getToken() else { return false }
 
@@ -204,15 +242,6 @@ final class ChannelStatusReporter {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("recall-ios/1.0", forHTTPHeaderField: "User-Agent")
-
-        let payload = ChannelStatusPayload(
-            deviceId: AppSettings.shared.deviceId,
-            sentAt: sentAt,
-            channels: entries,
-            audioState: audio.state,
-            audioStateSince: audio.since,
-            lastChunkAt: audio.lastChunkAt
-        )
 
         do {
             request.httpBody = try JSONEncoder().encode(payload)
@@ -227,6 +256,9 @@ final class ChannelStatusReporter {
                 return false
             }
             ActivityLogger.shared.log(.telemetry, "channel_status sent: HTTP \(http.statusCode) audio=\(audio.state) since=\(audio.since)")
+            UserDefaults.standard.removeObject(forKey: "hub.channel.pending.fingerprint")
+            UserDefaults.standard.removeObject(forKey: "hub.channel.pending.payload")
+            UserDefaults.standard.removeObject(forKey: "hub.channel.pending.id")
             return true
         } catch {
             ActivityLogger.shared.log(.telemetry, "channel_status send failed: \(error.localizedDescription)")
@@ -235,9 +267,17 @@ final class ChannelStatusReporter {
     }
 }
 
+private extension ISO8601DateFormatter {
+    static let channel: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+}
+
 // MARK: - Payload
 
-private struct ChannelStatusPayload: Encodable {
+private struct ChannelStatusPayload: Codable {
     let deviceId: String
     let type = "channel_status"
     let sentAt: String

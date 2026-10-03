@@ -125,6 +125,26 @@ final class TelemetryUploader: NSObject {
     /// Carries the self-describing records (with measuredAt + source) under `health2`.
     @MainActor
     func uploadHealthOnly(_ payload: HealthPayload) async {
+        do {
+            let hubExternalID = try await HubTelemetryAdmission.admit(
+                route: .healthSnapshot,
+                observationID: Self.healthObservationID(for: payload),
+                occurredAt: payload.collectedAt,
+                payload: payload
+            )
+            if !HubTelemetryAdmission.legacyAllowed(.healthSnapshot) {
+                guard let hubExternalID,
+                      try await HubDeliveryService.shared.isAcknowledged(externalID: hubExternalID) else {
+                    TelemetryUploader.log("health Hub admission pending")
+                    return
+                }
+                TelemetryUploader.log("health Hub store-only ACK")
+                return
+            }
+        } catch {
+            TelemetryUploader.log("health Hub admission failed")
+            return
+        }
         guard ConnectivityMonitor.shared.canSendHealth else {
             TelemetryUploader.log("network policy: healthOnly skipped")
             return
@@ -177,25 +197,81 @@ final class TelemetryUploader: NSObject {
         isTriggerUploadRunning = true
         defer { isTriggerUploadRunning = false }
 
-        let samples = await LocationQueue.shared.drain(max: 50)
+        let samples = await LocationQueue.shared.peek(max: 50)
         guard !samples.isEmpty else { return }
+
+        var hubIDs: [UUID: String] = [:]
+        do {
+            for sample in samples {
+                if let externalID = try await HubTelemetryAdmission.admit(
+                    route: .gpsDelivery,
+                    observationID: sample.id.uuidString,
+                    occurredAt: sample.timestamp,
+                    payload: TelemetrySample(from: sample)
+                ) { hubIDs[sample.id] = externalID }
+            }
+            for externalID in hubIDs.values {
+                guard try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else {
+                    TelemetryUploader.log("GPS Hub admission pending samples=\(samples.count)")
+                    return
+                }
+            }
+        } catch {
+            TelemetryUploader.log("GPS Hub admission failed samples=\(samples.count)")
+            return
+        }
 
         let appState = UIApplication.shared.applicationState
         let stateLabel = appState == .active ? "fg" : (appState == .background ? "bg" : "inactive")
         TelemetryUploader.log("triggerUpload samples=\(samples.count) state=\(stateLabel)")
 
         let settings = AppSettings.shared
+        let legacyAllowed = HubTelemetryAdmission.legacyAllowed(.gpsDelivery)
+        if !legacyAllowed {
+            await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
+            TelemetryUploader.log("GPS Hub store-only ACK samples=\(samples.count)")
+            return
+        }
         guard !settings.telemetryServerURL.isEmpty,
               let token = KeychainHelper.shared.getToken() else {
-            for sample in samples {
-                await LocationQueue.shared.enqueue(sample)
-            }
             TelemetryUploader.log("triggerUpload NO_CONFIG re-queued=\(samples.count)")
             return
         }
 
         // Query health data to piggyback on location upload
-        let health = await queryHealthForBackground()
+        var health = await queryHealthForBackground()
+        if let healthPayload = health {
+            do {
+                let externalID = try await HubTelemetryAdmission.admit(
+                    route: .healthSnapshot,
+                    observationID: Self.healthObservationID(for: healthPayload),
+                    occurredAt: healthPayload.collectedAt,
+                    payload: healthPayload
+                )
+                if !HubTelemetryAdmission.legacyAllowed(.healthSnapshot) {
+                    guard let externalID,
+                          try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else {
+                        TelemetryUploader.log("health Hub admission pending")
+                        return
+                    }
+                    health = nil
+                }
+            } catch {
+                TelemetryUploader.log("health Hub admission failed")
+                return
+            }
+        }
+        if let snapshot = await MainActor.run(body: { TelemetryService.shared.nowPlayingManager.snapshot }) {
+            do {
+                _ = try await HubTelemetryAdmission.admit(route: .nowPlaying,
+                                                          observationID: Self.nowPlayingObservationID(snapshot),
+                                                          occurredAt: snapshot.timestamp,
+                                                          payload: snapshot)
+            } catch {
+                TelemetryUploader.log("nowPlaying Hub admission failed")
+                return
+            }
+        }
 
         // Lane A: immediate upload with beginBackgroundTask
         var taskId: UIBackgroundTaskIdentifier = .invalid
@@ -217,6 +293,7 @@ final class TelemetryUploader: NSObject {
                 token: token
             )
             TelemetryUploader.log("laneA OK samples=\(samples.count) health=\(health != nil)")
+            await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
             lastUploadTime = Date()
             lastUploadResult = "success"
         } catch {
@@ -226,10 +303,8 @@ final class TelemetryUploader: NSObject {
             do {
                 try await upload(samples: samples, healthPayload: health)
                 TelemetryUploader.log("laneB OK samples=\(samples.count)")
+                await LocationQueue.shared.remove(ids: Set(samples.map(\.id)))
             } catch {
-                for sample in samples {
-                    await LocationQueue.shared.enqueue(sample)
-                }
                 let detail2 = error.localizedDescription
                 TelemetryUploader.log("laneB FAIL \(detail2) re-queued=\(samples.count)")
                 lastUploadResult = "failed: \(detail2)"
@@ -242,6 +317,28 @@ final class TelemetryUploader: NSObject {
     }
 
     /// Upload samples immediately using default URLSession (Lane A)
+    @MainActor
+    private static func healthObservationID(for payload: HealthPayload) -> String {
+        let defaults = UserDefaults.standard
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let fingerprint = (try? encoder.encode(payload)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        if defaults.string(forKey: "hub.health.snapshot.fingerprint") != fingerprint {
+            defaults.set(fingerprint, forKey: "hub.health.snapshot.fingerprint")
+            defaults.set(UUID().uuidString, forKey: "hub.health.snapshot.id")
+        }
+        if let id = defaults.string(forKey: "hub.health.snapshot.id") { return id }
+        let id = UUID().uuidString
+        defaults.set(id, forKey: "hub.health.snapshot.id")
+        return id
+    }
+
+    @MainActor
+    private static func nowPlayingObservationID(_ snapshot: NowPlayingSnapshot) -> String {
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        return ((try? encoder.encode(snapshot)) ?? Data()).base64EncodedString()
+    }
+
     private func uploadImmediate(
         samples: [LocationSample],
         healthPayload: HealthPayload? = nil,
