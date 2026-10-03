@@ -125,6 +125,18 @@ file only after exact Keychain read-back. Staging alone is not proof of import,
 authenticated transport, or route acceptance. Source-specific provisioning by
 the operator remains required; endpoint/token values never belong in this repo.
 
+The Hub source-only exporter schema is `{schema_version, source, base_url,
+bearer_token, allowed_domains}`. Convert it explicitly to the device schema;
+never treat domain allowance as permission to activate every route or stop legacy
+delivery. Offline conversion uses `--source-export <private-export> --device-id
+<bound-id> --enable-route <route> --output <new-private-file>`. No route is enabled
+by default; each selected route must have an exact allowed domain. The output is
+created exclusively with mode 0600, refuses existing files and symlinks, and always
+sets `legacyDisabledRoutes` to an empty list. Conversion does not contact a device. The exporter/file remains undeployed until its owner announces readiness.
+Do not fetch a guessed path or enable audio release from a source-code commit.
+The Hub owner is still reviewing server compatibility; a deployment notice and
+route evidence are separate requirements.
+
 `HubDeliveryService` runs independently leased lanes at startup and retries
 persisted request bytes. Original upload managers keep legacy delivery success
 separate from Hub receipts. Expired audio may be stored, but never restarts a

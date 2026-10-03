@@ -31,8 +31,9 @@ old-route stop, or consumer acceptance was performed for this checkpoint.
 ## Remaining exact dependencies / work
 
 1. Obtain Recall-only endpoint/token through the Hub owner's private procedure,
-   not the full source policy. The request was sent; no procedure response has
-   been received. Configure route enablement only after its local acceptance.
+   not the full source policy. The owner confirmed the export schema, but its
+   exporter/file is not yet deployed. Wait for the placement notification before
+   retrieval; configure route enablement only after local and server acceptance.
 2. Complete strict audio capture staging reservation. The current exclusive
    writer token + start guard is not a byte bound on an encoded future chunk.
    It must not be described as full `storageCapMB` enforcement or used alone
@@ -49,3 +50,17 @@ Capacity numbers and the old A/B device-release choice are resolved; do not ask
 again. Hub `audio-platform-completion.md` and `stt-jobs.md` are the selected audio
 contract. Actual capture end remains unknown; receive/upload/DB clocks cannot
 fill it. The transport and source integration do not authorize late notifications.
+
+## Confirmed owner update
+
+The Hub owner confirmed processing receipt v1 and archive capture-unknown
+semantics. The server implementation is still undergoing compatibility review;
+its code/contract presence is not a deployment notice. Do not enable device
+audio release before that notice. The existing Recall validator matches the
+announced binding and initial pipeline.
+
+The source-only provision export uses `schema_version`, `source`, `base_url`,
+`bearer_token`, and `allowed_domains`. These are not the device import schema.
+Conversion must enforce source/domain restrictions, explicit device identity and
+route selection, and produce no legacy-disable flags. No credential values or
+full Hub policy belong in messages or tracked artifacts.

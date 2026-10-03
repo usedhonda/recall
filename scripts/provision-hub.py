@@ -58,7 +58,7 @@ def _load_source_export(path):
                    or "/" in domain or ":" in domain or any(c.isspace() for c in domain)
                    for domain in domains)):
         raise ValueError("invalid source configuration")
-    allowed = {domain.lower() for domain in domains}
+    allowed = set(domains)
     if not allowed <= set(ROUTE_DOMAINS.values()):
         raise ValueError("invalid source configuration")
     return value, endpoint
@@ -90,7 +90,7 @@ def _convert(args):
     if not set(enabled) <= ROUTES or len(set(enabled)) != len(enabled):
         raise ValueError("invalid source configuration")
     # Route domains are source-owned; no Hub policy fields are copied.
-    allowed = {domain.lower() for domain in source["allowed_domains"]}
+    allowed = set(source["allowed_domains"])
     if any(ROUTE_DOMAINS[route] not in allowed for route in enabled):
         raise ValueError("invalid source configuration")
     output = {
