@@ -194,6 +194,30 @@ final class HubDurableOutboxTests: XCTestCase {
         XCTAssertThrowsError(try HubDurableOutbox(url: corrupt, budgets: budgets()))
     }
 
+    func testCaptureReservationIncludesSourceFilesAndRestartPreservesPendingRows() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let original = try event("capture-budget", route: .audioOriginal)
+        let rowBytes = Int64(original.encodedJSON.count) + 4096
+        let limit = rowBytes + 1000
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: limit))
+        try await box.enqueue(original)
+        try await box.setExternalReservation(lane: "audio-original", key: "other", bytes: 100)
+        do {
+            try await box.setExternalReservation(lane: "audio-original", key: "audio-capture:old",
+                                                  bytes: 701, externalOriginalBytes: 200)
+            XCTFail("source files, rows, and reservations must share the cap")
+        } catch { XCTAssertEqual(error as? HubDurableOutbox.Failure, .laneFull) }
+        try await box.setExternalReservation(lane: "audio-original", key: "audio-capture:old",
+                                              bytes: 700, externalOriginalBytes: 200)
+        let reopened = try HubDurableOutbox(url: path, budgets: budgets(bytes: limit))
+        try await reopened.recoverAudioCaptureReservations()
+        let remaining = try await reopened.externalReservedBytes(lane: "audio-original")
+        let pending = try await reopened.pendingBytes(lane: "audio-original")
+        XCTAssertEqual(remaining, 100)
+        XCTAssertEqual(pending, Int64(original.encodedJSON.count))
+    }
+
     func testExternalReservationSharesBudgetAndCanBeReleased() async throws {
         let path = url()
         defer { try? FileManager.default.removeItem(at: path) }

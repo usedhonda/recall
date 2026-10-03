@@ -5,38 +5,35 @@ import Foundation
 @MainActor
 final class OriginalCapacity {
     static let shared = OriginalCapacity()
+    // Enforced by the bounded CAF write/resize callbacks, not estimated bitrate.
+    static let maximumAudioOriginalBytes: Int64 = 14 * 1024 * 1024
+    static let maximumAudioCaptureReservation = maximumAudioOriginalBytes
+        + Int64(HubProducerContract.maximumEncodedJSONBytes) + 4096
     private var audioReservations: Set<UUID> = []
 
     private init() {}
 
     func reserveAudioChunk() async -> UUID? {
-        guard await canStartAudioChunk() else { return nil }
         let token = UUID()
+        guard audioReservations.isEmpty else { return nil }
+        // Claim before suspension so two writers cannot pass the initial guard.
         audioReservations.insert(token)
-        return token
+        guard HubDeliveryService.shared.isEnabled(.audioOriginal) else { return token }
+        do {
+            try await HubDeliveryService.shared.reserveAudioCapture(token: token,
+                bytes: Self.maximumAudioCaptureReservation)
+            return token
+        } catch {
+            audioReservations.remove(token)
+            await HubDeliveryService.shared.recordGap(route: .audioOriginal, reason: "capture_capacity_rejected")
+            return nil
+        }
     }
 
     func releaseAudioChunk(_ token: UUID) {
-        audioReservations.remove(token)
-    }
-
-    func canStartAudioChunk() async -> Bool {
-        let hub = HubDeliveryService.shared
-        guard hub.isEnabled(.audioOriginal) else { return true }
-        do {
-            let cap = Int64(AppSettings.shared.storageCapMB) * 1024 * 1024
-            let queue = try await hub.retainedBytes(route: .audioOriginal)
-            let files = try HubDeliveryService.originalDirectoryBytes(for: .audioOriginal)
-            // A start guard is not a proof of a maximum encoded chunk size.
-            // Audio activation also requires the capture reservation acceptance.
-            guard audioReservations.isEmpty, files + queue < cap else {
-                await hub.recordGap(route: .audioOriginal, reason: "capacity_exhausted")
-                return false
-            }
-            return true
-        } catch {
-            await hub.recordGap(route: .audioOriginal, reason: "capacity_read_failed")
-            return false
+        guard audioReservations.remove(token) != nil else { return }
+        if HubDeliveryService.shared.isEnabled(.audioOriginal) {
+            Task { await HubDeliveryService.shared.releaseAudioCapture(token: token) }
         }
     }
 

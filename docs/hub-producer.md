@@ -91,6 +91,10 @@ never from interpreting the event-content fingerprint.
 
 ## Capacity and activation boundaries
 
+Channel report source clocks accept both the reporter's whole-second ISO8601
+format and fractional timestamps in retained payloads. This parsing repair does
+not change report cadence, collection scope, or legacy cutover state.
+
 Approved independent limits are GPS 32 MiB, Health aggregate snapshots 64 MiB,
 status 32 MiB, glasses 512 MiB and control 16 MiB. Audio retains the existing
 `storageCapMB` setting. Outbox bodies use their actual encoded byte length;
@@ -99,10 +103,17 @@ Tombstones are not silently pruned. Full lanes reject new admissions and retain
 previous unACKed items. These logical limits are not measurements of SQLite
 page/journal overhead or a guarantee against physical disk exhaustion.
 
-The audio writer start guard and exclusive writer token do not prove a maximum
-encoded-chunk reservation. That capture staging boundary remains unaccepted;
-do not activate audio based on the guard alone. Pending buffers are preserved
-when capacity prevents finalization. The live glasses handoff holds a shared
+Hub-enabled audio reserves 14 MiB for the source CAF, the 20 MiB maximum
+encoded envelope, and 4096 bytes for its receipt before creating a writer.
+AudioFile write and resize callbacks enforce the 14 MiB physical file limit;
+this is not a bitrate/duration estimate. The shared outbox budget accounts for
+existing source files, other reservations and retained rows. A process restart
+clears only stale capture reservations, never original files or queued rows.
+Write/finalize failures retain the partial file, preserve pending samples in
+memory and record a gap; they never create a normal uploadable partial original.
+Memory samples are not crash-durable. Lane capacity failure rejects new capture
+without deleting previous unACKed originals. The legacy writer is unchanged.
+The live glasses handoff holds a shared
 original-lane gate across source-size accounting, copy and model persistence;
 outbox admission holds the same gate across its source snapshot and DB commit.
 Glasses admission includes source bytes plus base64 expansion and metadata

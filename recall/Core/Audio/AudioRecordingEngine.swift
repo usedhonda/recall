@@ -616,12 +616,17 @@ final class AudioRecordingEngine {
         let effectiveStart = pendingChunkStartedAt ?? Date()
         let url = await chunkFileManager.generateChunkURL(startedAt: effectiveStart)
 
-        let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate)
+        let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate,
+            maximumOutputBytes: HubDeliveryService.shared.isEnabled(.audioOriginal)
+                ? OriginalCapacity.maximumAudioOriginalBytes : nil)
         do {
             try writer.start()
         } catch {
             OriginalCapacity.shared.releaseAudioChunk(reservation)
             logger.error("Failed to start chunk writer: \(error.localizedDescription)")
+            if HubDeliveryService.shared.isEnabled(.audioOriginal) {
+                await HubDeliveryService.shared.recordGap(route: .audioOriginal, reason: "original_writer_start_failed")
+            }
             return
         }
 
@@ -699,8 +704,8 @@ final class AudioRecordingEngine {
         guard segmentDuration > 0.5, !segmentBuffer.isEmpty else {
             logger.info("Discarding trivially short chunk: \(segmentDuration, format: .fixed(precision: 1))s")
             activity.log(.chunk, "Discarded short chunk (\(String(format: "%.1f", segmentDuration))s)")
-            cleanupCurrentChunkState()
             _ = await writer.finish()
+            cleanupCurrentChunkState()
             try? FileManager.default.removeItem(at: url)
             return
         }
@@ -713,8 +718,8 @@ final class AudioRecordingEngine {
             if pendingChunkStartedAt == nil {
                 pendingChunkStartedAt = startedAt
             }
-            cleanupCurrentChunkState()
             _ = await writer.finish()
+            cleanupCurrentChunkState()
             try? FileManager.default.removeItem(at: url)
             return
         }
@@ -737,6 +742,16 @@ final class AudioRecordingEngine {
         }
 
         let result = await writer.finish()
+        if writer.hasWriteFailure {
+            // Never create a normal upload row for a partial bounded encoding.
+            // The existing samples remain available for retry; the partial file
+            // remains accounted on disk and is not represented as a saved original.
+            pendingSegmentBuffer = segmentBuffer
+            pendingChunkStartedAt = startedAt
+            cleanupCurrentChunkState()
+            await HubDeliveryService.shared.recordGap(route: .audioOriginal, reason: "original_write_failed")
+            return
+        }
         cleanupCurrentChunkState()
 
         guard result.fileSize > 0, result.duration >= 1.0 else {
@@ -787,13 +802,19 @@ final class AudioRecordingEngine {
         defer { OriginalCapacity.shared.releaseAudioChunk(reservation) }
 
         let url = await chunkFileManager.generateChunkURL(startedAt: pendingStart)
-        let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate)
+        let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate,
+            maximumOutputBytes: HubDeliveryService.shared.isEnabled(.audioOriginal)
+                ? OriginalCapacity.maximumAudioOriginalBytes : nil)
         do {
             try writer.start()
         } catch {
             logger.error("Failed to start writer for pending flush: \(error.localizedDescription)")
-            pendingSegmentBuffer = []
-            pendingChunkStartedAt = nil
+            if HubDeliveryService.shared.isEnabled(.audioOriginal) {
+                await HubDeliveryService.shared.recordGap(route: .audioOriginal, reason: "pending_original_start_failed")
+            } else {
+                pendingSegmentBuffer = []
+                pendingChunkStartedAt = nil
+            }
             return
         }
 
@@ -812,6 +833,10 @@ final class AudioRecordingEngine {
         }
 
         let result = await writer.finish()
+        if writer.hasWriteFailure {
+            await HubDeliveryService.shared.recordGap(route: .audioOriginal, reason: "pending_original_write_failed")
+            return
+        }
         pendingSegmentBuffer = []
         pendingChunkStartedAt = nil
 

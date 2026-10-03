@@ -110,3 +110,28 @@ natural producer-to-consumer evidence remain outstanding.
 
 The retired PhotoKit scanner is not started by the app and was not re-enabled.
 Glasses headroom estimates never replace actual serialized envelope limits.
+
+## Local completion after the device checkpoint
+
+- Build subprocesses now use `scripts/safe-xcodebuild.py`: fixed/minimal
+  environment, private ignored logs and entire assignment-line suppression.
+  Four focused Python tests passed. This prevents the known environment-dump
+  path; it does not retract previous tool output or resolve credential exposure.
+- Bounded audio CAF encoding and durable source/outbox reservations are now
+  implemented. Three codec/file tests, one reservation/restart test and the
+  Simulator build passed. No bitrate estimate is used as a physical byte bound.
+- Fixed channel report timestamps: the reporter emits whole-second ISO8601,
+  while its former fractional-only parser rejected that format. Both forms now
+  pass two focused tests. Send policy and collection scope are unchanged.
+- Hub owner reported the four natural non-audio events matched scoped MCP reads.
+  Consumer-owner evidence additionally covers two GPS inputs, seven supported
+  Daily health metrics and Wi-Fi status projection. This is reported peer
+  evidence, not a new local execution or proof of direct-producer live selection.
+  Latest live selection still used a newer legacy snapshot; unit correction was
+  pending. No legacy-stop approval has been issued.
+
+Remaining: prepare the signed device build; resolve incident credential/restart
+conditions before device reflection; collect natural audio/storage+STT intent
+and remaining route receipts; obtain actual live consumer selection and per-route
+cutover acceptance. Audio remains disabled on the device. No synthetic production
+event, credential rotation, or legacy stop is authorized by these local results.

@@ -119,6 +119,13 @@ provisioning and remaining acceptance boundaries are documented in
 durable Hub STT intent receipts. Existing routes below remain the reaction owners
 until per-route consumer evidence authorizes their synchronized cutover.
 
+Hub-enabled audio uses an AudioFile/ExtAudioFile backend with bounded write and
+resize callbacks (14 MiB per CAF). Format remains Opus, 16 kHz mono, 48 kbps;
+capture/chunking decisions are unchanged. Before writer creation, the audio lane
+reserves that bound plus the maximum encoded envelope and receipt bookkeeping.
+Failed encodings are not uploaded as complete originals. The legacy AVAudioFile
+backend is unchanged when the Hub audio route is disabled.
+
 recall uploads audio chunks to the VoiceLog server on the Mac mini (Tailscale peer).
 VoiceLog is an independent service at `~/projects/Mac/voicelog/`.
 

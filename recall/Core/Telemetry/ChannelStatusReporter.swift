@@ -216,7 +216,7 @@ final class ChannelStatusReporter {
             }
             let id = defaults.string(forKey: "hub.channel.pending.id") ?? UUID().uuidString
             if defaults.string(forKey: "hub.channel.pending.id") == nil { defaults.set(id, forKey: "hub.channel.pending.id") }
-            guard let sourceTime = ISO8601DateFormatter.channel.date(from: payload.sentAt) else {
+            guard let sourceTime = ChannelStatusSourceClock.date(from: payload.sentAt) else {
                 await HubDeliveryService.shared.recordGap(route: .channelReport, reason: "invalid_source_clock")
                 return false
             }
@@ -272,12 +272,27 @@ final class ChannelStatusReporter {
     }
 }
 
-private extension ISO8601DateFormatter {
-    static let channel: ISO8601DateFormatter = {
+/// Parses source timestamps emitted by this reporter and retained pending payloads.
+///
+/// `ISO8601DateFormatter` with `.withInternetDateTime` (used by `Self.iso`) omits
+/// fractional seconds, while pending payloads may have been encoded with them. Keep
+/// both wire forms valid without changing the send policy.
+internal enum ChannelStatusSourceClock {
+    private static let fractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+
+    private static let wholeSecond: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    static func date(from sourceTime: String) -> Date? {
+        fractional.date(from: sourceTime) ?? wholeSecond.date(from: sourceTime)
+    }
 }
 
 // MARK: - Payload

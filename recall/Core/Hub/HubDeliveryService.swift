@@ -13,6 +13,7 @@ final class HubDeliveryService {
     private var lastRefresh = Date.distantPast
     private var lastReported: [String: Date] = [:]
     private var originalMutations: [HubRecallRoute: UUID] = [:]
+    private var audioReservationRecovery: (id: UUID, task: Task<Void, Error>)?
     private(set) var lastFailure: String?
 
     func start() {
@@ -57,6 +58,7 @@ final class HubDeliveryService {
         defer { if let mutationToken { finishOriginalMutation(route, token: mutationToken) } }
         refreshRuntime()
         guard let configuration, let outbox else { throw Failure.notConfigured }
+        if route == .audioOriginal { try await recoverAudioReservations(outbox) }
         if route == .gpsDelivery,
            !(await LocationQueue.shared.reconcileHubReservation()) {
             throw Failure.notConfigured
@@ -100,6 +102,38 @@ final class HubDeliveryService {
         refreshRuntime()
         guard let outbox else { throw Failure.notConfigured }
         try await outbox.setExternalReservation(lane: HubDurableOutbox.lane(for: route), key: key, bytes: bytes)
+    }
+
+    func reserveAudioCapture(token: UUID, bytes: Int64) async throws {
+        refreshRuntime()
+        guard let outbox else { throw Failure.notConfigured }
+        try await recoverAudioReservations(outbox)
+        let files = try Self.originalDirectoryBytes(for: .audioOriginal)
+        try await outbox.setExternalReservation(lane: "audio-original",
+            key: "audio-capture:" + token.uuidString, bytes: bytes, externalOriginalBytes: files)
+    }
+
+    private func recoverAudioReservations(_ outbox: HubDurableOutbox) async throws {
+        if audioReservationRecovery == nil {
+            audioReservationRecovery = (UUID(), Task { try await outbox.recoverAudioCaptureReservations() })
+        }
+        guard let recovery = audioReservationRecovery else { throw Failure.notConfigured }
+        do {
+            try await recovery.task.value
+        } catch {
+            // Only this failed generation may be retried. Success stays cached:
+            // a later admission must never clear a live writer's reservation.
+            if audioReservationRecovery?.id == recovery.id { audioReservationRecovery = nil }
+            throw error
+        }
+    }
+
+    func releaseAudioCapture(token: UUID) async {
+        do {
+            guard let outbox else { throw Failure.notConfigured }
+            try await outbox.setExternalReservation(lane: "audio-original",
+                key: "audio-capture:" + token.uuidString, bytes: 0)
+        } catch { await recordGap(route: .audioOriginal, reason: "capture_reservation_release_failed") }
     }
 
     func recordGap(route: HubRecallRoute, reason: String) async {

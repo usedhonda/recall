@@ -12,11 +12,15 @@ final class ChunkWriter {
     private let inputFormat: AVAudioFormat
     private var samplesWritten: Int = 0
     private var isFinished = false
+    private let maximumOutputBytes: Int64?
+    private var boundedWriter: BoundedCAFWriter?
+    private(set) var hasWriteFailure = false
 
-    init(outputURL: URL, sampleRate: Int = 16_000, bitRate: Int = 48_000) {
+    init(outputURL: URL, sampleRate: Int = 16_000, bitRate: Int = 48_000, maximumOutputBytes: Int64? = nil) {
         self.outputURL = outputURL
         self.sampleRate = sampleRate
         self.bitRate = bitRate
+        self.maximumOutputBytes = maximumOutputBytes
         self.inputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: Double(sampleRate),
@@ -27,6 +31,13 @@ final class ChunkWriter {
 
     /// Begin writing to the output file.
     func start() throws {
+        if let maximumOutputBytes {
+            let writer = BoundedCAFWriter(outputURL: outputURL, sampleRate: sampleRate,
+                bitRate: bitRate, maxBytes: maximumOutputBytes)
+            try writer.start()
+            boundedWriter = writer
+            return
+        }
         // Remove existing file if any
         try? FileManager.default.removeItem(at: outputURL)
 
@@ -53,6 +64,12 @@ final class ChunkWriter {
 
     /// Append PCM Float32 samples.
     func appendSamples(_ samples: [Float], at time: CMTime) {
+        if let boundedWriter {
+            guard !isFinished, !hasWriteFailure else { return }
+            do { try boundedWriter.appendSamples(samples) }
+            catch { hasWriteFailure = true }
+            return
+        }
         guard let file = audioFile, !isFinished else { return }
 
         let frameCount = AVAudioFrameCount(samples.count)
@@ -78,6 +95,19 @@ final class ChunkWriter {
 
     /// Finalize the file and return duration + file size.
     func finish() async -> (duration: TimeInterval, fileSize: Int64) {
+        if let writer = boundedWriter {
+            guard !isFinished else { return (0, 0) }
+            isFinished = true
+            defer { boundedWriter = nil }
+            do {
+                let result = try writer.finish()
+                guard !hasWriteFailure else { return (0, result.fileSize) }
+                return result
+            } catch {
+                hasWriteFailure = true
+                return (0, 0)
+            }
+        }
         guard audioFile != nil, !isFinished else {
             return (0, 0)
         }

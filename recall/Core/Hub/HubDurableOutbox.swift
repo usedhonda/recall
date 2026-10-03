@@ -203,7 +203,7 @@ actor HubDurableOutbox {
 
     /// Atomically reserve/release bytes owned by a producer outside this actor.
     /// A zero reservation removes the key. Existing outbox rows remain untouched.
-    func setExternalReservation(lane: String, key: String, bytes: Int64) throws {
+    func setExternalReservation(lane: String, key: String, bytes: Int64, externalOriginalBytes: Int64 = 0) throws {
         guard let budget = budgets[lane], !key.isEmpty, key.utf8.count <= 256, bytes >= 0 else {
             throw Failure.invalidEnvelope
         }
@@ -214,8 +214,19 @@ actor HubDurableOutbox {
             }
             let retained = try scalar("SELECT COALESCE(SUM(COALESCE(length(body),0)+4096),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
             let other = try scalar("SELECT COALESCE(SUM(bytes),0) FROM hub_reservations_v1 WHERE lane=? AND reservation_key<>?", [.text(lane), .text(key)])
-            guard bytes <= budget.maxBytes, retained <= budget.maxBytes - other - bytes else { throw Failure.laneFull }
+            guard externalOriginalBytes >= 0, externalOriginalBytes <= budget.maxBytes,
+                  bytes <= budget.maxBytes - externalOriginalBytes,
+                  other <= budget.maxBytes - externalOriginalBytes - bytes,
+                  retained <= budget.maxBytes - externalOriginalBytes - other - bytes else { throw Failure.laneFull }
             try execute("INSERT INTO hub_reservations_v1(lane,reservation_key,bytes) VALUES(?,?,?) ON CONFLICT(lane,reservation_key) DO UPDATE SET bytes=excluded.bytes", [.text(lane), .text(key), .int(bytes)])
+        }
+    }
+
+    /// Process-owned capture reservations have no live writer after restart.
+    /// Releasing these never removes source files, outbox bodies, or receipts.
+    func recoverAudioCaptureReservations() throws {
+        try transaction {
+            try execute("DELETE FROM hub_reservations_v1 WHERE lane='audio-original' AND reservation_key LIKE 'audio-capture:%'")
         }
     }
 
