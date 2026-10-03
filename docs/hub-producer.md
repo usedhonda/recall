@@ -132,8 +132,9 @@ delivery. Offline conversion uses `--source-export <private-export> --device-id
 <bound-id> --enable-route <route> --output <new-private-file>`. No route is enabled
 by default; each selected route must have an exact allowed domain. The output is
 created exclusively with mode 0600, refuses existing files and symlinks, and always
-sets `legacyDisabledRoutes` to an empty list. Conversion does not contact a device. The exporter/file remains undeployed until its owner announces readiness.
-Do not fetch a guessed path or enable audio release from a source-code commit.
+sets `legacyDisabledRoutes` to an empty list. Conversion does not contact a device. The owner has announced source-export placement; its Recall-only profile was
+privately retrieved and validated. This is not device Keychain enrollment.
+Do not enable audio release from a source-code commit.
 The Hub owner is still reviewing server compatibility; a deployment notice and
 route evidence are separate requirements.
 

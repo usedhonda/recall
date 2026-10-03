@@ -31,9 +31,11 @@ old-route stop, or consumer acceptance was performed for this checkpoint.
 ## Remaining exact dependencies / work
 
 1. Obtain Recall-only endpoint/token through the Hub owner's private procedure,
-   not the full source policy. The owner confirmed the export schema, but its
-   exporter/file is not yet deployed. Wait for the placement notification before
-   retrieval; configure route enablement only after local and server acceptance.
+   not the full source policy. The source-only export was placed and privately
+   retrieved; schema/permissions were validated without exposing values. A private
+   device-bound configuration was generated from the existing device identity,
+   with zero enabled routes and zero legacy stops. Device transfer and Keychain
+   import are not yet established. Configure routes only after acceptance.
 2. Complete strict audio capture staging reservation. The current exclusive
    writer token + start guard is not a byte bound on an encoded future chunk.
    It must not be described as full `storageCapMB` enforcement or used alone
@@ -64,3 +66,12 @@ The source-only provision export uses `schema_version`, `source`, `base_url`,
 Conversion must enforce source/domain restrictions, explicit device identity and
 route selection, and produce no legacy-disable flags. No credential values or
 full Hub policy belong in messages or tracked artifacts.
+
+### Private provisioning progress
+
+The deployed source export and the still-unreflected processing receipt are
+separate states. Only the source export was retrieved. The device preference
+read confirmed no existing Hub activation/cutover latches. Its Recall process
+is running; the available process API does not report foreground state. No app
+replacement, launch, device-file transfer, or foreground change was performed.
+Do not equate the locally prepared private config with Keychain enrollment.
