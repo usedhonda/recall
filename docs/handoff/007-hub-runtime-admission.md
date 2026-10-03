@@ -130,7 +130,12 @@ Glasses headroom estimates never replace actual serialized envelope limits.
   Latest live selection still used a newer legacy snapshot; unit correction was
   pending. No legacy-stop approval has been issued.
 
-Remaining: prepare the signed device build; resolve incident credential/restart
+The signed device build passed and its signature verified. A private eight-route
+configuration was prepared locally from the existing source-only profile, with
+all seven prior routes preserved and zero legacy-stop flags. It has NOT been
+transferred or activated. No credentials were printed or changed.
+
+Remaining: resolve incident credential/restart
 conditions before device reflection; collect natural audio/storage+STT intent
 and remaining route receipts; obtain actual live consumer selection and per-route
 cutover acceptance. Audio remains disabled on the device. No synthetic production
