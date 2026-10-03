@@ -605,6 +605,10 @@ final class AudioRecordingEngine {
     // MARK: - Chunk Lifecycle
 
     private func startNewChunk() async {
+        guard await OriginalCapacity.shared.canStartAudioChunk() else {
+            activity.log(.state, "Audio capture paused: source capacity exhausted")
+            return
+        }
         UserDefaults.standard.set(Date(), forKey: AudioStateSignal.lastChunkKey)
         // Use pending chunk's timestamp if available (preserves original timing for voicelog merge)
         let effectiveStart = pendingChunkStartedAt ?? Date()

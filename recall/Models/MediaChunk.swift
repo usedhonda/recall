@@ -30,6 +30,11 @@ final class MediaChunk {
     var uploadAttempts: Int
     var lastUploadAttempt: Date?
     var uploadedAt: Date?
+    var legacyUploadedAt: Date?
+    /// Immutable Hub admission receipt for glasses originals.
+    var hubExternalID: String?
+    var hubAdmittedAt: Date?
+    var hubAcknowledgedAt: Date?
     var createdAt: Date
 
     var mediaType: MediaType {
@@ -95,6 +100,10 @@ final class MediaChunk {
         self.uploadStatusRaw = MediaUploadStatus.pending.rawValue
         self.uploadAttempts = 0
         self.createdAt = Date()
+        self.hubExternalID = nil
+        self.legacyUploadedAt = nil
+        self.hubAdmittedAt = nil
+        self.hubAcknowledgedAt = nil
     }
 }
 

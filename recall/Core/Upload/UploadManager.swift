@@ -133,6 +133,7 @@ final class UploadManager {
     private func processLoop(modelContext: ModelContext) async {
         while shouldContinue, !Task.isCancelled {
             await reconcileUploadState(modelContext: modelContext)
+            await reconcileHubAcknowledgements(modelContext: modelContext)
 
             // Check connectivity
             guard ConnectivityMonitor.shared.canUploadAudio else {
@@ -318,6 +319,22 @@ final class UploadManager {
         chunk.lastUploadAttempt = Date()
         try? modelContext.save()
 
+        // Immutable source admission is independent from legacy transcript delivery.
+        // Keep the original on disk until Hub acknowledges it.
+        await admitAudioOriginalIfNeeded(chunk, data: try? Data(contentsOf: fileURL), settings: settings, modelContext: modelContext)
+        if HubDeliveryService.shared.legacyDisabled(.audioOriginal) {
+            await acknowledgeAudioOriginalIfPossible(chunk, modelContext: modelContext)
+            if chunk.hubAcknowledgedAt != nil {
+                markUploaded(chunk, at: Date())
+                try? modelContext.save()
+                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+            } else {
+                chunk.uploadStatus = .pending
+                try? modelContext.save()
+            }
+            return
+        }
+
         // Always use foreground session — recall's audio background mode keeps
         // the process alive, so background URLSession is unnecessary and adds
         // failure modes (ATS edge cases, stuck tasks, delegate timing).
@@ -333,10 +350,13 @@ final class UploadManager {
             )
 
             markUploaded(chunk, at: Date())
+            chunk.legacyUploadedAt = Date()
             try? modelContext.save()
 
-            // Delete local file after successful upload
-            try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+            await acknowledgeAudioOriginalIfPossible(chunk, modelContext: modelContext)
+            if chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.audioOriginal) {
+                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
+            }
 
             refreshCounts(modelContext: modelContext)
             uploadProgress = "Uploaded \(chunk.fileName)"
@@ -363,6 +383,57 @@ final class UploadManager {
             // Log cumulative failure stats periodically
             if chunk.uploadAttempts == 1 || chunk.uploadAttempts % 5 == 0 {
                 activity.log(.upload, "Upload stats: pending=\(pendingCount) failed=\(failedCount) attempt=#\(chunk.uploadAttempts) reason=\(reason)")
+            }
+        }
+    }
+
+    private func admitAudioOriginalIfNeeded(_ chunk: AudioChunk, data: Data?, settings: AppSettings, modelContext: ModelContext) async {
+        guard chunk.hubExternalID == nil,
+              HubDeliveryService.shared.isEnabled(.audioOriginal),
+              let data else { return }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let payload: [String: String] = [
+            "device_id": settings.deviceId,
+            "file_name": chunk.fileName,
+            "started_at": formatter.string(from: chunk.startedAt),
+            "duration_sec": String(format: "%.3f", chunk.duration),
+            "source": "recall_audio"
+        ]
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        do {
+            let externalID = try await HubDeliveryService.shared.admit(
+                route: .audioOriginal, observationID: chunk.id.uuidString, occurredAt: chunk.startedAt,
+                timeBasis: "capture", sourcePayloadJSON: jsonData, originalBytes: data)
+            chunk.hubExternalID = externalID
+            chunk.hubAdmittedAt = Date()
+            try? modelContext.save()
+            activity.log(.upload, "Hub admitted audio \(chunk.fileName) -> \(externalID)")
+        } catch {
+            activity.log(.error, "Hub audio admission pending \(chunk.fileName): \(error.localizedDescription)")
+        }
+    }
+
+    private func acknowledgeAudioOriginalIfPossible(_ chunk: AudioChunk, modelContext: ModelContext) async {
+        guard let externalID = chunk.hubExternalID, chunk.hubAcknowledgedAt == nil else { return }
+        do {
+            if try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) {
+                chunk.hubAcknowledgedAt = Date()
+                try? modelContext.save()
+            }
+        } catch {
+            activity.log(.upload, "Hub audio acknowledgement pending \(chunk.fileName)")
+        }
+    }
+
+    private func reconcileHubAcknowledgements(modelContext: ModelContext) async {
+        let uploaded = AudioChunk.UploadStatus.uploaded.rawValue
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: #Predicate { $0.uploadStatusRaw == uploaded && $0.hubExternalID != nil && $0.hubAcknowledgedAt == nil })
+        guard let chunks = try? modelContext.fetch(descriptor) else { return }
+        for chunk in chunks {
+            await acknowledgeAudioOriginalIfPossible(chunk, modelContext: modelContext)
+            if chunk.hubAcknowledgedAt != nil {
+                try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
             }
         }
     }
@@ -409,7 +480,7 @@ final class UploadManager {
         let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
         guard let stale = try? modelContext.fetch(descriptor), !stale.isEmpty else { return }
 
-        for chunk in stale {
+        for chunk in stale where chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.audioOriginal) {
             markDiscarded(chunk, reason: .expired)
             Task { try? await ChunkFileManager.shared.deleteChunk(at: chunk.filePath) }
         }
@@ -436,7 +507,7 @@ final class UploadManager {
         var retried = 0
         var dropped = 0
         for chunk in failedChunks {
-            if chunk.uploadAttempts >= Self.maxUploadAttempts {
+            if chunk.uploadAttempts >= Self.maxUploadAttempts && (chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.audioOriginal)) {
                 // Permanently skip — too many failures
                 markDiscarded(chunk, reason: .retryExhausted)
                 activity.log(.upload, "Dropped after \(chunk.uploadAttempts) attempts: \(chunk.fileName)")

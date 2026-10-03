@@ -62,6 +62,7 @@ final class MediaUploadManager {
             }
 
             refreshCounts(context: context)
+            await reconcileHubAcknowledgements(context: context)
             dropExpired(context: context)
 
             if consecutiveFailures >= 3 {
@@ -139,6 +140,21 @@ final class MediaUploadManager {
         chunk.lastUploadAttempt = Date()
         try? context.save()
 
+        await admitGlassesOriginalIfNeeded(chunk, data: fileData, deviceId: settings.deviceId, context: context)
+        if chunk.source == .glasses, HubDeliveryService.shared.legacyDisabled(.glassesOriginal) {
+            await acknowledgeGlassesOriginalIfPossible(chunk, context: context)
+            if chunk.hubAcknowledgedAt != nil {
+                chunk.uploadStatus = .uploaded
+                chunk.uploadedAt = Date()
+                try? context.save()
+                try? FileManager.default.removeItem(at: fileURL)
+            } else {
+                chunk.uploadStatus = .pending
+                try? context.save()
+            }
+            return
+        }
+
         do {
             let metadataJSON = try JSONSerialization.data(withJSONObject: metadata)
             guard let metadataString = String(data: metadataJSON, encoding: .utf8) else {
@@ -166,8 +182,12 @@ final class MediaUploadManager {
 
             chunk.uploadStatus = .uploaded
             chunk.uploadedAt = Date()
+            chunk.legacyUploadedAt = Date()
             try? context.save()
-            try? FileManager.default.removeItem(at: fileURL)
+            await acknowledgeGlassesOriginalIfPossible(chunk, context: context)
+            if chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.glassesOriginal) {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
             consecutiveFailures = 0
             refreshCounts(context: context)
             activity.log(.upload, "[media] uploaded \(chunk.fileName) HTTP \(http.statusCode)")
@@ -179,6 +199,60 @@ final class MediaUploadManager {
             try? context.save()
             refreshCounts(context: context)
             activity.log(.error, "[media] upload FAIL \(chunk.fileName) #\(chunk.uploadAttempts) \(error.localizedDescription)")
+        }
+    }
+
+    private func admitGlassesOriginalIfNeeded(_ chunk: MediaChunk, data: Data, deviceId: String, context: ModelContext) async {
+        guard chunk.source == .glasses,
+              chunk.hubExternalID == nil,
+              HubDeliveryService.shared.isEnabled(.glassesOriginal) else { return }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let payload: [String: String] = [
+            "device_id": deviceId,
+            "file_name": chunk.fileName,
+            "captured_at": formatter.string(from: chunk.capturedAt),
+            "imported_at": formatter.string(from: chunk.importedAt),
+            "photo_local_id": chunk.photoLocalIdentifier,
+            "media_type": chunk.mediaTypeRaw,
+            "uti": chunk.uti,
+            "source": chunk.sourceRaw
+        ]
+        guard let json = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        do {
+            let externalID = try await HubDeliveryService.shared.admit(
+                route: .glassesOriginal, observationID: chunk.id.uuidString, occurredAt: chunk.capturedAt,
+                timeBasis: "capture", sourcePayloadJSON: json, originalBytes: data)
+            chunk.hubExternalID = externalID
+            chunk.hubAdmittedAt = Date()
+            try? context.save()
+            activity.log(.upload, "Hub admitted glasses original \(chunk.fileName) -> \(externalID)")
+        } catch {
+            activity.log(.error, "Hub glasses admission pending \(chunk.fileName): \(error.localizedDescription)")
+        }
+    }
+
+    private func acknowledgeGlassesOriginalIfPossible(_ chunk: MediaChunk, context: ModelContext) async {
+        guard let externalID = chunk.hubExternalID, chunk.hubAcknowledgedAt == nil else { return }
+        do {
+            if try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) {
+                chunk.hubAcknowledgedAt = Date()
+                try? context.save()
+            }
+        } catch {
+            activity.log(.upload, "Hub glasses acknowledgement pending \(chunk.fileName)")
+        }
+    }
+
+    private func reconcileHubAcknowledgements(context: ModelContext) async {
+        let uploaded = MediaUploadStatus.uploaded.rawValue
+        let descriptor = FetchDescriptor<MediaChunk>(predicate: #Predicate { $0.uploadStatusRaw == uploaded && $0.hubExternalID != nil && $0.hubAcknowledgedAt == nil })
+        guard let chunks = try? context.fetch(descriptor) else { return }
+        for chunk in chunks where chunk.source == .glasses {
+            await acknowledgeGlassesOriginalIfPossible(chunk, context: context)
+            if chunk.hubAcknowledgedAt != nil {
+                try? FileManager.default.removeItem(atPath: chunk.filePath)
+            }
         }
     }
 
@@ -253,7 +327,7 @@ final class MediaUploadManager {
         }
         let descriptor = FetchDescriptor<MediaChunk>(predicate: predicate)
         guard let expired = try? context.fetch(descriptor), !expired.isEmpty else { return }
-        for chunk in expired {
+        for chunk in expired where chunk.hubAcknowledgedAt != nil || chunk.sourceRaw != MediaImportSource.glasses.rawValue || !HubDeliveryService.shared.isEnabled(.glassesOriginal) {
             try? FileManager.default.removeItem(atPath: chunk.filePath)
             context.delete(chunk)
         }

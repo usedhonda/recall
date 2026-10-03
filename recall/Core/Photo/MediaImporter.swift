@@ -139,7 +139,10 @@ final class MediaImporter {
         latitude: Double? = nil,
         longitude: Double? = nil,
         modelContext: ModelContext
-    ) throws -> MediaChunk? {
+    ) async throws -> MediaChunk? {
+        guard await OriginalCapacity.shared.canImportGlasses(bytes: Int64(data.count)) else {
+            throw ImportError.copyFailed("glasses source capacity exhausted")
+        }
         // Stable, namespaced dedup key — identical across re-deliveries of the same
         // shutter event, so a re-drop dedupes instead of double-importing.
         let stableId = "dat:\(captureId)"
@@ -195,6 +198,7 @@ final class MediaImporter {
         ActivityLogger.shared.log(.telemetry, "[photo] imported (handoff) \(fileName) captureId=\(captureId) bytes=\(data.count)")
         return chunk
     }
+
 
     /// Cross-path dedup: the same shutter event can arrive via both the handoff
     /// (`dat:<captureId>`) and PhotoKit (PHAsset id). Match on `capturedAt ±3s` AND

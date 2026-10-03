@@ -145,7 +145,7 @@ final class GlassesHandoffReceiver {
                 geo = nil
             }
             do {
-                let chunk = try importer.importGlassesPhoto(
+                let chunk = try await importer.importGlassesPhoto(
                     data: bytes,
                     capturedAt: capturedAt,
                     captureId: manifest.captureId,

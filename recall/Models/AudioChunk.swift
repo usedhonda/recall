@@ -16,6 +16,11 @@ final class AudioChunk {
     var uploadAttempts: Int
     var lastUploadAttempt: Date?
     var uploadedAt: Date?
+    var legacyUploadedAt: Date?
+    /// Immutable Hub admission receipt. The source file is retained until this is acknowledged.
+    var hubExternalID: String?
+    var hubAdmittedAt: Date?
+    var hubAcknowledgedAt: Date?
     var createdAt: Date
 
     // Audio quality metadata for voicelog filtering
@@ -67,6 +72,10 @@ final class AudioChunk {
         self.discardReasonRaw = nil
         self.uploadAttempts = 0
         self.createdAt = Date()
+        self.hubExternalID = nil
+        self.legacyUploadedAt = nil
+        self.hubAdmittedAt = nil
+        self.hubAcknowledgedAt = nil
         self.avgRMS = avgRMS
         self.vadAvgProb = vadAvgProb
         self.noiseFloorRMS = noiseFloorRMS

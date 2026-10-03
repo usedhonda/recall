@@ -28,7 +28,7 @@ actor StorageManager {
         var freed: Int64 = 0
         let excess = currentSize - capBytes
 
-        for chunk in uploaded {
+        for chunk in uploaded where chunk.hubAcknowledgedAt != nil || !HubDeliveryService.shared.isEnabled(.audioOriginal) {
             guard freed < excess else { break }
             do {
                 try await ChunkFileManager.shared.deleteChunk(at: chunk.filePath)
