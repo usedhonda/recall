@@ -101,7 +101,9 @@ final class AudioRecordingEngine {
     /// stops hammering fresh activations and waits for an activatable trigger (route
     /// change / foreground / watchdog) instead. Cleared on any successful resume.
     private var activationBlocked = false
-    /// iOS is refusing to hand the audio session back. Read by the audio state signal.
+    /// Why iOS is refusing to hand the audio session back (nil when it is not). Read by
+    /// the audio state signal.
+    private(set) var activationBlockReason: String?
     var isActivationBlocked: Bool { activationBlocked }
     private var cannotInterruptOthersFailures = 0
     private var nextActivationRetryAt: Date = .distantPast
@@ -1059,13 +1061,13 @@ final class AudioRecordingEngine {
             BackgroundKeepAlive.shared.resumePlayback()
             activity.log(.state, "Resumed after interruption — Listening (attempt \(attempt))")
         } catch {
-            if AudioSessionManager.isCannotInterruptOthers(error) {
+            if AudioSessionManager.isActivationRefused(error) {
                 // bg cold activate is structurally rejected (-50). Fresh-activation
                 // retries are wasted in the background, so stop the storm. Stay
                 // .paused (NOT .idle — that would trip HealthMonitor into a
                 // recreate -> cold-activate loop) and wait for an activatable trigger;
                 // the immortal watchdog's .paused branch is the guaranteed floor.
-                markActivationBlocked(context: "resume")
+                markActivationBlocked(context: "resume", error: error)
                 logger.warning("Resume blocked — cannotInterruptOthers (background)")
                 return
             }
@@ -1109,14 +1111,15 @@ final class AudioRecordingEngine {
         resumeAfterInterruption(attempt: 1)
     }
 
-    private func markActivationBlocked(context: String) {
+    private func markActivationBlocked(context: String, error: Error) {
         activationBlocked = true
+        activationBlockReason = AudioSessionManager.activationRefusal(error)
         state = .paused
         cannotInterruptOthersFailures += 1
         let index = min(cannotInterruptOthersFailures - 1, activationRetryBackoff.count - 1)
         let delay = activationRetryBackoff[index]
         nextActivationRetryAt = Date().addingTimeInterval(delay)
-        activity.log(.state, "\(context) blocked — cannotInterruptOthers (bg), retry in \(Int(delay))s (failure=\(cannotInterruptOthersFailures))")
+        activity.log(.state, "\(context) blocked — \(activationBlockReason ?? "refused") (bg), retry in \(Int(delay))s (failure=\(cannotInterruptOthersFailures))")
     }
 
     private func resetActivationBackoff() {
@@ -1126,6 +1129,7 @@ final class AudioRecordingEngine {
 
     private func clearActivationBlock() {
         activationBlocked = false
+        activationBlockReason = nil
         resetActivationBackoff()
     }
 
@@ -1192,10 +1196,10 @@ final class AudioRecordingEngine {
             activity.log(.error, "Soft restart hit installTap NSException — engine poisoned, escalating to HealthMonitor (\(reason))")
             activity.log(.error, snapshotAudioState(prefix: "installTap exception"))
         } catch {
-            if AudioSessionManager.isCannotInterruptOthers(error) {
+            if AudioSessionManager.isActivationRefused(error) {
                 // -50 in background is not a poisoned engine — don't hard-reset or
                 // count it toward recreate. Park .paused and wait for a trigger.
-                markActivationBlocked(context: "restart")
+                markActivationBlocked(context: "restart", error: error)
                 return
             }
             // If stop+start fails, try with full reset as last resort
@@ -1228,9 +1232,9 @@ final class AudioRecordingEngine {
                 activity.log(.error, "Hard restart hit installTap NSException — engine poisoned, escalating to HealthMonitor (\(reason))")
                 activity.log(.error, snapshotAudioState(prefix: "installTap exception (hard)"))
             } catch {
-                if AudioSessionManager.isCannotInterruptOthers(error) {
+                if AudioSessionManager.isActivationRefused(error) {
                     // -50 in background — park .paused, don't escalate to recreate.
-                    markActivationBlocked(context: "restart")
+                    markActivationBlocked(context: "restart", error: error)
                     return
                 }
                 consecutiveRestartFailures += 1

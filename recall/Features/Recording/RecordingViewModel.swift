@@ -222,7 +222,7 @@ final class RecordingViewModel {
                     return
                 } catch {
                     let desc = "\(error.audioDiagnostic) \(AudioSessionSnapshot.describe())"
-                    let isIntConflict = AudioSessionManager.isCannotInterruptOthers(error)
+                    let isIntConflict = AudioSessionManager.isActivationRefused(error)
                     if isIntConflict {
                         intLaneAttempt += 1
                         ActivityLogger.shared.log(.error, "Background retry #\(attempt) failed: !int (cannotInterruptOthers) — long backoff lane=\(intLaneAttempt)")

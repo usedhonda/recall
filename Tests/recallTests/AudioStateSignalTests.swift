@@ -9,24 +9,28 @@ final class AudioStateSignalTests: XCTestCase {
     func testTheOwnersSwitchWinsOverWhateverTheEngineIsDoing() {
         for engine in [AudioStateSignal.Engine.none, .idle, .listening, .recording, .paused] {
             XCTAssertEqual(
-                AudioStateSignal.describe(toggleOn: false, engine: engine, activationBlocked: true),
+                AudioStateSignal.describe(toggleOn: false, engine: engine, blockReason: "cannotInterruptOthers"),
                 "stopped:user"
             )
         }
     }
 
     func testSwitchOnButNothingRunningIsNotTheOwnersDoing() {
-        XCTAssertEqual(AudioStateSignal.describe(toggleOn: true, engine: .none, activationBlocked: false), "stopped:internal")
-        XCTAssertEqual(AudioStateSignal.describe(toggleOn: true, engine: .idle, activationBlocked: false), "stopped:internal")
+        XCTAssertEqual(AudioStateSignal.describe(toggleOn: true, engine: .none, blockReason: nil), "stopped:internal")
+        XCTAssertEqual(AudioStateSignal.describe(toggleOn: true, engine: .idle, blockReason: nil), "stopped:internal")
     }
 
     func testARefusedResumeNamesItsReason() {
         XCTAssertEqual(
-            AudioStateSignal.describe(toggleOn: true, engine: .paused, activationBlocked: true),
+            AudioStateSignal.describe(toggleOn: true, engine: .paused, blockReason: "cannotInterruptOthers"),
             "blocked:cannotInterruptOthers"
         )
         XCTAssertEqual(
-            AudioStateSignal.describe(toggleOn: true, engine: .paused, activationBlocked: false),
+            AudioStateSignal.describe(toggleOn: true, engine: .paused, blockReason: "insufficientPriority"),
+            "blocked:insufficientPriority"
+        )
+        XCTAssertEqual(
+            AudioStateSignal.describe(toggleOn: true, engine: .paused, blockReason: nil),
             "blocked:interrupted"
         )
     }

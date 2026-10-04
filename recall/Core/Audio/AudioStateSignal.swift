@@ -22,8 +22,8 @@ enum AudioStateSignal {
     ///   - toggleOn: the owner's own switch for the audio stream. Off means off by choice,
     ///     whatever the engine is doing.
     ///   - engine: the engine's state, or `.none` if none exists.
-    ///   - activationBlocked: iOS is refusing to hand the audio session back.
-    static func describe(toggleOn: Bool, engine: Engine, activationBlocked: Bool) -> String {
+    ///   - blockReason: why iOS is refusing to hand the audio session back, nil when it is not.
+    static func describe(toggleOn: Bool, engine: Engine, blockReason: String?) -> String {
         guard toggleOn else { return "stopped:user" }
         switch engine {
         case .none, .idle:
@@ -31,7 +31,7 @@ enum AudioStateSignal {
         case .paused:
             // Paused means iOS took the session. Once a resume has been refused the reason
             // is known; before that it is still an interruption in progress (a call, Siri).
-            return activationBlocked ? "blocked:cannotInterruptOthers" : "blocked:interrupted"
+            return "blocked:" + (blockReason ?? "interrupted")
         case .listening:
             return "listening"
         case .recording:

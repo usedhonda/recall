@@ -169,7 +169,7 @@ final class ChannelStatusReporter {
         let state = AudioStateSignal.describe(
             toggleOn: rec.isRecording && !rec.userStopIntent,
             engine: engineState,
-            activationBlocked: engine?.isActivationBlocked ?? false
+            blockReason: engine?.activationBlockReason
         )
         let healthClass = AudioStateSignal.healthClass(of: state)
 

@@ -45,13 +45,28 @@ final class AudioSessionManager {
     /// of hammering fresh activations that iOS will keep rejecting.
     static let cannotInterruptOthersCode = 560557684
 
-    static func isCannotInterruptOthers(_ error: Error) -> Bool {
+    /// '!pri' — insufficient priority: another app (a call, an alarm, a louder session)
+    /// holds the audio session and iOS will not hand it over. Seen on 2026-10-03 with
+    /// the app in the background and the input route gone.
+    static let insufficientPriorityCode = 561017449
+
+    /// Why iOS refused to activate the session, or nil when the failure is something else
+    /// (an engine fault). A refusal is not a broken engine: recovery must wait, not rebuild.
+    static func activationRefusal(_ error: Error) -> String? {
         let nsError = error as NSError
-        if nsError.code == cannotInterruptOthersCode { return true }
-        if nsError.localizedDescription.contains("\(cannotInterruptOthersCode)") { return true }
-        if let avCode = AVAudioSession.ErrorCode(rawValue: nsError.code), avCode == .cannotInterruptOthers { return true }
-        return false
+        if nsError.code == cannotInterruptOthersCode
+            || nsError.localizedDescription.contains("\(cannotInterruptOthersCode)")
+            || AVAudioSession.ErrorCode(rawValue: nsError.code) == .cannotInterruptOthers {
+            return "cannotInterruptOthers"
+        }
+        if nsError.code == insufficientPriorityCode
+            || nsError.localizedDescription.contains("\(insufficientPriorityCode)") {
+            return "insufficientPriority"
+        }
+        return nil
     }
+
+    static func isActivationRefused(_ error: Error) -> Bool { activationRefusal(error) != nil }
 
     func configure() throws {
         var options: AVAudioSession.CategoryOptions = [

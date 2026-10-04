@@ -19,4 +19,14 @@ final class AudioErrorDiagnosticTests: XCTestCase {
         XCTAssertTrue(text.contains("-50"), text)
         XCTAssertFalse(text.contains("'"), text)
     }
+
+    func testOnlySessionRefusalsAreTreatedAsWaitNotRebuild() {
+        func refusal(_ value: Int) -> String? {
+            AudioSessionManager.activationRefusal(NSError(domain: NSOSStatusErrorDomain, code: value))
+        }
+        XCTAssertEqual(refusal(561_017_449), "insufficientPriority")      // '!pri': what held the mic on 2026-10-03
+        XCTAssertEqual(refusal(560_557_684), "cannotInterruptOthers")     // '!int'
+        XCTAssertNil(refusal(2_003_329_396))                              // 'what': an engine fault, still rebuilt
+        XCTAssertNil(refusal(-50))
+    }
 }
