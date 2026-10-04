@@ -433,6 +433,7 @@ final class UploadManager {
             chunk.lastUploadAttempt = Date()
             chunk.uploadAttempts += 1
             try? context.save()
+            activity.log(.error, "Hub audio original \(chunk.fileName) failed: \(error)")
             await hub.recordGap(route: .audioOriginal, reason: "original_delivery_failed")
         }
         // Let other originals enter the durable outbox; never busy-loop one item.
