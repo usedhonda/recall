@@ -18,10 +18,10 @@
 Silero is recurrent: it judges the current 256 ms partly from what came before, carried in
 a state it returns with every result.
 
-1. **Padded windows into a state that was never reset** (before `b51b646`): 100 ms of audio
+1. **Padded windows into a state that was never reset** (before `98f7fd8`): 100 ms of audio
    padded to 256 ms, fed into an accumulating state. Detection collapsed to silence within
    1-3 hours of a fresh start.
-2. **Fresh state per overlapping window** (`b51b646`, 09-11): the newest 256 ms re-scored
+2. **Fresh state per overlapping window** (`98f7fd8`, 09-11): the newest 256 ms re-scored
    from scratch every 100 ms. Detection never collapsed, and never meant anything either.
 
 ## The measurement that settled it (2026-09-13)
@@ -44,7 +44,7 @@ the detector carried no information.
 ## What this was NOT (corrected 2026-09-13, oc-general)
 
 The rate of boilerplate transcripts rose from 1.6% on 09-11 to 41% on 09-12, and within
-09-12 it climbed through the evening. Neither is evidence that `b51b646` made anything
+09-12 it climbed through the evening. Neither is evidence that `98f7fd8` made anything
 worse, and this document should not be read that way:
 
 - The evening climb is the owner asleep. Counting real (non-boilerplate) speech by hour
@@ -68,7 +68,7 @@ Daytime (07-15h UTC) real-speech share ran 44-89% on the old build. **That is th
 that falls if the new gate starts missing quiet or distant speech** — and it is invisible
 in the boilerplate labels, because audio that was never recorded is never labelled.
 
-## The repair (`dbbf499`)
+## The repair (`020be0c`)
 
 Contiguous, non-overlapping windows, state carried forward, and the library's own state
 machine (`makeStreamState` / `processStreamingChunk`) raising speech start and end. Quiet

@@ -134,3 +134,13 @@ or a hard-won sharp edge (→ §7).
   client-side.
 - **Secrets never go in tracked files.** `.local/`, `.codex/`, `.claude/` are gitignored on
   purpose — server URLs, tokens, and personas live there, not in the repo.
+- **Never force-unwrap an optional inside `#Predicate`.** `$0.lastUploadAttempt! < x` throws
+  `unsupportedPredicate`, and a surrounding `try?` turns that into "nothing pending" — the
+  audio and glasses queues silently stopped selecting chunks (2026-10-03). Fetch by the plain
+  fields and filter optional dates in memory; never swallow a fetch error without logging it.
+- **Stored file paths are absolute and the data container can move.** A reinstall changed the
+  container UUID and every retained chunk failed to open. Chunk paths are re-pointed at queue
+  start (`repairMovedChunkPaths`); store file names, not container paths, in new models.
+- **This repository is public.** No personal values in tracked files or fixtures: home Wi-Fi
+  names, addresses, real coordinates, tailnet hosts or IPs. They live in ignored `.local/`.
+  Rewriting history needs the owner's explicit order and a temporary branch-protection change.

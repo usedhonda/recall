@@ -26,7 +26,7 @@
   - Server probe: BG 300 s (was 120 s); network-change probes dropped within 30 s of the last.
   - ActivityLogger: file writes buffered (2 s / 16 KB / immediate on `.error`) — 8d3522b had
     only ever landed on feat/dat-glasses-photo, never on main.
-- Files changed: see commits e4f1c03..2eee455 on main (7 commits, not yet pushed).
+- Files changed: see commits b39270e..139e699 on main (7 commits, not yet pushed).
 - Decisions:
   - Stationary location 5 min is the ceiling: oc-general's smallest location gap threshold is
     10 min (stationary-cluster continuity). Do not lengthen.
@@ -58,12 +58,12 @@
     auto-starts (userStopIntent reset on `.active`). How it came back on without a toggle tap
     is unknown (hypothesis: the foreground reset in `RecallApp.swift:44-52`). The 24h
     comparison is confounded unless audio is off — compare non-audio categories only.
-  - FIXED in 87907b4 (Phase 2): the delegate and `liveUpdates` both delivered the same fix ->
+  - FIXED in f19e96e (Phase 2): the delegate and `liveUpdates` both delivered the same fix ->
     identical `Sent` twice in one second. `liveUpdates` removed; standard updates via the
     delegate are the single continuous path (FG and BG), `pausesLocationUpdatesAutomatically
     = false` set next to `startUpdatingLocation()`. Both paths dated from the initial
     scaffold (5d891f4) with no incident behind either.
-  - Still to observe after 87907b4: BG delivery via the delegate path alone (`BG direct
+  - Still to observe after f19e96e: BG delivery via the delegate path alone (`BG direct
     sent` / `BG heartbeat` lines once the phone is locked) and region enter/exit.
   - Indoor jitter >= 20 m counts as movement -> ~26 sends/h indoors instead of <= 12/h.
   - Launch race: `queryAndSendFull` and the first observer-driven query both POST the same

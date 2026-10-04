@@ -9,7 +9,7 @@
   2026-09-17 three stretches were found where recording stopped **without anyone being able
   to see it** (one of them possibly deliberate) — the app stays alive, telemetry keeps flowing, and only the audio is gone.
 - Scope: recording engine start/stop paths, audio session recovery, telemetry fields.
-- Status: state signal **shipped** 2026-09-17 on the owner's GO (`3bcc957`, `2d17b23`) and
+- Status: state signal **shipped** 2026-09-17 on the owner's GO (`0ad913f`, `8013f02`) and
   verified end to end — `channel_status sent: HTTP 200 audio=listening` on the device, arrival
   confirmed in oc-general's channel-status.json. Their receiver (storing the fields, the
   10-minute alarm, the note in Chi's context) is being rolled out on their side. No change to
@@ -90,3 +90,19 @@ block exactly the deliberate battery stop the owner makes.
 Measured on the surviving half of 09-16, same hours as the 09-13 baseline: real speech 50% ->
 100% at 11h UTC (215 segments), 44% -> 100% at 12h (15). Details:
 `docs/handoff/002-vad-collapse.md`.
+
+## 2026-10-03: the session was refused with `!pri`, and the engine was rebuilt for nothing
+
+First interruption captured with the diagnostics added on 2026-09-18: at
+13:38:57Z, app in the background, the input route gone and another app playing, three resume
+attempts failed with `NSOSStatusErrorDomain 561017449 '!pri'` (insufficient priority). That
+code was not classified as a refusal, so it went through `restartEngine()` and a hard reset,
+left the engine idle (`stopped:internal`), and nothing could restart it from the background.
+Recording stayed off for about 17 hours, until the app was opened (2026-10-04 06:35Z).
+
+Fix `57e5415`: `AudioSessionManager.activationRefusal` classifies `!int` and `!pri` as
+"refused — wait", the engine parks `.paused` with the existing backoff, and the server sees
+`blocked:<reason>` (`blocked:insufficientPriority`) instead of `stopped:internal`. `'what'`
+(media-server fault) is still treated as an engine fault. Not yet observed live: it needs the
+next real interruption. The owner decided against a local notification; the cause stays
+readable in the device log (reason, foreground/background, route) and in the hourly status.

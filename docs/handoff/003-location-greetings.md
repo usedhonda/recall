@@ -25,7 +25,7 @@ recall sends as an event:
 
 ## What recall now does
 
-- **Geofence events** (`GeofenceEventReporter`, 8e58f09): on CLCircularRegion enter/exit it
+- **Geofence events** (`GeofenceEventReporter`, 712be7c): on CLCircularRegion enter/exit it
   POSTs `{device_id, type:"geofence_event", anchor, transition, occurred_at, accuracy_m, fix_id}`
   immediately, carrying the OS crossing time. oc-general is building the receiver; idempotency
   key is `(anchor, transition, occurred_at)`. Ordinary position POSTs continue as the slow
@@ -49,19 +49,19 @@ tune thresholds from that window.
 
 ## Done 2026-09-13
 
-- **`fix_id` is now a real join key** (`bfde8d3`). Crossing events used to invent one, so
+- **`fix_id` is now a real join key** (`fbca558`). Crossing events used to invent one, so
   nothing could be correlated. `LocationManager` issues an id when it accepts a fix and
   re-issues it only for a genuinely different fix (the forced send after a crossing replays
   the same `CLLocation`); positions and events both quote it. `TelemetrySample.id` stays
   unique per POST on purpose — the stationary heartbeat re-sends one fix every few minutes
   and a stable `id` would let the server dedupe the heartbeat away. Wire format is pinned by
   `Tests/recallTests/TelemetrySampleEncodingTests.swift`.
-- **The Wi-Fi name is read on every foreground** (`abbd1d7`). It was only asked for on the
+- **The Wi-Fi name is read on every foreground** (`5569f9c`). It was only asked for on the
   join transition, which almost always happens in the background where iOS answers nil —
   hence zero home classifications on 09-12. The "home detection has been dead for N days"
   watchdog stays on the server: `wifi_ssid_age_seconds` already travels with every position,
   and a second copy of the same check on the device would be duplicated machinery.
-- **Battery level goes into the activity log on change** (`abbd1d7`), riding the heartbeat
+- **Battery level goes into the activity log on change** (`5569f9c`), riding the heartbeat
   tick, so the next power comparison can be stated in %/h.
 - The event schemas were re-sent to oc-general (the earlier queued copy expired unsent).
 
@@ -98,7 +98,7 @@ From the on-device log (JST): out 13:48 -> home 15:09, about 2.1 km away at the 
 ### The weakness this exposed: one witness only
 
 `geofence_event` did not fire at all — the configured anchors are in Tokyo. The parked-circle
-exit added for exactly this reason (`ef927db`) did not fire either: the circle is cleared and
+exit added for exactly this reason (`58d7ff5`) did not fire either: the circle is cleared and
 re-armed on every small movement indoors (**40+ times on 2026-09-25**), and it happened not to
 be armed at the moment of departure. So in Singapore the departure has **only the Wi-Fi drop**
 as a witness, and Wi-Fi alone must not greet — the home network drops without anyone leaving
@@ -126,13 +126,13 @@ N m" as two witnesses rather than one.
 
 ## Fixed later the same day
 
-- **The parked probe now returns a fix** (`f44aa60`). Each parked heartbeat opened a 30 s
+- **The parked probe now returns a fix** (`aca65cb`). Each parked heartbeat opened a 30 s
   window at full accuracy, but left the 100 m distance filter on — and a phone that is not
   moving never travels 100 m, so iOS delivered nothing. The position being re-sent aged
   without bound (371 min, measured by oc-general on 09-12) and arrival stopped being
   decidable from freshness. The probe now drops the filter with the accuracy; the next tick
   restores it. Same for the window right after a relaunch, when no fix has been accepted yet.
-- **Every launch says how long the log had been silent** (`d6bbfd2`). iOS never tells an app
+- **Every launch says how long the log had been silent** (`cd10449`). iOS never tells an app
   it was killed, so a termination's only trace is the hole. The alarm itself stays on the
   server: oc-general is adding a liveness measure from the receive time, because the payload
   `timestamp` is the fix's own time and an ageing fix cannot distinguish "alive and parked"
@@ -143,3 +143,14 @@ N m" as two witnesses rather than one.
   (normal while parked or airborne).
 4. Battery: rates measured (see handoff 001). An actual %/h figure needs a day with the new
    logging, or the owner's Settings > Battery screen.
+
+## Decision 2026-10-04: two witnesses, decided on the server
+
+The owner chose the third option for the one-witness weakness (Singapore, and the same
+applies to Brooklyn): the receiver treats "Wi-Fi drop (`wifi_event left`) + the next position
+beyond about 100 m of the fix taken at the drop" as a departure; Wi-Fi alone still never
+greets. No app change: the drop already triggers an immediate fresh fix and `fix_id` joins the
+event to the position. The home reference is the fix at the moment of the drop, so no
+per-city anchor is needed. The receiver (`chi.cc`, formerly oc-general) replied: not
+implemented yet, N about 100 m, a 10 minute window, final values from the real data since
+09-25, and they will confirm the start with the owner first. Nothing for the app to do now.

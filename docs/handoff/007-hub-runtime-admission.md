@@ -163,3 +163,21 @@ Five new focused tests and the Simulator build passed. These changes are not
 device-reflected; geofence, now-playing, channel reports and glasses still lack
 natural route acceptance. The incident restart question is pending; credentials
 have not been rotated and private activation configuration has not been staged.
+
+## Outcome 2026-10-04 (supersedes the "pending" lines above)
+
+- The private configuration was imported (Keychain, 06:35Z) and all eight routes are live;
+  audio was the last one. Hub token for this source was reissued at 10:57Z and re-imported
+  in 14 s with no restart and no 401 in the device log; every lane retains and retries on a
+  non-2xx, nothing is dropped.
+- First natural audio: 40 of 40 originals stored with a durable STT intent, then read by a
+  consumer. Two defects had hidden them: the pending-chunk query matched nothing
+  (`cf32cd9`, see AGENTS.md section 7), and retained chunks pointed at an old data
+  container (`4660c56`). The glasses media query and the stalled-upload reset had the same
+  predicate defect (`b293cec`). Failures to deliver a Hub original are now logged
+  with their cause (`d0bda92`).
+- Lost for good: about 570 chunks finalized 10-03 03:33Z-13:01Z that the old build dropped as
+  stale before the Hub audio route existed, and 10-03 13:39Z to 10-04 06:35Z when recording
+  was refused and stopped (see handoff 004).
+- Still open: per-route legacy stop (waits for each consumer owner), geofence / now-playing /
+  glasses natural receipts, and a row-count check of the device outbox after the token swap.

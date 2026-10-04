@@ -1,6 +1,6 @@
 # Audio source payload and clock provenance
 
-Legacy provenance was established at Recall `1159b99`. The opt-in runtime now
+Legacy provenance was established at Recall `f79fff0`. The opt-in runtime now
 freezes persisted source observations and explicit unknown capture evidence;
 this is not device deployment or consumer acceptance. The selected release
 contract is original storage plus durable Hub STT intent, not a pending A/B choice.
