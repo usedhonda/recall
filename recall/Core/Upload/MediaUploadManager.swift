@@ -290,19 +290,33 @@ final class MediaUploadManager {
     }
 
     private func fetchNextPending(context: ModelContext) -> MediaChunk? {
+        nextPendingChunk(context: context, hubEnabled: HubDeliveryService.shared.isEnabled(.glassesOriginal))
+    }
+
+    /// Optional dates are filtered in memory: a #Predicate that force-unwraps
+    /// `lastUploadAttempt` throws `unsupportedPredicate`, which `try?` turned into
+    /// "nothing pending".
+    func nextPendingChunk(context: ModelContext, hubEnabled: Bool) -> MediaChunk? {
         let pending = MediaUploadStatus.pending.rawValue
         let failed = MediaUploadStatus.failed.rawValue
-        let hubEnabled = HubDeliveryService.shared.isEnabled(.glassesOriginal)
         let attemptCap = hubEnabled ? Int.max : Self.maxAttempts
-        let retryBefore = hubEnabled ? Date().addingTimeInterval(-5) : Date.distantFuture
-        let predicate = #Predicate<MediaChunk> {
-            ($0.uploadStatusRaw == pending || $0.uploadStatusRaw == failed) && $0.uploadAttempts < attemptCap
-            && ($0.lastUploadAttempt == nil || $0.lastUploadAttempt! < retryBefore)
+        let descriptor = FetchDescriptor<MediaChunk>(
+            predicate: #Predicate<MediaChunk> {
+                ($0.uploadStatusRaw == pending || $0.uploadStatusRaw == failed) && $0.uploadAttempts < attemptCap
+            },
+            sortBy: [SortDescriptor(\.capturedAt, order: .forward)])
+        let rows: [MediaChunk]
+        do {
+            rows = try context.fetch(descriptor)
+        } catch {
+            ActivityLogger.shared.log(.error, "[media] pending fetch failed: \(error.localizedDescription)")
+            return nil
         }
-        var descriptor = FetchDescriptor<MediaChunk>(predicate: predicate,
-            sortBy: hubEnabled ? [SortDescriptor(\.lastUploadAttempt, order: .forward)] : [SortDescriptor(\.capturedAt, order: .forward)])
-        descriptor.fetchLimit = 1
-        return (try? context.fetch(descriptor))?.first
+        guard hubEnabled else { return rows.first }
+        let retryBefore = Date().addingTimeInterval(-5)
+        return rows
+            .filter { ($0.lastUploadAttempt ?? .distantPast) < retryBefore }
+            .min { ($0.lastUploadAttempt ?? .distantPast) < ($1.lastUploadAttempt ?? .distantPast) }
     }
 
     private func refreshCounts(context: ModelContext) {

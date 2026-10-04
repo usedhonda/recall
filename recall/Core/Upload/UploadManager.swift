@@ -487,15 +487,15 @@ final class UploadManager {
 
     /// Reset `.uploading` chunks whose `lastUploadAttempt` is older than 5 min.
     /// Catches in-flight uploads that stalled (e.g. app kill mid-upload).
-    private func resetStaleUploads(modelContext: ModelContext) {
+    func resetStaleUploads(modelContext: ModelContext) {
         let uploading = AudioChunk.UploadStatus.uploading.rawValue
         let staleThreshold = Date().addingTimeInterval(-300) // 5 min
-        let predicate = #Predicate<AudioChunk> {
-            $0.uploadStatusRaw == uploading && $0.lastUploadAttempt != nil && $0.lastUploadAttempt! < staleThreshold
-        }
-        let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: #Predicate<AudioChunk> { $0.uploadStatusRaw == uploading })
 
-        guard let stale = try? modelContext.fetch(descriptor), !stale.isEmpty else { return }
+        // Filtered in memory: force-unwrapping the optional date inside #Predicate throws.
+        guard let rows = try? modelContext.fetch(descriptor) else { return }
+        let stale = rows.filter { ($0.lastUploadAttempt ?? .distantFuture) < staleThreshold }
+        guard !stale.isEmpty else { return }
         for chunk in stale {
             chunk.uploadStatus = .pending
             chunk.discardReason = nil
