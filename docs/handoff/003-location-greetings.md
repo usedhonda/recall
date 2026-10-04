@@ -87,7 +87,7 @@ rather than string match.
 
 From the on-device log (JST): out 13:48 -> home 15:09, about 2.1 km away at the furthest.
 
-- The fast path worked and was accepted: `wifi left: home-ssid` at 13:48:08, a fresh-fix kick in
+- The fast path worked and was accepted: `wifi left: <home-ssid>` at 13:48:08, a fresh-fix kick in
   the same second, `wifi_event left ... sent: HTTP 200` at **13:48:10 — two seconds after the
   doorway**. Arrival likewise at 15:10:21.
 - Position kept flowing while away: 268 sends, largest gap 6 min, accuracy mostly 2-5 m.
