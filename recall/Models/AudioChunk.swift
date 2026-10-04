@@ -36,6 +36,13 @@ final class AudioChunk {
     /// unless the peak says no moment of it ever resembled speech.
     var maxVadProb: Float = 0
 
+    // Clock readings the engine took while recording, for a derived capture interval.
+    // Nil on chunks recorded before they existed and on chunks assembled from a held short
+    // chunk (no reconstructable interval).
+    var captureClockAtStart: Date?
+    var capturePreRollSamples: Int?
+    var captureLastWriteAt: Date?
+
     var uploadStatus: UploadStatus {
         get { UploadStatus(rawValue: uploadStatusRaw) ?? .pending }
         set { uploadStatusRaw = newValue.rawValue }

@@ -48,7 +48,8 @@ final class HubDeliveryService {
     }
 
     func admit(route: HubRecallRoute, observationID: String, occurredAt: Date, timeBasis: String,
-               sourcePayloadJSON: Data, originalBytes: Data? = nil) async throws -> String {
+               sourcePayloadJSON: Data, originalBytes: Data? = nil,
+               capture: [String: Any]? = nil) async throws -> String {
         guard isEnabled(route) else { throw Failure.routeDisabled }
         let mutationToken: UUID?
         if route == .glassesOriginal {
@@ -76,7 +77,8 @@ final class HubDeliveryService {
         do {
             let envelope = try HubProducerContract.makeEnvelope(route: route, deviceID: configuration.deviceID,
                 observationID: observationID, occurredAt: occurredAt, timeBasis: timeBasis,
-                sourcePayloadJSON: sourcePayloadJSON, originalBytes: originalBytes)
+                sourcePayloadJSON: sourcePayloadJSON, originalBytes: originalBytes,
+                capture: capture)
             let files = try Self.originalDirectoryBytes(for: route)
             try await outbox.enqueue(envelope, externalOriginalBytes: files)
             return id

@@ -430,10 +430,21 @@ final class UploadManager {
                     if chunk.avgRMS > 0 { payload["avg_rms"] = String(format: "%.6f", chunk.avgRMS) }
                     if chunk.vadAvgProb > 0 { payload["vad_avg_prob"] = String(format: "%.4f", chunk.vadAvgProb) }
                     if chunk.noiseFloorRMS > 0 { payload["noise_floor_rms"] = String(format: "%.6f", chunk.noiseFloorRMS) }
+                    var capture: [String: Any]?
+                    if let externalID = try? HubProducerContract.canonicalExternalID(
+                        route: .audioOriginal, deviceID: AppSettings.shared.deviceId,
+                        observationID: chunk.id.uuidString.lowercased()),
+                       let derived = AudioCaptureEvidence.make(
+                        externalID: externalID, clockAtChunkStart: chunk.captureClockAtStart,
+                        preRollSamples: chunk.capturePreRollSamples, lastWriteAt: chunk.captureLastWriteAt,
+                        sampleRate: 16_000) {
+                        payload.merge(derived.sourceFields) { current, _ in current }
+                        capture = derived.capture
+                    }
                     chunk.hubExternalID = try await hub.admit(route: .audioOriginal,
                         observationID: chunk.id.uuidString.lowercased(), occurredAt: chunk.startedAt,
                         timeBasis: "chunk_start_utc", sourcePayloadJSON: JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
-                        originalBytes: bytes)
+                        originalBytes: bytes, capture: capture)
                     chunk.hubAdmittedAt = Date()
                     try context.save()
                 }

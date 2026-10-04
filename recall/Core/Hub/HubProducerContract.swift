@@ -198,7 +198,8 @@ enum HubProducerContract {
     static func makeEnvelope(route: HubRecallRoute, deviceID: String, observationID: String,
                              occurredAt: Date, timeBasis: String, sourcePayloadJSON: Data,
                              parents: [HubProducerParent] = [], originalBytes: Data? = nil,
-                             originalSHA256: String? = nil, originalByteLength: Int? = nil) throws -> HubProducerEnvelope {
+                             originalSHA256: String? = nil, originalByteLength: Int? = nil,
+                             capture: [String: Any]? = nil) throws -> HubProducerEnvelope {
         guard String(data: sourcePayloadJSON, encoding: .utf8) != nil,
               sourcePayloadJSON.first(where: { ![9, 10, 13, 32].contains($0) }) == UInt8(ascii: "{"),
               let payload = try? JSONSerialization.jsonObject(with: sourcePayloadJSON),
@@ -223,12 +224,13 @@ enum HubProducerContract {
         if (route == .audioOriginal || route == .glassesOriginal) && hash == nil {
             throw HubProducerError.conflictingOriginal
         }
-        let metadataWithoutPayload: [String: Any] = ["schema_version": 1, "device_id": deviceID,
+        var metadataWithoutPayload: [String: Any] = ["schema_version": 1, "device_id": deviceID,
                                         "observation_id": observationID,
                                         "time_basis": timeBasis, "parents": parents.map { [
                                             "source": $0.source, "external_id": $0.externalID,
                                             "event_id": $0.eventID.map { $0 as Any } ?? NSNull()
                                         ] }]
+        if let capture { metadataWithoutPayload["capture"] = capture }
         let occurred = ISO8601DateFormatter.hub.string(from: occurredAt)
         let metadataBase = try JSONSerialization.data(withJSONObject: metadataWithoutPayload, options: [.sortedKeys])
         guard metadataBase.last == UInt8(ascii: "}") else { throw HubProducerError.invalidSourcePayload }

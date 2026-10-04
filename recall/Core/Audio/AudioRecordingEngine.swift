@@ -58,6 +58,12 @@ final class AudioRecordingEngine {
 
     private var pendingSegmentBuffer: [Float] = []
     private var pendingChunkStartedAt: Date?
+    /// Clock readings for a derived capture interval (see AudioCaptureEvidence). A chunk
+    /// assembled from a held short chunk has no reconstructable interval.
+    private var chunkClockAtStart: Date?
+    private var chunkPreRollSamples: Int?
+    private var chunkLastWriteAt: Date?
+    private var chunkIsMerged = false
     private let pendingTimeout: TimeInterval = 120.0
 
     // MARK: - VAD State
@@ -615,7 +621,12 @@ final class AudioRecordingEngine {
         }
         UserDefaults.standard.set(Date(), forKey: AudioStateSignal.lastChunkKey)
         // Use pending chunk's timestamp if available (preserves original timing for voicelog merge)
-        let effectiveStart = pendingChunkStartedAt ?? Date()
+        let clockNow = Date()
+        let effectiveStart = pendingChunkStartedAt ?? clockNow
+        chunkIsMerged = pendingChunkStartedAt != nil || !pendingSegmentBuffer.isEmpty
+        chunkClockAtStart = clockNow
+        chunkPreRollSamples = 0
+        chunkLastWriteAt = nil
         let url = await chunkFileManager.generateChunkURL(startedAt: effectiveStart)
 
         let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate,
@@ -667,6 +678,7 @@ final class AudioRecordingEngine {
             } else {
                 samples16k = preMarginSamples
             }
+            chunkPreRollSamples = samples16k.count
             preprocessor.process(&samples16k)
             segmentBuffer.append(contentsOf: samples16k)
         }
@@ -693,12 +705,19 @@ final class AudioRecordingEngine {
 
         preprocessor.process(&samples16k)
         segmentBuffer.append(contentsOf: samples16k)
+        chunkLastWriteAt = Date()
     }
 
     private func finalizeCurrentChunk() async {
         guard let writer = currentWriter, let url = currentChunkURL, let startedAt = currentChunkStartedAt else {
             return
         }
+
+        // Read before cleanup: a merged chunk gets no capture interval at all.
+        let captureClock = chunkIsMerged ? nil : chunkClockAtStart
+        let capturePreRoll = chunkIsMerged ? nil : chunkPreRollSamples
+        let captureLastWrite = chunkIsMerged ? nil : chunkLastWriteAt
+        let wasMerged = chunkIsMerged
 
         let segmentDuration = Double(segmentBuffer.count) / Double(targetSampleRate)
 
@@ -768,7 +787,14 @@ final class AudioRecordingEngine {
         let maxVoiceMs = voiceIslandMaxRun * 100 // each frame is 100ms
         let vfr = voiceIslandTotalFrames > 0 ? Float(voiceIslandFrameCount) / Float(voiceIslandTotalFrames) : 0
 
-        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS, maxContinuousVoiceMs: maxVoiceMs, voiceFrameRatio: vfr, maxVadProb: chunkVADPeak)
+        await saveChunkRecord(url: url, startedAt: startedAt, duration: result.duration, fileSize: result.fileSize, avgRMS: avgRMSVal, vadAvgProb: vadAvgVal, noiseFloorRMS: noiseFloorRMS, maxContinuousVoiceMs: maxVoiceMs, voiceFrameRatio: vfr, maxVadProb: chunkVADPeak,
+                              captureClockAtStart: captureClock, capturePreRollSamples: capturePreRoll, captureLastWriteAt: captureLastWrite)
+        if wasMerged {
+            activity.log(.chunk, "Capture: merged chunk, interval not derivable")
+        } else if let captureClock, let captureLastWrite, let capturePreRoll {
+            let elapsed = captureLastWrite.timeIntervalSince(captureClock) + Double(capturePreRoll) / Double(targetSampleRate)
+            activity.log(.chunk, "Capture: derived preroll=\(capturePreRoll) elapsed=\(String(format: "%.1f", elapsed))s written=\(String(format: "%.1f", result.duration))s")
+        }
         chunksRecorded += 1
 
         // Reset voice island state
@@ -879,7 +905,8 @@ final class AudioRecordingEngine {
 
     // MARK: - SwiftData Persistence
 
-    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64, avgRMS: Float = 0, vadAvgProb: Float = 0, noiseFloorRMS: Float = 0, maxContinuousVoiceMs: Int = 0, voiceFrameRatio: Float = 0, maxVadProb: Float = 0) async {
+    private func saveChunkRecord(url: URL, startedAt: Date, duration: TimeInterval, fileSize: Int64, avgRMS: Float = 0, vadAvgProb: Float = 0, noiseFloorRMS: Float = 0, maxContinuousVoiceMs: Int = 0, voiceFrameRatio: Float = 0, maxVadProb: Float = 0,
+                                 captureClockAtStart: Date? = nil, capturePreRollSamples: Int? = nil, captureLastWriteAt: Date? = nil) async {
         guard let modelContainer else {
             logger.error("ModelContainer not set, cannot save chunk record")
             return
@@ -899,6 +926,9 @@ final class AudioRecordingEngine {
             voiceFrameRatio: voiceFrameRatio,
             maxVadProb: maxVadProb
         )
+        chunk.captureClockAtStart = captureClockAtStart
+        chunk.capturePreRollSamples = capturePreRollSamples
+        chunk.captureLastWriteAt = captureLastWriteAt
         context.insert(chunk)
 
         do {
