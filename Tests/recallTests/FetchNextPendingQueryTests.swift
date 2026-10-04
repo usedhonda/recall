@@ -20,4 +20,17 @@ final class FetchNextPendingQueryTests: XCTestCase {
             XCTAssertEqual(UploadManager().nextPendingChunk(modelContext: context, hubEnabled: hubEnabled)?.fileName, "a.caf", "hubEnabled=\(hubEnabled)")
         }
     }
+
+    func testChunkPathFromAnOldContainerIsRepointedToTheCurrentChunksDirectory() throws {
+        let context = try makeContext()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data([1]).write(to: dir.appendingPathComponent("b.caf"))
+        let chunk = AudioChunk(filePath: "/var/mobile/Containers/Data/Application/OLD/Documents/chunks/b.caf", fileName: "b.caf", startedAt: .now)
+        context.insert(chunk)
+        try context.save()
+
+        XCTAssertEqual(UploadManager().repairMovedChunkPaths(modelContext: context, chunksDirectory: dir), 1)
+        XCTAssertEqual(chunk.filePath, dir.appendingPathComponent("b.caf").path)
+    }
 }

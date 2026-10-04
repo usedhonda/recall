@@ -85,10 +85,36 @@ final class UploadManager {
 
     // MARK: - Reconciliation
 
+    /// Stored chunk paths are absolute and iOS can move the app's data container
+    /// (new UUID) when the app is reinstalled. Re-point rows whose file now lives
+    /// under the current chunks directory; without this every retained chunk fails
+    /// to open and is never delivered.
+    @discardableResult
+    func repairMovedChunkPaths(modelContext: ModelContext, chunksDirectory: URL? = nil) -> Int {
+        let directory = chunksDirectory ?? FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("chunks", isDirectory: true)
+        let terminal = [AudioChunk.UploadStatus.uploaded.rawValue, AudioChunk.UploadStatus.discarded.rawValue]
+        let descriptor = FetchDescriptor<AudioChunk>(predicate: #Predicate<AudioChunk> { !terminal.contains($0.uploadStatusRaw) })
+        guard let rows = try? modelContext.fetch(descriptor) else { return 0 }
+        var repaired = 0
+        for chunk in rows where !FileManager.default.fileExists(atPath: chunk.filePath) {
+            let candidate = directory.appendingPathComponent(chunk.fileName)
+            guard FileManager.default.fileExists(atPath: candidate.path) else { continue }
+            chunk.filePath = candidate.path
+            repaired += 1
+        }
+        if repaired > 0 {
+            try? modelContext.save()
+            activity.log(.upload, "Re-pointed \(repaired) chunk paths to the current data container")
+        }
+        return repaired
+    }
+
     /// Unconditionally reset all `.uploading` chunks to `.pending` on startup.
     /// Called before `startProcessing` to recover from app kill scenarios
     /// where no background session can vouch for the chunks.
     func reconcileStuckUploads(modelContext: ModelContext) {
+        repairMovedChunkPaths(modelContext: modelContext)
         let uploading = AudioChunk.UploadStatus.uploading.rawValue
         let predicate = #Predicate<AudioChunk> { $0.uploadStatusRaw == uploading }
         let descriptor = FetchDescriptor<AudioChunk>(predicate: predicate)
