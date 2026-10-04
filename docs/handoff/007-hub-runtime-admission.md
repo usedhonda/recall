@@ -172,10 +172,10 @@ have not been rotated and private activation configuration has not been staged.
   non-2xx, nothing is dropped.
 - First natural audio: 40 of 40 originals stored with a durable STT intent, then read by a
   consumer. Two defects had hidden them: the pending-chunk query matched nothing
-  (`cf32cd9`, see AGENTS.md section 7), and retained chunks pointed at an old data
-  container (`4660c56`). The glasses media query and the stalled-upload reset had the same
-  predicate defect (`b293cec`). Failures to deliver a Hub original are now logged
-  with their cause (`d0bda92`).
+  (`078634e`, see AGENTS.md section 7), and retained chunks pointed at an old data
+  container (`d42eaa4`). The glasses media query and the stalled-upload reset had the same
+  predicate defect (`d2e2632`). Failures to deliver a Hub original are now logged
+  with their cause (`c733a2e`).
 - Lost for good: about 570 chunks finalized 10-03 03:33Z-13:01Z that the old build dropped as
   stale before the Hub audio route existed, and 10-03 13:39Z to 10-04 06:35Z when recording
   was refused and stopped (see handoff 004).

@@ -101,8 +101,8 @@ final class AppSettings {
 
     var debugLogHost: String {
         get {
-            let val = UserDefaults.standard.string(forKey: "debugLogHost") ?? ""
-            return val.isEmpty ? "100.89.110.24" : val
+            // Empty disables UDP debug logging. No host is baked in: this repository is public.
+            return UserDefaults.standard.string(forKey: "debugLogHost") ?? ""
         }
         set { UserDefaults.standard.set(newValue, forKey: "debugLogHost") }
     }
