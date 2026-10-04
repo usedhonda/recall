@@ -603,16 +603,28 @@ final class UploadManager {
     }
 
     private func fetchNextPending(modelContext: ModelContext) -> AudioChunk? {
+        nextPendingChunk(modelContext: modelContext, hubEnabled: HubDeliveryService.shared.isEnabled(.audioOriginal))
+    }
+
+    func nextPendingChunk(modelContext: ModelContext, hubEnabled: Bool) -> AudioChunk? {
+        // Filter the optional attempt date in memory: a nil-aware #Predicate over
+        // `lastUploadAttempt` matched no rows and hid every pending chunk.
         let pending = AudioChunk.UploadStatus.pending.rawValue
-        let hubEnabled = HubDeliveryService.shared.isEnabled(.audioOriginal)
-        let retryBefore = hubEnabled ? Date().addingTimeInterval(-5) : Date.distantFuture
-        let predicate = #Predicate<AudioChunk> {
-            $0.uploadStatusRaw == pending && ($0.lastUploadAttempt == nil || $0.lastUploadAttempt! < retryBefore)
+        let descriptor = FetchDescriptor<AudioChunk>(
+            predicate: #Predicate<AudioChunk> { $0.uploadStatusRaw == pending },
+            sortBy: [SortDescriptor(\.startedAt, order: .forward)])
+        let rows: [AudioChunk]
+        do {
+            rows = try modelContext.fetch(descriptor)
+        } catch {
+            activity.log(.error, "Pending chunk fetch failed: \(error.localizedDescription)")
+            return nil
         }
-        var descriptor = FetchDescriptor<AudioChunk>(predicate: predicate,
-            sortBy: hubEnabled ? [SortDescriptor(\.lastUploadAttempt, order: .forward)] : [SortDescriptor(\.startedAt, order: .forward)])
-        descriptor.fetchLimit = 1
-        return try? modelContext.fetch(descriptor).first
+        guard hubEnabled else { return rows.first }
+        let retryBefore = Date().addingTimeInterval(-5)
+        return rows
+            .filter { ($0.lastUploadAttempt ?? .distantPast) < retryBefore }
+            .min { ($0.lastUploadAttempt ?? .distantPast) < ($1.lastUploadAttempt ?? .distantPast) }
     }
 
     private func fetchChunk(id: UUID, modelContext: ModelContext) -> AudioChunk? {
