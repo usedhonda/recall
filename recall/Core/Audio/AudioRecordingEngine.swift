@@ -699,8 +699,12 @@ final class AudioRecordingEngine {
         // Everything that arrived since the last write, not just the latest 100 ms: the loop
         // runs every ~240 ms, so a fixed window kept about 42% of the audio (measured
         // 2026-10-06, written/elapsed 0.41-0.42 on every chunk).
-        let (rawSamples, nextIndex) = ringBuffer.read(after: chunkWriteIndex)
+        let (rawSamples, nextIndex, skipped) = ringBuffer.readAfter(chunkWriteIndex)
         chunkWriteIndex = nextIndex
+        if skipped > 0 {
+            // The loop fell further behind than the ring holds: this audio is gone.
+            activity.log(.chunk, "Chunk audio gap: \(skipped) samples overwritten before they were written")
+        }
         guard !rawSamples.isEmpty else { return }
 
         var samples16k: [Float]

@@ -71,14 +71,24 @@ final class RingBuffer: @unchecked Sendable {
     /// that falls behind further than the buffer holds gets the oldest audio still
     /// present rather than a gap it cannot see.
     func read(after index: Int) -> (samples: [Float], nextIndex: Int) {
-        lock.lock()
-        let total = _totalWritten
-        let available = filled
-        lock.unlock()
+        let result = readAfter(index)
+        return (result.samples, result.nextIndex)
+    }
 
-        let wanted = max(0, total - max(index, total - available))
-        guard wanted > 0 else { return ([], total) }
-        return (read(lastSamples: wanted), total)
+    /// As `read(after:)`, also saying how many samples were overwritten before the reader
+    /// came back (zero when it kept up). The count, the samples and the next index are all
+    /// taken under one lock: releasing it in between let the tap write a few samples that
+    /// were returned but not accounted for, so the next read repeated them and skipped others.
+    func readAfter(_ index: Int) -> (samples: [Float], nextIndex: Int, skipped: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        let total = _totalWritten
+        let oldestHeld = total - filled
+        let start = max(index, oldestHeld)
+        let skipped = max(0, oldestHeld - index)
+        let wanted = total - start
+        guard wanted > 0 else { return ([], total, skipped) }
+        return (lastLocked(wanted), total, skipped)
     }
 
     /// Read the last N seconds of samples from the buffer.

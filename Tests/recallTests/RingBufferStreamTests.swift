@@ -61,4 +61,34 @@ final class RingBufferStreamTests: XCTestCase {
 
         XCTAssertEqual(preMargin + first + second, (200..<500).map(Float.init))
     }
+
+    func testASlowReaderIsToldHowMuchWasLost() {
+        let buffer = RingBuffer(capacity: 100)
+        buffer.write((0..<250).map(Float.init))
+
+        let result = buffer.readAfter(0)
+
+        XCTAssertEqual(result.skipped, 150)
+        XCTAssertEqual(result.samples.first, 150)
+        XCTAssertEqual(result.nextIndex, 250)
+        XCTAssertEqual(buffer.readAfter(result.nextIndex).skipped, 0)
+    }
+
+    func testSamplesAndNextIndexAlwaysDescribeTheSameStretch() {
+        // Whatever the tap writes, samples returned == nextIndex - start, with no gap in
+        // the numbering: the sequence read piecewise equals the sequence written.
+        let buffer = RingBuffer(capacity: 1_000)
+        var written = 0
+        var cursor = 0
+        var collected: [Float] = []
+        for step in 1...50 {
+            buffer.write((written..<(written + step * 3)).map(Float.init))
+            written += step * 3
+            let r = buffer.readAfter(cursor)
+            XCTAssertEqual(r.skipped, 0)
+            collected += r.samples
+            cursor = r.nextIndex
+        }
+        XCTAssertEqual(collected, (0..<written).map(Float.init))
+    }
 }
