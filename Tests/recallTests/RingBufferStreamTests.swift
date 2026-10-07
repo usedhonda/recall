@@ -44,4 +44,21 @@ final class RingBufferStreamTests: XCTestCase {
         XCTAssertEqual(samples.first, 150)
         XCTAssertEqual(next, 250)
     }
+
+    func testPreMarginAndContinuationJoinWithoutRepeatOrGap() {
+        // A chunk takes its pre-margin and then everything that follows. Whatever arrives
+        // between ticks must appear exactly once, in order, however long the tick is.
+        let buffer = RingBuffer(capacity: 1_000)
+        buffer.write((0..<300).map(Float.init))
+
+        let (preMargin, endIndex) = buffer.readLast(100)
+        XCTAssertEqual(preMargin, (200..<300).map(Float.init))
+
+        buffer.write((300..<340).map(Float.init))
+        let (first, next) = buffer.read(after: endIndex)
+        buffer.write((340..<500).map(Float.init))
+        let (second, _) = buffer.read(after: next)
+
+        XCTAssertEqual(preMargin + first + second, (200..<500).map(Float.init))
+    }
 }

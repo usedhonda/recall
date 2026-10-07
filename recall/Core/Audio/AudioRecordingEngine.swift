@@ -40,7 +40,9 @@ final class AudioRecordingEngine {
     // MARK: - Audio Pipeline
 
     private let audioEngine = AVAudioEngine()
-    private let ringBuffer = RingBuffer()
+    // The tap writes at the hardware rate (48 kHz), so 3 s of pre-margin needs 144,000 samples;
+    // the 48,000 default held one second and silently shortened the pre-margin too.
+    private let ringBuffer = RingBuffer(capacity: 144_000)
     private var vadService: VADService?
     private var audioConverter: AudioConverter?
     private var preprocessor = AudioPreprocessor()
@@ -60,6 +62,8 @@ final class AudioRecordingEngine {
     private var pendingChunkStartedAt: Date?
     /// Clock readings for a derived capture interval (see AudioCaptureEvidence). A chunk
     /// assembled from a held short chunk has no reconstructable interval.
+    /// Next ring-buffer sample to append to the open chunk: every sample is written exactly once.
+    private var chunkWriteIndex = 0
     private var chunkClockAtStart: Date?
     private var chunkPreRollSamples: Int?
     private var chunkLastWriteAt: Date?
@@ -670,7 +674,8 @@ final class AudioRecordingEngine {
 
         // Write pre-margin from ring buffer (preprocessed)
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
-        let preMarginSamples = ringBuffer.read(lastSeconds: settings.preMarginSeconds, sampleRate: Int(hwRate))
+        let (preMarginSamples, preMarginEnd) = ringBuffer.readLast(Int(settings.preMarginSeconds * hwRate))
+        chunkWriteIndex = preMarginEnd
         if !preMarginSamples.isEmpty {
             var samples16k: [Float]
             if Int(hwRate) != targetSampleRate, let converter = audioConverter {
@@ -691,9 +696,11 @@ final class AudioRecordingEngine {
         guard currentWriter != nil else { return }
 
         let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
-        let analysisWindow: TimeInterval = 0.1
-        let hwSampleCount = Int(analysisWindow * hwRate)
-        let rawSamples = ringBuffer.read(lastSamples: hwSampleCount)
+        // Everything that arrived since the last write, not just the latest 100 ms: the loop
+        // runs every ~240 ms, so a fixed window kept about 42% of the audio (measured
+        // 2026-10-06, written/elapsed 0.41-0.42 on every chunk).
+        let (rawSamples, nextIndex) = ringBuffer.read(after: chunkWriteIndex)
+        chunkWriteIndex = nextIndex
         guard !rawSamples.isEmpty else { return }
 
         var samples16k: [Float]

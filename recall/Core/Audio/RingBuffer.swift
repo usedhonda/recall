@@ -16,7 +16,7 @@ final class RingBuffer: @unchecked Sendable {
     private var _totalWritten: Int = 0
 
     /// Initialize with capacity in samples.
-    /// Default: 3 seconds at 16kHz = 48000 samples.
+    /// The default is one second at the 48 kHz the microphone delivers, not three seconds.
     init(capacity: Int = 48_000) {
         self.capacity = capacity
         self.buffer = [Float](repeating: 0, count: capacity)
@@ -91,7 +91,18 @@ final class RingBuffer: @unchecked Sendable {
     func read(lastSamples count: Int) -> [Float] {
         lock.lock()
         defer { lock.unlock() }
+        return lastLocked(count)
+    }
 
+    /// The last N samples together with the index just past them, taken under one lock so
+    /// that a reader continuing with `read(after:)` neither repeats nor skips a sample.
+    func readLast(_ count: Int) -> (samples: [Float], endIndex: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (lastLocked(count), _totalWritten)
+    }
+
+    private func lastLocked(_ count: Int) -> [Float] {
         let available = min(count, filled)
         guard available > 0 else { return [] }
 
