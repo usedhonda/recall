@@ -64,6 +64,8 @@ final class AudioRecordingEngine {
     /// assembled from a held short chunk has no reconstructable interval.
     /// Next ring-buffer sample to append to the open chunk: every sample is written exactly once.
     private var chunkWriteIndex = 0
+    /// Finalizing whatever was open when the engine last stopped; a new chunk waits for it.
+    private var stopFinalizeTask: Task<Void, Never>?
     private var chunkClockAtStart: Date?
     private var chunkPreRollSamples: Int?
     private var chunkLastWriteAt: Date?
@@ -277,20 +279,27 @@ final class AudioRecordingEngine {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
 
-        // Finalize any in-progress chunk
-        if currentWriter != nil {
-            Task { @MainActor in
+        // Finalize the in-progress chunk and flush any held short audio. The buffers are
+        // not cleared here: the finalizer runs after this function returns and used to find
+        // them already emptied, so everything recorded since the last chunk boundary was
+        // thrown away (issue #10). The next chunk waits for this task, so the two never
+        // share a writer or a buffer.
+        let hadChunk = currentWriter != nil
+        let previous = stopFinalizeTask
+        stopFinalizeTask = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self else { return }
+            if hadChunk {
+                self.activity.log(.chunk, "Stop: finalizing the chunk in progress")
                 await self.finalizeCurrentChunk()
             }
+            await self.forceFinalizePendingBuffer()
         }
 
         state = .idle
         currentRMS = 0
         vadProbability = 0
         silenceStart = nil
-        segmentBuffer = []
-        pendingSegmentBuffer = []
-        pendingChunkStartedAt = nil
 
         if intentional {
             userStopped = true
@@ -619,6 +628,7 @@ final class AudioRecordingEngine {
     // MARK: - Chunk Lifecycle
 
     private func startNewChunk() async {
+        await stopFinalizeTask?.value
         guard let reservation = await OriginalCapacity.shared.reserveAudioChunk() else {
             activity.log(.state, "Audio capture paused: source capacity exhausted")
             return
