@@ -144,3 +144,8 @@ or a hard-won sharp edge (→ §7).
 - **This repository is public.** No personal values in tracked files or fixtures: home Wi-Fi
   names, addresses, real coordinates, tailnet hosts or IPs. They live in ignored `.local/`.
   Rewriting history needs the owner's explicit order and a temporary branch-protection change.
+
+- **Cancellation does not finish an awaited audio operation.** Stop/interruption/restart
+  invalidate the processing generation and drain the accepted ring tail at the old tap
+  rate before replacing capture. New processing waits for old processing + finalization;
+  retain post-await guards for VAD, capacity admission and URL creation (issue #10).

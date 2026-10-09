@@ -65,6 +65,15 @@ trick; interruptions can still block capture (see `docs/stream-independence.md` 
 a 1.5 s silence gap ends the current chunk; a 30 s maximum forces a split. Each chunk carries
 its 3 s pre-margin (ring-buffer lookback). Filename format: `yyyyMMdd_HHmmss.caf`.
 
+**Capture boundaries (issue #10).** Stop, interruption and engine restart cancel and
+invalidate the old processing generation. Before replacing the tap/ring, the open
+chunk takes the accepted ring-buffer tail at the old tap's sample rate. Finalization
+waits for the cancelled processing task (including any in-flight writer finish), and
+new processing/writer admission waits for that finalization. A late VAD, capacity or
+URL result cannot resume the old recording or release/clear a new writer. Audio below
+0.5 s is discarded; held short audio is flushed on teardown only when at least 3 s,
+with the existing capacity/write-failure retention policy. No other stream is gated.
+
 **Upload filter (iOS).** Voice-island metrics are computed per chunk at zero extra cost:
 - `maxContinuousVoiceMs` (MCV): longest continuous voice run, with 300 ms gap fill.
 - `voiceFrameRatio` (VFR): voice frames / total frames.
