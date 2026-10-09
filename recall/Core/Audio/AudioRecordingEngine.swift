@@ -66,6 +66,11 @@ final class AudioRecordingEngine {
     private var chunkWriteIndex = 0
     /// Finalizing whatever was open when the engine last stopped; a new chunk waits for it.
     private var stopFinalizeTask: Task<Void, Never>?
+    private var processingGeneration = 0
+    private var isFinalizingChunk = false
+    private var chunkCaptureClosed = false
+    /// Rate of samples accepted by the installed tap, even after the route changes.
+    private var captureHardwareSampleRate: Double = 16_000
     private var chunkClockAtStart: Date?
     private var chunkPreRollSamples: Int?
     private var chunkLastWriteAt: Date?
@@ -175,6 +180,9 @@ final class AudioRecordingEngine {
             return
         }
         userStopped = false
+        let generation = processingGeneration
+        await stopFinalizeTask?.value
+        guard !Task.isCancelled, generation == processingGeneration, !userStopped else { return }
 
         // Configure audio session
         try sessionManager.configure()
@@ -209,6 +217,7 @@ final class AudioRecordingEngine {
         // Initialize VAD
         if vadService == nil {
             vadService = try await VADService()
+            guard !Task.isCancelled, generation == processingGeneration, !userStopped else { return }
         }
 
         // Initialize audio converter for resampling
@@ -271,30 +280,13 @@ final class AudioRecordingEngine {
     func stop(intentional: Bool = false) {
         watchdogTask?.cancel()
         watchdogTask = nil
-        processingTask?.cancel()
-        processingTask = nil
         resumeRetryTask?.cancel()
         resumeRetryTask = nil
 
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
 
-        // Finalize the in-progress chunk and flush any held short audio. The buffers are
-        // not cleared here: the finalizer runs after this function returns and used to find
-        // them already emptied, so everything recorded since the last chunk boundary was
-        // thrown away (issue #10). The next chunk waits for this task, so the two never
-        // share a writer or a buffer.
-        let hadChunk = currentWriter != nil
-        let previous = stopFinalizeTask
-        stopFinalizeTask = Task { @MainActor [weak self] in
-            await previous?.value
-            guard let self else { return }
-            if hadChunk {
-                self.activity.log(.chunk, "Stop: finalizing the chunk in progress")
-                await self.finalizeCurrentChunk()
-            }
-            await self.forceFinalizePendingBuffer()
-        }
+        retireProcessingGeneration()
 
         state = .idle
         currentRMS = 0
@@ -419,25 +411,49 @@ final class AudioRecordingEngine {
         }
     }
 
-    private func startProcessingLoop() {
-        // Start listening from now, with no memory of the audio either side of the
-        // break: the model's state describes a sentence, and there is no sentence
-        // spanning a stopped microphone.
-        vadReadIndex = ringBuffer.totalWritten
-        Task { await vadService?.reset() }
-
-        // Cancel any existing processing task to prevent double-running
-        processingTask?.cancel()
+    /// Called after capture stops/pauses, before a tap or ring buffer is replaced.
+    /// The cancelled task may be inside VAD, admission or writer.finish; wait for it
+    /// before finalizing again. New processing waits for this entire boundary.
+    private func retireProcessingGeneration() {
+        processingGeneration += 1
+        let processing = processingTask
+        processing?.cancel()
         processingTask = nil
+        if !isFinalizingChunk {
+            drainCurrentAudioToChunk()
+        }
+        chunkCaptureClosed = true
+        let previous = stopFinalizeTask
+        stopFinalizeTask = Task { @MainActor [self] in
+            await previous?.value
+            await processing?.value
+            await finalizeCurrentChunk()
+            await forceFinalizePendingBuffer()
+        }
+    }
 
+    private func canProcess(_ generation: Int) -> Bool {
+        !Task.isCancelled && generation == processingGeneration
+            && (state == .listening || state == .recording)
+    }
+
+    private func startProcessingLoop() {
+        processingGeneration += 1
+        let generation = processingGeneration
+        processingTask?.cancel()
+        let finalization = stopFinalizeTask
         processingTask = Task { [weak self] in
             guard let self else { return }
-            // Process in ~100ms intervals
-            let intervalNs: UInt64 = 100_000_000
+            await finalization?.value
+            guard self.canProcess(generation) else { return }
+            self.vadReadIndex = self.ringBuffer.totalWritten
+            self.consecutiveVoiceFrames = 0
+            await self.vadService?.reset()
+            guard self.canProcess(generation) else { return }
 
-            while !Task.isCancelled {
+            while self.canProcess(generation) {
                 do {
-                    try await Task.sleep(nanoseconds: intervalNs)
+                    try await Task.sleep(nanoseconds: 100_000_000)
                 } catch {
                     break
                 }
@@ -447,7 +463,8 @@ final class AudioRecordingEngine {
     }
 
     private func processCurrentAudio() async {
-        guard state == .listening || state == .recording else { return }
+        let generation = processingGeneration
+        guard canProcess(generation) else { return }
 
         // Flush pending buffer if it has been held too long (send short chunk rather than lose it)
         if state == .listening, !pendingSegmentBuffer.isEmpty, let pendingStart = pendingChunkStartedAt {
@@ -456,13 +473,14 @@ final class AudioRecordingEngine {
                 logger.info("Pending timeout — force-finalizing held chunk (\(pendingDuration, format: .fixed(precision: 1))s)")
                 activity.log(.chunk, "Pending timeout — force-finalize \(String(format: "%.1f", pendingDuration))s")
                 await forceFinalizePendingBuffer()
+                guard canProcess(generation) else { return }
             }
         }
 
         // Take only what has arrived since the last tick. Silero carries state from one
         // window to the next, so it has to hear the microphone exactly once, in order:
         // re-scoring overlapping windows was what made its answers meaningless.
-        let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
+        let hwRate = captureHardwareSampleRate
         let (rawSamples, nextIndex) = ringBuffer.read(after: vadReadIndex)
         vadReadIndex = nextIndex
         guard !rawSamples.isEmpty else { return }
@@ -509,7 +527,10 @@ final class AudioRecordingEngine {
         let quiet = rms < effectiveThreshold
         guard let vadService else { return }
         do {
-            for result in try await vadService.feed(samples16k) {
+            let results = try await vadService.feed(samples16k)
+            guard canProcess(generation) else { return }
+            for result in results {
+            guard canProcess(generation) else { return }
             vadProbability = result.probability
 
             // Accumulate VAD probability during recording
@@ -573,6 +594,8 @@ final class AudioRecordingEngine {
     // MARK: - State Transitions
 
     private func handleVoiceDetected() async {
+        let generation = processingGeneration
+        guard canProcess(generation) else { return }
         silenceStart = nil
         consecutiveVoiceFrames = 0
 
@@ -582,13 +605,14 @@ final class AudioRecordingEngine {
             logger.info("Voice detected, starting recording")
             activity.log(.vad, "Voice detected — RMS=\(String(format: "%.3f", currentRMS)) VAD=\(String(format: "%.2f", vadProbability))")
             await startNewChunk()
-            guard currentWriter != nil else { return }
+            guard canProcess(generation), currentWriter != nil else { return }
             state = .recording
             activity.log(.state, "Recording started")
 
         case .recording:
             // Continue recording; write current audio
             await writeCurrentAudioToChunk()
+            guard canProcess(generation) else { return }
 
             // Check chunk duration limit
             if let startedAt = currentChunkStartedAt,
@@ -604,6 +628,8 @@ final class AudioRecordingEngine {
     }
 
     private func handleSilence() async {
+        let generation = processingGeneration
+        guard canProcess(generation) else { return }
         guard state == .recording else { return }
 
         if silenceStart == nil {
@@ -612,12 +638,14 @@ final class AudioRecordingEngine {
 
         // Still write audio during post-margin
         await writeCurrentAudioToChunk()
+        guard canProcess(generation) else { return }
 
         // Check silence timeout
         if let silenceStart, Date().timeIntervalSince(silenceStart) >= settings.silenceTimeout {
             logger.info("Silence timeout reached, stopping recording")
             activity.log(.vad, "Silence \(String(format: "%.1f", settings.silenceTimeout))s — finalizing chunk")
             await finalizeCurrentChunk()
+            guard canProcess(generation) else { return }
             state = .listening
             self.silenceStart = nil
             vadProbability = 0
@@ -628,20 +656,30 @@ final class AudioRecordingEngine {
     // MARK: - Chunk Lifecycle
 
     private func startNewChunk() async {
+        let generation = processingGeneration
+        guard canProcess(generation) else { return }
         await stopFinalizeTask?.value
+        guard canProcess(generation) else { return }
         guard let reservation = await OriginalCapacity.shared.reserveAudioChunk() else {
             activity.log(.state, "Audio capture paused: source capacity exhausted")
             return
         }
-        UserDefaults.standard.set(Date(), forKey: AudioStateSignal.lastChunkKey)
+        guard canProcess(generation) else {
+            OriginalCapacity.shared.releaseAudioChunk(reservation)
+            return
+        }
         // Use pending chunk's timestamp if available (preserves original timing for voicelog merge)
         let clockNow = Date()
         let effectiveStart = pendingChunkStartedAt ?? clockNow
+        let url = await chunkFileManager.generateChunkURL(startedAt: effectiveStart)
+        guard canProcess(generation) else {
+            OriginalCapacity.shared.releaseAudioChunk(reservation)
+            return
+        }
         chunkIsMerged = pendingChunkStartedAt != nil || !pendingSegmentBuffer.isEmpty
         chunkClockAtStart = clockNow
         chunkPreRollSamples = 0
         chunkLastWriteAt = nil
-        let url = await chunkFileManager.generateChunkURL(startedAt: effectiveStart)
 
         let writer = ChunkWriter(outputURL: url, sampleRate: targetSampleRate,
             maximumOutputBytes: HubDeliveryService.shared.isEnabled(.audioOriginal)
@@ -657,8 +695,10 @@ final class AudioRecordingEngine {
             return
         }
 
+        UserDefaults.standard.set(Date(), forKey: AudioStateSignal.lastChunkKey)
         audioReservationToken = reservation
         currentWriter = writer
+        chunkCaptureClosed = false
         currentChunkURL = url
         currentChunkStartedAt = effectiveStart
         chunkSampleTime = .zero
@@ -683,7 +723,7 @@ final class AudioRecordingEngine {
         }
 
         // Write pre-margin from ring buffer (preprocessed)
-        let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
+        let hwRate = captureHardwareSampleRate
         let (preMarginSamples, preMarginEnd) = ringBuffer.readLast(Int(settings.preMarginSeconds * hwRate))
         chunkWriteIndex = preMarginEnd
         if !preMarginSamples.isEmpty {
@@ -703,9 +743,14 @@ final class AudioRecordingEngine {
     }
 
     private func writeCurrentAudioToChunk() async {
-        guard currentWriter != nil else { return }
+        drainCurrentAudioToChunk()
+    }
 
-        let hwRate = audioEngine.inputNode.outputFormat(forBus: 0).sampleRate
+    /// Synchronous so teardown can preserve the accepted tail before ring reset.
+    private func drainCurrentAudioToChunk() {
+        guard currentWriter != nil, !isFinalizingChunk, !chunkCaptureClosed else { return }
+
+        let hwRate = captureHardwareSampleRate
         // Everything that arrived since the last write, not just the latest 100 ms: the loop
         // runs every ~240 ms, so a fixed window kept about 42% of the audio (measured
         // 2026-10-06, written/elapsed 0.41-0.42 on every chunk).
@@ -733,6 +778,12 @@ final class AudioRecordingEngine {
         guard let writer = currentWriter, let url = currentChunkURL, let startedAt = currentChunkStartedAt else {
             return
         }
+
+        guard !isFinalizingChunk else { return }
+        drainCurrentAudioToChunk()
+        chunkCaptureClosed = true
+        isFinalizingChunk = true
+        defer { isFinalizingChunk = false }
 
         // Read before cleanup: a merged chunk gets no capture interval at all.
         let captureClock = chunkIsMerged ? nil : chunkClockAtStart
@@ -920,7 +971,9 @@ final class AudioRecordingEngine {
     }
 
     private func splitChunk() async {
+        let generation = processingGeneration
         await finalizeCurrentChunk()
+        guard canProcess(generation) else { return }
         await startNewChunk()
     }
 
@@ -1010,11 +1063,7 @@ final class AudioRecordingEngine {
         logger.error("Media services reset — flagging engine for full recreate")
         activity.log(.error, "Media services reset — engine invalid, escalating to full recreate")
 
-        if state == .recording {
-            Task {
-                await finalizeCurrentChunk()
-            }
-        }
+        retireProcessingGeneration()
 
         // Discard the invalidated keep-alive player so the recreate path builds
         // a fresh one instead of trusting a stale isPlaying from a dead instance.
@@ -1038,13 +1087,9 @@ final class AudioRecordingEngine {
         logger.info("Handling interruption began, pausing")
         activity.log(.state, "Interruption — pausing (was \(state.rawValue))")
 
-        if state == .recording {
-            Task {
-                await finalizeCurrentChunk()
-            }
-        }
-
         audioEngine.pause()
+        retireProcessingGeneration()
+        ringBuffer.reset()
         state = .paused
     }
 
@@ -1205,13 +1250,11 @@ final class AudioRecordingEngine {
 
         activity.log(.state, snapshotAudioState(prefix: "restart enter"))
 
-        // Cancel existing processing (but NOT watchdog)
-        processingTask?.cancel()
-        processingTask = nil
-
         // Stop engine and remove tap (preserve inputNode by NOT calling reset)
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
+        retireProcessingGeneration()
+        ringBuffer.reset()
 
         // Re-setup and start (Phase A: safeInstallTap throws on bad format)
         do {
@@ -1374,6 +1417,7 @@ final class AudioRecordingEngine {
             activity.log(.error, "installTap NSException [src=\(source)] \(reason) — engine must be recreated")
             throw AudioFormatError.installTapException(reason)
         }
+        captureHardwareSampleRate = sr
         return hwFormat
     }
 
