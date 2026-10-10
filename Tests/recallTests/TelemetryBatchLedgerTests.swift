@@ -2,6 +2,34 @@ import XCTest
 @testable import recall
 
 final class TelemetryBatchLedgerTests: XCTestCase {
+    func testLaneAFailureCannotReuseNowPlayingDisabledFrozenBatch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ledger-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("body.json")
+        let frozen = Data("{\"samples\":[],\"nowPlaying\":{\"title\":\"fixture\"}}".utf8)
+        try frozen.write(to: file)
+        let ledger = TelemetryBatchLedger(url: root.appendingPathComponent("batches.json"))
+        let sample = UUID()
+        let row = try await ledger.create(sampleIDs: [sample], healthIncluded: false,
+                                          nowPlayingIncluded: true, requestFile: file)
+        let existingValue = await ledger.pendingBatch(sampleIDs: [sample], healthIncluded: false)
+        let existing = try XCTUnwrap(existingValue)
+        var backgroundTasks = 0
+        do {
+            throw URLError(.networkConnectionLost) // Lane A failure enters Lane B.
+        } catch {
+            let scheduled = await TelemetryUploader.scheduleLegacyBatch(existing,
+                disabled: [HubRecallRoute.nowPlaying.rawValue]) { backgroundTasks += 1 }
+            XCTAssertFalse(scheduled)
+        }
+        XCTAssertEqual(backgroundTasks, 0)
+        XCTAssertEqual(try Data(contentsOf: file), frozen)
+        let retained = await ledger.batch(id: row.id)
+        XCTAssertEqual(retained?.state, .pending)
+        XCTAssertNil(retained?.taskDescription)
+    }
+
     func testSchedulingPersistsOwnershipUntilVerifiedDelivery() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ledger-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

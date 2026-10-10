@@ -187,7 +187,29 @@ final class TelemetryService {
 
     // MARK: - Health Send
 
+    /// Durable foreground Hub binding seam. Registration happens before any
+    /// receipt lookup so a delayed acknowledgement can reconcile the exact
+    /// original delivery after this call returns `.sending`.
+    func registerHubHealthPending(_ payload: HealthPayload, fingerprint: String,
+                                  externalID: String,
+                                  ledger: TelemetryBatchLedger = .shared) async -> HealthSendResult {
+        do {
+            try await ledger.recordHubHealthPending(
+                deliveryID: payload.deliveryID.uuidString,
+                fingerprint: fingerprint,
+                externalID: externalID,
+                collectedAt: payload.collectedAt
+            )
+            return .sending
+        } catch {
+            return .error("Hub Health binding failed: \(error.localizedDescription)")
+        }
+    }
+
     func sendHealth(_ payload: HealthPayload) async -> HealthSendResult {
+        // A foreground tick is also a receipt-reconciliation opportunity; do
+        // not depend on a background URLSession callback when Location is off.
+        await TelemetryUploader.shared.reconcileHubHealthAcknowledgments()
         let nowPlayingSnapshot = nowPlayingManager.snapshot
         do {
             let hubExternalID = try await HubTelemetryAdmission.admit(
@@ -201,9 +223,17 @@ final class TelemetryService {
                 catch { ActivityLogger.shared.log(.telemetry, "nowPlaying Hub admission failed") }
             }
             if !HubTelemetryAdmission.legacyAllowed(.healthSnapshot) {
-                guard let hubExternalID,
-                      try await HubDeliveryService.shared.isAcknowledged(externalID: hubExternalID) else {
-                    return .error("Hub admission pending")
+                guard let hubExternalID else {
+                    return .error("Hub admission missing external ID")
+                }
+                let bindingFingerprint = HealthKitManager.fingerprint(payload)
+                let binding = await registerHubHealthPending(payload, fingerprint: bindingFingerprint,
+                                                              externalID: hubExternalID)
+                if case .error = binding {
+                    return binding
+                }
+                guard try await HubDeliveryService.shared.isAcknowledged(externalID: hubExternalID) else {
+                    return .sending
                 }
                 return .sent(status: 200, body: "")
             }

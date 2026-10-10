@@ -120,14 +120,15 @@ actor TelemetryBatchLedger {
               await notify(deliveryID, fingerprint) else { return false }
         return try recordOutcome(row.id, location: true, health: true) != nil
     }
-    func recordHubHealthPending(deliveryID: String, fingerprint: String, externalID: String) throws {
+    func recordHubHealthPending(deliveryID: String, fingerprint: String, externalID: String,
+                                collectedAt: Date? = nil) throws {
         if let existing = rows.values.first(where: { $0.state == .pending && $0.healthDeliveryID == deliveryID }) {
             guard existing.healthFingerprint == fingerprint, existing.healthHubExternalID == externalID else { throw Failure.healthBindingConflict }
             return
         }
         let row = Batch(id: UUID(), sampleIDs: [], healthIncluded: true, healthDeliveryID: deliveryID,
                         locationDelivered: true, healthDelivered: false, healthFingerprint: fingerprint,
-                        healthCollectedAt: nil, healthHubExternalID: externalID, nowPlayingIncluded: false,
+                        healthCollectedAt: collectedAt, healthHubExternalID: externalID, nowPlayingIncluded: false,
                         requestFilePath: "",
                         createdAt: Date(), taskDescription: nil, state: .pending)
         var proposed = rows; proposed[row.id] = row; try persist(proposed); rows = proposed

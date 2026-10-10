@@ -123,8 +123,13 @@ and the applicable Hub storage receipt have been verified. Hub-only routes requi
 their Hub receipt, not a legacy response.
 Frozen retries check every included route's legacy permission before posting;
 a disabled route retains the original mixed batch instead of reviving delivery.
+Lane A failure fallback and retry drain share this frozen-body scheduling check,
+including when a freshly filtered payload would otherwise reuse an older batch.
 Hub-only Health keeps the original Hub event ID, delivery ID and fingerprint
 for delayed-receipt reconciliation independently of legacy credentials.
+Foreground and background Health share the durable binding registration; initial
+Hub receipt delay remains pending, not an error. Foreground Health ticks also
+reconcile prior receipts when no background upload or Location stream is active.
 
 Structured `health2` is stored independently from legacy flat `health`; records,
 measurement clocks, units, aggregation and provenance are not flattened into the

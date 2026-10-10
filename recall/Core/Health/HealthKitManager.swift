@@ -77,6 +77,7 @@ final class HealthKitManager {
     private var lastPostedFingerprint: String?
     private var lastPostedAt: Date?
     private var acknowledgedBackgroundHealthIDs = Set<String>()
+    private var acknowledgedBackgroundHealthFingerprints: [String: String] = [:]
     private var pendingBackgroundHealthFingerprints: [String: String] = [:]
     private var isSkippingForLock = false
     /// Guards against two queries running at once (launch fires the catch-up query and
@@ -453,20 +454,12 @@ final class HealthKitManager {
 
         if isBackground {
             // In background, use TelemetryUploader with beginBackgroundTask for reliable delivery
-            pendingBackgroundHealthFingerprints[payload.deliveryID.uuidString] = fingerprint
+            registerPendingHealthFingerprint(deliveryID: payload.deliveryID.uuidString, fingerprint: fingerprint)
             let outcome = await TelemetryUploader.shared.uploadHealthOnly(payload)
             switch outcome {
             case .acknowledged(_, let source):
-                pendingBackgroundHealthFingerprints.removeValue(forKey: payload.deliveryID.uuidString)
-                let now = Date()
-                lastSentTime = now
-                lastAcceptedAt = now
-                lastPostedFingerprint = fingerprint
-                lastPostedAt = now
-                totalSuccessfulSends += 1
-                lastSendResult = .sent(status: 0, body: "bg-acknowledged-\(source.rawValue)")
-                lastErrorAt = nil
-                lastErrorMessage = nil
+                acknowledgeBackgroundHealth(deliveryID: payload.deliveryID.uuidString,
+                                            fingerprint: fingerprint, source: source)
                 ActivityLogger.shared.log(.health, "Background Health acknowledged: \(payload.recordsLogSummary())")
             case .scheduled:
                 lastSendResult = .sending
@@ -479,15 +472,19 @@ final class HealthKitManager {
                 ActivityLogger.shared.log(.health, "Error: \(detail)")
             }
         } else {
+            registerPendingHealthFingerprint(deliveryID: payload.deliveryID.uuidString, fingerprint: fingerprint)
             let result = await TelemetryService.shared.sendHealth(payload)
             lastSendResult = result
             if case .sent = result {
+                let firstAcknowledgement = acknowledgedBackgroundHealthIDs.insert(payload.deliveryID.uuidString).inserted
+                pendingBackgroundHealthFingerprints.removeValue(forKey: payload.deliveryID.uuidString)
+                acknowledgedBackgroundHealthFingerprints[payload.deliveryID.uuidString] = fingerprint
                 let now = Date()
                 lastSentTime = now
                 lastAcceptedAt = now
                 lastPostedFingerprint = fingerprint
                 lastPostedAt = now
-                totalSuccessfulSends += 1
+                if firstAcknowledgement { totalSuccessfulSends += 1 }
                 lastErrorAt = nil
                 lastErrorMessage = nil
                 ActivityLogger.shared.log(.health, "Sent: \(payload.recordsLogSummary())")
@@ -495,6 +492,8 @@ final class HealthKitManager {
                 totalSendErrors += 1
                 recordHealthError(detail)
                 ActivityLogger.shared.log(.health, "Error: \(detail)")
+            } else if case .sending = result {
+                ActivityLogger.shared.log(.health, "Health acknowledgement pending")
             }
         }
     }
@@ -510,6 +509,7 @@ final class HealthKitManager {
         suppressedDuplicateErrors = 0
         errorHistory.removeAll()
         acknowledgedBackgroundHealthIDs.removeAll()
+        acknowledgedBackgroundHealthFingerprints.removeAll()
         pendingBackgroundHealthFingerprints.removeAll()
         lastSendResult = .none
     }
@@ -517,13 +517,24 @@ final class HealthKitManager {
     /// Completes a previously scheduled background Health delivery. The
     /// fingerprint is read from the durable batch row, never from a fresh
     /// HealthKit query, so a callback cannot acknowledge the wrong snapshot.
+    func registerPendingHealthFingerprint(deliveryID: String, fingerprint: String) {
+        guard !deliveryID.isEmpty, !fingerprint.isEmpty else { return }
+        pendingBackgroundHealthFingerprints[deliveryID] = fingerprint
+    }
+
     @discardableResult
     func acknowledgeBackgroundHealth(deliveryID: String, fingerprint: String,
                                      source: HealthUploadSource) -> Bool {
-        guard !deliveryID.isEmpty, !fingerprint.isEmpty,
-              pendingBackgroundHealthFingerprints[deliveryID].map({ $0 == fingerprint }) ?? true else { return false }
-        guard acknowledgedBackgroundHealthIDs.insert(deliveryID).inserted else { return true }
+        guard !deliveryID.isEmpty, !fingerprint.isEmpty else { return false }
+        if let acknowledgedFingerprint = acknowledgedBackgroundHealthFingerprints[deliveryID] {
+            return acknowledgedFingerprint == fingerprint
+        }
+        // A relaunch restores this binding from the authenticated durable ledger,
+        // not a fresh Health query. Reject conflicts when a live binding exists.
+        guard pendingBackgroundHealthFingerprints[deliveryID].map({ $0 == fingerprint }) ?? true else { return false }
         pendingBackgroundHealthFingerprints.removeValue(forKey: deliveryID)
+        acknowledgedBackgroundHealthFingerprints[deliveryID] = fingerprint
+        guard acknowledgedBackgroundHealthIDs.insert(deliveryID).inserted else { return true }
         let now = Date()
         lastSentTime = now
         lastAcceptedAt = now

@@ -8,6 +8,7 @@ private let backgroundSessionIdentifier = "com.recall.telemetry-upload"
 /// Handles background upload of telemetry data (location + health) using URLSession
 final class TelemetryUploader: NSObject {
     static let shared = TelemetryUploader()
+    enum SchedulingFailure: Error { case legacyRouteDisabled }
 
     var backgroundCompletionHandler: (() -> Void)?
     /// Set by HealthKitManager to reconcile a durable background ACK with the
@@ -168,10 +169,16 @@ final class TelemetryUploader: NSObject {
             }
             throw error
         }
-        let task = backgroundSession.uploadTask(with: urlRequest, fromFile: tempFile)
-        task.taskDescription = row.id.uuidString
-        try await ledger.setTaskDescription(row.id.uuidString, for: row.id)
-        task.resume()
+        let scheduled = try await Self.scheduleLegacyBatch(row, disabled: await Self.disabledLegacyRoutes()) {
+            let task = self.backgroundSession.uploadTask(with: urlRequest, fromFile: tempFile)
+            task.taskDescription = row.id.uuidString
+            try await ledger.setTaskDescription(row.id.uuidString, for: row.id)
+            task.resume()
+        }
+        guard scheduled else {
+            Self.log("telemetry batch retained: legacy route disabled or unknown")
+            throw SchedulingFailure.legacyRouteDisabled
+        }
 
         print("[TelemetryUploader] Started background upload of \(samples.count) samples")
     }
@@ -207,15 +214,10 @@ final class TelemetryUploader: NSObject {
                     guard let hubExternalID else {
                         return .failed(deliveryID: payload.deliveryID, message: "Hub admission pending without external ID")
                     }
-                    if await TelemetryBatchLedger.shared.pendingHealth(deliveryID: payload.deliveryID.uuidString) == nil {
-                        do {
-                            try await TelemetryBatchLedger.shared.recordHubHealthPending(
-                                deliveryID: payload.deliveryID.uuidString,
-                                fingerprint: HealthKitManager.fingerprint(payload),
-                                externalID: hubExternalID)
-                        } catch {
-                            return .failed(deliveryID: payload.deliveryID, message: "Hub pending state persistence failed")
-                        }
+                    let binding = await TelemetryService.shared.registerHubHealthPending(
+                        payload, fingerprint: HealthKitManager.fingerprint(payload), externalID: hubExternalID)
+                    if case .error = binding {
+                        return .failed(deliveryID: payload.deliveryID, message: "Hub pending state persistence failed")
                     }
                     return .scheduled(deliveryID: payload.deliveryID)
                 }
@@ -544,8 +546,7 @@ final class TelemetryUploader: NSObject {
         }
     }
 
-    private func retryPendingHealthBatches() async {
-        guard !callbackState.isProcessing else { return }
+    func reconcileHubHealthAcknowledgments() async {
         // Hub-only rows do not require legacy URL/token/network state.
         for row in await TelemetryBatchLedger.shared.pending() {
             guard row.sampleIDs.isEmpty, let externalID = row.healthHubExternalID else { continue }
@@ -558,6 +559,11 @@ final class TelemetryUploader: NSObject {
                 } catch { TelemetryUploader.log("Hub Health acknowledgment state persistence failed; retained for reconciliation") }
             }
         }
+    }
+
+    private func retryPendingHealthBatches() async {
+        guard !callbackState.isProcessing else { return }
+        await reconcileHubHealthAcknowledgments()
         let settings = await MainActor.run { AppSettings.shared }
         guard !settings.telemetryServerURL.isEmpty, let token = KeychainHelper.shared.getToken() else { return }
         for row in await TelemetryBatchLedger.shared.pending() where row.taskDescription == nil {
@@ -566,11 +572,7 @@ final class TelemetryUploader: NSObject {
                 row.sampleIDs.isEmpty ? ConnectivityMonitor.shared.canSendHealth : ConnectivityMonitor.shared.canSendLocation
             }
             guard allowed else { continue }
-            let disabledRoutes = await MainActor.run {
-                Set([HubRecallRoute.gpsDelivery, .healthSnapshot, .nowPlaying].compactMap {
-                    HubTelemetryAdmission.legacyAllowed($0) ? nil : $0.rawValue
-                })
-            }
+            let disabledRoutes = await Self.disabledLegacyRoutes()
             guard Self.legacyRoutesAllowed(row, disabled: disabledRoutes) else {
                 TelemetryUploader.log("frozen batch retained: legacy route disabled or unknown")
                 continue
@@ -587,10 +589,12 @@ final class TelemetryUploader: NSObject {
                     try await HubDeliveryService.shared.reserveQueueBytes(route: route,
                         key: "telemetry-batch-\(row.id.uuidString)", bytes: Int64(try Data(contentsOf: file).count + 2048))
                 }
-                let task = backgroundSession.uploadTask(with: request, fromFile: file)
-                task.taskDescription = row.id.uuidString
-                try await TelemetryBatchLedger.shared.setTaskDescription(row.id.uuidString, for: row.id)
-                task.resume()
+                _ = try await Self.scheduleLegacyBatch(row, disabled: await Self.disabledLegacyRoutes()) {
+                    let task = self.backgroundSession.uploadTask(with: request, fromFile: file)
+                    task.taskDescription = row.id.uuidString
+                    try await TelemetryBatchLedger.shared.setTaskDescription(row.id.uuidString, for: row.id)
+                    task.resume()
+                }
             } catch { TelemetryUploader.log("health batch retry unavailable; frozen file retained") }
         }
     }
@@ -723,6 +727,23 @@ extension TelemetryUploader: URLSessionDelegate, URLSessionDataDelegate {
         if disabled.contains(HubRecallRoute.gpsDelivery.rawValue) { return false }
         if row.healthIncluded && disabled.contains(HubRecallRoute.healthSnapshot.rawValue) { return false }
         if row.nowPlayingIncluded && disabled.contains(HubRecallRoute.nowPlaying.rawValue) { return false }
+        return true
+    }
+
+    private static func disabledLegacyRoutes() async -> Set<String> {
+        await MainActor.run {
+            Set([HubRecallRoute.gpsDelivery, .healthSnapshot, .nowPlaying].compactMap {
+                HubTelemetryAdmission.legacyAllowed($0) ? nil : $0.rawValue
+            })
+        }
+    }
+
+    /// Both retry drain and Lane A fallback cross the same frozen-body boundary.
+    /// Never authorize an old body using a newly filtered snapshot instead.
+    static func scheduleLegacyBatch(_ row: TelemetryBatchLedger.Batch, disabled: Set<String>,
+                                    schedule: () async throws -> Void) async rethrows -> Bool {
+        guard legacyRoutesAllowed(row, disabled: disabled) else { return false }
+        try await schedule()
         return true
     }
 }
