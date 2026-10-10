@@ -42,7 +42,7 @@ final class TelemetryService {
         self.photoLibraryAuthorizer = authorizer
         self.photoScanCoordinator = PhotoScanCoordinator(authorizer: authorizer)
         TelemetryUploader.shared.healthAcknowledgmentHandler = { [weak healthManager] deliveryID, fingerprint, source in
-            healthManager?.acknowledgeBackgroundHealth(deliveryID: deliveryID, fingerprint: fingerprint, source: source)
+            healthManager?.acknowledgeBackgroundHealth(deliveryID: deliveryID, fingerprint: fingerprint, source: source) ?? false
         }
     }
 

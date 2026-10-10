@@ -98,4 +98,80 @@ final class TelemetryBatchLedgerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: path), corrupt)
     }
 
+    @MainActor
+    func testHubOnlyHealthPendingReloadsAndCompletesWithoutRequestFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ledger-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("batches.json")
+        let ledger = TelemetryBatchLedger(url: path)
+        let deliveryID = UUID().uuidString
+        try await ledger.recordHubHealthPending(deliveryID: deliveryID, fingerprint: "fp", externalID: "hub-id")
+        let reopened = TelemetryBatchLedger(url: path)
+        let pendingValue = await reopened.pendingHealth(deliveryID: deliveryID)
+        let pending = try XCTUnwrap(pendingValue)
+        do { _ = try await reopened.ensureRequestFile(for: pending); XCTFail("Hub-only row has no request file") } catch {}
+        var notifications = 0
+        let notify: @MainActor (String, String) -> Bool = { id, fingerprint in
+            XCTAssertEqual(id, deliveryID)
+            XCTAssertEqual(fingerprint, "fp")
+            notifications += 1
+            return true
+        }
+        let wrong = try await reopened.acknowledgeHubHealth(externalID: "other-hub-id", notify: notify)
+        XCTAssertFalse(wrong)
+        XCTAssertEqual(notifications, 0)
+        let unavailable = try await reopened.acknowledgeHubHealth(externalID: "hub-id", notify: { _, _ in false })
+        XCTAssertFalse(unavailable)
+        let correct = try await reopened.acknowledgeHubHealth(externalID: "hub-id", notify: notify)
+        XCTAssertTrue(correct)
+        let duplicate = try await reopened.acknowledgeHubHealth(externalID: "hub-id", notify: notify)
+        XCTAssertFalse(duplicate)
+        XCTAssertEqual(notifications, 1)
+        let completedValue = await reopened.batch(id: pending.id)
+        let completed = try XCTUnwrap(completedValue)
+        XCTAssertEqual(completed.state, .delivered)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path))
+    }
+
+    func testMixedBatchRouteGateRetainsWhenContainedHealthLegacyDisabled() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ledger-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ledger = TelemetryBatchLedger(url: root.appendingPathComponent("batches.json"))
+        let file = root.appendingPathComponent("body")
+        try Data("frozen".utf8).write(to: file)
+        let row = try await ledger.create(sampleIDs: [UUID()], healthIncluded: true, nowPlayingIncluded: true, requestFile: file)
+        XCTAssertFalse(TelemetryUploader.legacyRoutesAllowed(row, disabled: [HubRecallRoute.healthSnapshot.rawValue]))
+        XCTAssertFalse(TelemetryUploader.legacyRoutesAllowed(row, disabled: [HubRecallRoute.nowPlaying.rawValue]))
+        XCTAssertFalse(TelemetryUploader.legacyRoutesAllowed(row, disabled: [HubRecallRoute.gpsDelivery.rawValue]))
+        XCTAssertTrue(TelemetryUploader.legacyRoutesAllowed(row, disabled: []))
+        let retained = await ledger.batch(id: row.id)
+        XCTAssertEqual(retained?.state, .pending)
+        XCTAssertEqual(try Data(contentsOf: file), Data("frozen".utf8))
+        let healthOnly = try await ledger.create(sampleIDs: [], healthIncluded: true, nowPlayingIncluded: true, requestFile: file)
+        XCTAssertFalse(TelemetryUploader.legacyRoutesAllowed(healthOnly, disabled: [HubRecallRoute.nowPlaying.rawValue]))
+        let path = root.appendingPathComponent("batches.json")
+        // Codable dictionaries with UUID keys encode alternating key/value entries.
+        var oldRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [Any])
+        for index in stride(from: 1, to: oldRows.count, by: 2) {
+            var row = try XCTUnwrap(oldRows[index] as? [String: Any])
+            row.removeValue(forKey: "nowPlayingIncluded")
+            row.removeValue(forKey: "routeMetadataKnown")
+            oldRows[index] = row
+        }
+        try JSONSerialization.data(withJSONObject: oldRows).write(to: path)
+        let oldLedger = TelemetryBatchLedger(url: path)
+        let oldValue = await oldLedger.batch(id: row.id)
+        let old = try XCTUnwrap(oldValue)
+        XCTAssertFalse(old.routeMetadataKnown)
+        XCTAssertTrue(TelemetryUploader.legacyRoutesAllowed(old, disabled: []))
+        XCTAssertFalse(TelemetryUploader.legacyRoutesAllowed(old, disabled: [HubRecallRoute.nowPlaying.rawValue]))
+        try await oldLedger.clearTaskDescription(row.id)
+        let reloaded = TelemetryBatchLedger(url: path)
+        let roundTrip = await reloaded.batch(id: row.id)
+        XCTAssertEqual(roundTrip?.routeMetadataKnown, false)
+    }
+
 }

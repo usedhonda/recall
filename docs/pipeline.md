@@ -121,6 +121,10 @@ Only a validated response records legacy delivery; failed or missing tasks retai
 their batch for retry. Location samples remain queued until both legacy delivery
 and the applicable Hub storage receipt have been verified. Hub-only routes require
 their Hub receipt, not a legacy response.
+Frozen retries check every included route's legacy permission before posting;
+a disabled route retains the original mixed batch instead of reviving delivery.
+Hub-only Health keeps the original Hub event ID, delivery ID and fingerprint
+for delayed-receipt reconciliation independently of legacy credentials.
 
 Structured `health2` is stored independently from legacy flat `health`; records,
 measurement clocks, units, aggregation and provenance are not flattened into the
@@ -129,6 +133,9 @@ response after successful receiver persistence. GPS and media acceptance remain
 independent when Health is rejected. Scheduling alone must not advance Health's
 successful-send count or fingerprint. Bundled receiver fixes do not imply live
 Gateway deployment or consumer acceptance.
+Structured Health persistence serializes same-path writes and atomically replaces
+the final JSON only after a complete temporary write; failed writes preserve the
+previously acknowledged state.
 
 Audio stop/restart ownership is described in [audio-lifecycle.md](audio-lifecycle.md).
 

@@ -86,7 +86,11 @@ final class HealthKitManager {
 
     // MARK: - Initialization
 
-    init() {}
+    init() {
+        TelemetryUploader.shared.healthAcknowledgmentHandler = { [weak self] deliveryID, fingerprint, source in
+            self?.acknowledgeBackgroundHealth(deliveryID: deliveryID, fingerprint: fingerprint, source: source) ?? false
+        }
+    }
 
     /// Restore enabled state from AppSettings without triggering side effects
     /// (timer start / immediate query). Caller is responsible for starting the timer
@@ -513,11 +517,12 @@ final class HealthKitManager {
     /// Completes a previously scheduled background Health delivery. The
     /// fingerprint is read from the durable batch row, never from a fresh
     /// HealthKit query, so a callback cannot acknowledge the wrong snapshot.
+    @discardableResult
     func acknowledgeBackgroundHealth(deliveryID: String, fingerprint: String,
-                                     source: HealthUploadSource) {
+                                     source: HealthUploadSource) -> Bool {
         guard !deliveryID.isEmpty, !fingerprint.isEmpty,
-              pendingBackgroundHealthFingerprints[deliveryID].map({ $0 == fingerprint }) ?? true,
-              acknowledgedBackgroundHealthIDs.insert(deliveryID).inserted else { return }
+              pendingBackgroundHealthFingerprints[deliveryID].map({ $0 == fingerprint }) ?? true else { return false }
+        guard acknowledgedBackgroundHealthIDs.insert(deliveryID).inserted else { return true }
         pendingBackgroundHealthFingerprints.removeValue(forKey: deliveryID)
         let now = Date()
         lastSentTime = now
@@ -529,6 +534,7 @@ final class HealthKitManager {
         lastErrorMessage = nil
         lastSendResult = .sent(status: 0, body: "bg-acknowledged-\(source.rawValue)")
         ActivityLogger.shared.log(.health, "Background Health acknowledged: deliveryID=\(deliveryID)")
+        return true
     }
 
     // MARK: - Data Aggregation
