@@ -131,6 +131,7 @@ actor LocationQueue {
     }
 
     func peek(max: Int) -> [LocationSample] { Array(samples.prefix(min(max, samples.count))) }
+    func samples(ids: Set<UUID>) -> [LocationSample] { samples.filter { ids.contains($0.id) } }
     func hasPending() -> Bool { !samples.isEmpty }
     func count() -> Int { samples.count }
     func legacyDelivered(_ id: UUID) -> Bool { legacyDeliveredIDs.contains(id) }

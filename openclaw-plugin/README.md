@@ -14,6 +14,8 @@ Supported telemetry:
 
 - location events (`events`) and legacy location samples (`samples`)
 - health summary (`health`)
+- structured HealthKit snapshots (`health2`), preserving metric records,
+  sleep segments, workouts, and collection metadata in dedicated storage
 
 The plugin deduplicates location events, stores runtime state in memory, persists latest snapshots to disk, and writes diary lines for OpenClaw context.
 
@@ -119,7 +121,7 @@ curl -s -X POST http://localhost:18789/api/telemetry \
 Expected response:
 
 ```json
-{"received":1,"healthReceived":false,"nextMinIntervalSec":60}
+{"received":1,"acknowledgedIDs":["test-loc-001"],"healthReceived":false,"nextMinIntervalSec":60}
 ```
 
 ### 2) Health only
@@ -137,6 +139,16 @@ Expected response:
 {"received":0,"healthReceived":true,"nextMinIntervalSec":60}
 ```
 
+### 2b) Structured health2 (iOS)
+
+`health2` is kept separate from the legacy flat `health` summary; its
+`records[*]` fields (`metricId`, `value`, `unit`, `aggregation`, `measuredAt`,
+`source`, and optional interval/device metadata), plus `sleep`, `workouts`, and
+`collectedAt`, are preserved as received. The response sets `healthReceived`
+only after this structured payload is accepted.
+
+Persisted state: `~/.openclaw/workspace/memory/health2-state.json`.
+
 ### 3) Mixed payload
 
 ```bash
@@ -149,7 +161,7 @@ curl -s -X POST http://localhost:18789/api/telemetry \
 Expected response:
 
 ```json
-{"received":1,"healthReceived":true,"nextMinIntervalSec":60}
+{"received":1,"acknowledgedIDs":["test-mix-001"],"healthReceived":true,"nextMinIntervalSec":60}
 ```
 
 ## Data Behavior
@@ -160,11 +172,13 @@ Expected response:
 - Location history ring buffer (last 100 samples)
 - Latest location snapshot in memory
 - Latest health summary in memory
+- Latest structured health2 payload in separate memory state
 
 ### Persisted state
 
 - `~/.openclaw/workspace/memory/current-location.json`
 - `~/.openclaw/workspace/memory/health-state.json`
+- `~/.openclaw/workspace/memory/health2-state.json`
 
 ### Diary writes
 

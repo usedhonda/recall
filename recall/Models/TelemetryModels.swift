@@ -156,6 +156,12 @@ struct TelemetrySample: Encodable {
 struct TelemetryResponse: Decodable {
     let received: Int
     let nextMinIntervalSec: Int?
+    /// IDs accepted by the receiver, including valid duplicate retries. This
+    /// is separate from `received`, which counts only newly stored samples.
+    let acknowledgedIDs: [String]?
+    /// Explicit acknowledgement that the structured/legacy Health payload was
+    /// accepted by the receiver. It is optional for location-only responses.
+    let healthReceived: Bool?
 }
 
 /// Location data payload for foreground HTTP sends

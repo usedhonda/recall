@@ -41,6 +41,9 @@ final class TelemetryService {
         let authorizer = PhotoLibraryAuthorizer()
         self.photoLibraryAuthorizer = authorizer
         self.photoScanCoordinator = PhotoScanCoordinator(authorizer: authorizer)
+        TelemetryUploader.shared.healthAcknowledgmentHandler = { [weak healthManager] deliveryID, fingerprint, source in
+            healthManager?.acknowledgeBackgroundHealth(deliveryID: deliveryID, fingerprint: fingerprint, source: source)
+        }
     }
 
     // MARK: - Lifecycle
@@ -254,6 +257,16 @@ final class TelemetryService {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 return .error("HTTP \(httpResponse.statusCode): \(respBody)")
+            }
+
+            do {
+                _ = try TelemetryAcknowledgment.validate(
+                    data: data,
+                    statusCode: httpResponse.statusCode,
+                    requiresHealth: true
+                )
+            } catch {
+                return .error("invalid health acknowledgement: \(error.localizedDescription)")
             }
 
             ActivityLogger.shared.log(.telemetry, "Health data sent: HTTP \(httpResponse.statusCode)")

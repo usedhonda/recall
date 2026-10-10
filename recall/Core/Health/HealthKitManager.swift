@@ -76,6 +76,8 @@ final class HealthKitManager {
     private static let unchangedKeepaliveInterval: TimeInterval = 2400
     private var lastPostedFingerprint: String?
     private var lastPostedAt: Date?
+    private var acknowledgedBackgroundHealthIDs = Set<String>()
+    private var pendingBackgroundHealthFingerprints: [String: String] = [:]
     private var isSkippingForLock = false
     /// Guards against two queries running at once (launch fires the catch-up query and
     /// the first observer wake together), which POSTed the same snapshot twice.
@@ -447,15 +449,31 @@ final class HealthKitManager {
 
         if isBackground {
             // In background, use TelemetryUploader with beginBackgroundTask for reliable delivery
-            await TelemetryUploader.shared.uploadHealthOnly(payload)
-            let now = Date()
-            lastSentTime = now
-            lastAcceptedAt = now
-            lastPostedFingerprint = fingerprint
-            lastPostedAt = now
-            totalSuccessfulSends += 1
-            lastSendResult = .sent(status: 0, body: "bg-queued")
-            ActivityLogger.shared.log(.health, "Queued bg upload: \(payload.recordsLogSummary())")
+            pendingBackgroundHealthFingerprints[payload.deliveryID.uuidString] = fingerprint
+            let outcome = await TelemetryUploader.shared.uploadHealthOnly(payload)
+            switch outcome {
+            case .acknowledged(_, let source):
+                pendingBackgroundHealthFingerprints.removeValue(forKey: payload.deliveryID.uuidString)
+                let now = Date()
+                lastSentTime = now
+                lastAcceptedAt = now
+                lastPostedFingerprint = fingerprint
+                lastPostedAt = now
+                totalSuccessfulSends += 1
+                lastSendResult = .sent(status: 0, body: "bg-acknowledged-\(source.rawValue)")
+                lastErrorAt = nil
+                lastErrorMessage = nil
+                ActivityLogger.shared.log(.health, "Background Health acknowledged: \(payload.recordsLogSummary())")
+            case .scheduled:
+                lastSendResult = .sending
+                ActivityLogger.shared.log(.health, "Background Health scheduled; awaiting acknowledgement")
+            case .failed(_, let detail):
+                pendingBackgroundHealthFingerprints.removeValue(forKey: payload.deliveryID.uuidString)
+                lastSendResult = .error(detail)
+                totalSendErrors += 1
+                recordHealthError(detail)
+                ActivityLogger.shared.log(.health, "Error: \(detail)")
+            }
         } else {
             let result = await TelemetryService.shared.sendHealth(payload)
             lastSendResult = result
@@ -487,7 +505,30 @@ final class HealthKitManager {
         lastErrorMessage = nil
         suppressedDuplicateErrors = 0
         errorHistory.removeAll()
+        acknowledgedBackgroundHealthIDs.removeAll()
+        pendingBackgroundHealthFingerprints.removeAll()
         lastSendResult = .none
+    }
+
+    /// Completes a previously scheduled background Health delivery. The
+    /// fingerprint is read from the durable batch row, never from a fresh
+    /// HealthKit query, so a callback cannot acknowledge the wrong snapshot.
+    func acknowledgeBackgroundHealth(deliveryID: String, fingerprint: String,
+                                     source: HealthUploadSource) {
+        guard !deliveryID.isEmpty, !fingerprint.isEmpty,
+              pendingBackgroundHealthFingerprints[deliveryID].map({ $0 == fingerprint }) ?? true,
+              acknowledgedBackgroundHealthIDs.insert(deliveryID).inserted else { return }
+        pendingBackgroundHealthFingerprints.removeValue(forKey: deliveryID)
+        let now = Date()
+        lastSentTime = now
+        lastAcceptedAt = now
+        lastPostedFingerprint = fingerprint
+        lastPostedAt = now
+        totalSuccessfulSends += 1
+        lastErrorAt = nil
+        lastErrorMessage = nil
+        lastSendResult = .sent(status: 0, body: "bg-acknowledged-\(source.rawValue)")
+        ActivityLogger.shared.log(.health, "Background Health acknowledged: deliveryID=\(deliveryID)")
     }
 
     // MARK: - Data Aggregation
@@ -497,7 +538,7 @@ final class HealthKitManager {
     /// Content identity of a payload. Excludes fields that move on every query
     /// (`collectedAt`, aggregation interval end) so an unchanged snapshot is
     /// recognized as a duplicate and not re-POSTed.
-    private static func fingerprint(_ payload: HealthPayload) -> String {
+    nonisolated static func fingerprint(_ payload: HealthPayload) -> String {
         var parts: [String] = payload.records.map { r in
             let measuredAt = r.aggregation == "latest" ? "\(r.measuredAt.timeIntervalSince1970)" : ""
             return [

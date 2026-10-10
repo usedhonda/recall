@@ -22,6 +22,7 @@ let latestLocation = null;
 
 /** @type {object | null} */
 let latestHealth = null;
+let latestHealth2 = null;
 
 /** @type {object | null} */
 let latestMotion = null;
@@ -33,12 +34,13 @@ let lastLocationNewAt = null;
 let lastHealthAt = null;
 
 // Periodic cleanup of expired dedup entries
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const cutoff = Date.now() - DEDUP_TTL_MS;
   for (const [id, ts] of seenIds) {
     if (ts < cutoff) seenIds.delete(id);
   }
 }, CLEANUP_INTERVAL_MS);
+cleanupTimer.unref?.();
 
 /**
  * Check if a sample ID has already been seen.
@@ -118,6 +120,21 @@ export function getLatestHealth() {
   return latestHealth;
 }
 
+/** Store a structured health2 payload without flattening or merging it into
+ * the legacy health summary. */
+export function storeHealth2(payload) {
+  latestHealth2 = {
+    ...payload,
+    receivedAt: new Date().toISOString(),
+  };
+  globalThis.__recallLatestHealth2 = latestHealth2;
+  return true;
+}
+
+export function getLatestHealth2() {
+  return latestHealth2;
+}
+
 /**
  * Store a motion activity snapshot.
  * @param {object} motion - { activity, confidence, timestamp }
@@ -162,6 +179,7 @@ export function getStats() {
     historySize: history.length,
     hasLatest: latestLocation !== null,
     hasHealth: latestHealth !== null,
+    hasHealth2: latestHealth2 !== null,
   };
 }
 

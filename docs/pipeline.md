@@ -113,6 +113,25 @@ policy belongs to VoiceLog; do not infer it from this client's defaults.
 
 ## 5. VoiceLog contract (Mac mini)
 
+### Telemetry delivery accounting
+
+Background telemetry scheduling is not delivery. The client persists a batch ID,
+sample IDs and frozen request file before starting a background URLSession task.
+Only a validated response records legacy delivery; failed or missing tasks retain
+their batch for retry. Location samples remain queued until both legacy delivery
+and the applicable Hub storage receipt have been verified. Hub-only routes require
+their Hub receipt, not a legacy response.
+
+Structured `health2` is stored independently from legacy flat `health`; records,
+measurement clocks, units, aggregation and provenance are not flattened into the
+legacy metric shape. Health success requires an explicit `healthReceived: true`
+response after successful receiver persistence. GPS and media acceptance remain
+independent when Health is rejected. Scheduling alone must not advance Health's
+successful-send count or fingerprint. Bundled receiver fixes do not imply live
+Gateway deployment or consumer acceptance.
+
+Audio stop/restart ownership is described in [audio-lifecycle.md](audio-lifecycle.md).
+
 The independent Hub producer foundation, opt-in runtime adapters, private
 provisioning and remaining acceptance boundaries are documented in
 [hub-producer.md](hub-producer.md). Audio release requires matching storage and

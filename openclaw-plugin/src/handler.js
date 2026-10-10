@@ -23,10 +23,10 @@
  */
 
 import { promises as fs } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { homedir } from "os";
 import { verifyAuth } from "./auth.js";
-import { getLastSuccessTimes, storeHealth, storeMotion, storeNowPlaying, storeSample } from "./store.js";
+import { getLastSuccessTimes, isDuplicate, storeHealth, storeHealth2, storeMotion, storeNowPlaying, storeSample } from "./store.js";
 
 const NEXT_MIN_INTERVAL_SEC = 60;
 
@@ -38,8 +38,63 @@ const LOCATION_MIN_WRITE_DURATION_MS = 30 * 60 * 1000;
 const MEMORY_ROOT = join(homedir(), ".openclaw", "workspace", "memory");
 const CURRENT_LOCATION_PATH = join(MEMORY_ROOT, "current-location.json");
 const HEALTH_STATE_PATH = join(MEMORY_ROOT, "health-state.json");
+const HEALTH2_STATE_PATH = join(MEMORY_ROOT, "health2-state.json");
 const MOTION_STATE_PATH = join(MEMORY_ROOT, "motion-state.json");
 const NOW_PLAYING_STATE_PATH = join(MEMORY_ROOT, "now-playing-state.json");
+
+const DEFAULT_STORAGE_PATHS = {
+  currentLocation: CURRENT_LOCATION_PATH,
+  health: HEALTH_STATE_PATH,
+  health2: HEALTH2_STATE_PATH,
+  motion: MOTION_STATE_PATH,
+  nowPlaying: NOW_PLAYING_STATE_PATH,
+};
+
+function storagePaths(storageRoot = MEMORY_ROOT) {
+  return storageRoot === MEMORY_ROOT
+    ? DEFAULT_STORAGE_PATHS
+    : {
+        currentLocation: join(storageRoot, "current-location.json"),
+        health: join(storageRoot, "health-state.json"),
+        health2: join(storageRoot, "health2-state.json"),
+        motion: join(storageRoot, "motion-state.json"),
+        nowPlaying: join(storageRoot, "now-playing-state.json"),
+      };
+}
+
+function isHealth2Payload(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || typeof value.collectedAt !== "string" || Number.isNaN(Date.parse(value.collectedAt))
+      || !Array.isArray(value.records)) return false;
+  const validRecord = (record) => record && typeof record === "object" && !Array.isArray(record)
+    && typeof record.metricId === "string" && record.metricId.length > 0
+    && (record.value == null || (typeof record.value === "number" && Number.isFinite(record.value)))
+    && (record.valueText == null || typeof record.valueText === "string")
+    && typeof record.unit === "string" && record.unit.length > 0
+    && typeof record.aggregation === "string" && record.aggregation.length > 0
+    && typeof record.measuredAt === "string" && !Number.isNaN(Date.parse(record.measuredAt))
+    && ["valueMin", "valueMax"].every((key) => record[key] == null || (typeof record[key] === "number" && Number.isFinite(record[key])))
+    && (record.intervalStart == null || (typeof record.intervalStart === "string" && !Number.isNaN(Date.parse(record.intervalStart))))
+    && (record.intervalEnd == null || (typeof record.intervalEnd === "string" && !Number.isNaN(Date.parse(record.intervalEnd))))
+    && (record.sampleCount == null || (Number.isInteger(record.sampleCount) && record.sampleCount >= 0))
+    && ["source", "sourceBundleId", "deviceModel"].every((key) => record[key] == null || typeof record[key] === "string");
+  if (!value.records.every(validRecord)) return false;
+  if (value.sleep != null && (typeof value.sleep !== "object" || Array.isArray(value.sleep)
+      || (value.sleep.segments != null && (!Array.isArray(value.sleep.segments) || !value.sleep.segments.every((segment) =>
+        segment && typeof segment === "object" && typeof segment.stage === "string"
+          && typeof segment.start === "string" && !Number.isNaN(Date.parse(segment.start))
+          && typeof segment.end === "string" && !Number.isNaN(Date.parse(segment.end))))))) return false;
+  if (value.workouts != null && (!Array.isArray(value.workouts) || !value.workouts.every((workout) =>
+    workout && typeof workout === "object" && typeof workout.activityType === "string"
+      && typeof workout.durationSeconds === "number" && Number.isFinite(workout.durationSeconds)
+      && typeof workout.start === "string" && !Number.isNaN(Date.parse(workout.start))
+      && typeof workout.end === "string" && !Number.isNaN(Date.parse(workout.end))))) return false;
+  return true;
+}
+
+function isLegacyHealthPayload(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
 
 let locationAggWindow = null;
 
@@ -252,7 +307,7 @@ async function maybeWriteHealthDiary(health, log) {
 /**
  * Persist current location to disk for heartbeat/other consumers.
  */
-async function persistCurrentLocation(sample, log) {
+async function persistCurrentLocation(sample, log, paths = DEFAULT_STORAGE_PATHS) {
   const now = new Date();
   const state = {
     lat: sample.lat,
@@ -265,17 +320,19 @@ async function persistCurrentLocation(sample, log) {
     source: "recall-telemetry",
   };
   try {
-    await fs.mkdir(MEMORY_ROOT, { recursive: true });
-    await fs.writeFile(CURRENT_LOCATION_PATH, JSON.stringify(state, null, 2), "utf-8");
+    await fs.mkdir(dirname(paths.currentLocation), { recursive: true });
+    await fs.writeFile(paths.currentLocation, JSON.stringify(state, null, 2), "utf-8");
+    return true;
   } catch (err) {
     log?.warn?.(`recall-telemetry: failed to persist current-location.json: ${err.message}`);
+    return false;
   }
 }
 
 /**
  * Persist health state to disk for heartbeat/other consumers.
  */
-async function persistHealthState(health, log) {
+async function persistHealthState(health, log, paths = DEFAULT_STORAGE_PATHS) {
   const now = new Date();
   const state = {
     ...health,
@@ -284,17 +341,38 @@ async function persistHealthState(health, log) {
     source: "recall-telemetry",
   };
   try {
-    await fs.mkdir(MEMORY_ROOT, { recursive: true });
-    await fs.writeFile(HEALTH_STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+    await fs.mkdir(dirname(paths.health), { recursive: true });
+    await fs.writeFile(paths.health, JSON.stringify(state, null, 2), "utf-8");
+    return true;
   } catch (err) {
     log?.warn?.(`recall-telemetry: failed to persist health-state.json: ${err.message}`);
+    return false;
+  }
+}
+
+/** Persist structured health2 independently from the legacy flat summary. */
+async function persistHealth2State(health2, log, paths = DEFAULT_STORAGE_PATHS) {
+  const now = new Date().toISOString();
+  const state = {
+    ...health2,
+    updatedAt: now,
+    receivedAt: now,
+    source: "recall-telemetry",
+  };
+  try {
+    await fs.mkdir(dirname(paths.health2), { recursive: true });
+    await fs.writeFile(paths.health2, JSON.stringify(state, null, 2), "utf-8");
+    return true;
+  } catch (err) {
+    log?.warn?.(`recall-telemetry: failed to persist health2-state.json: ${err.message}`);
+    return false;
   }
 }
 
 /**
  * Persist motion state to disk.
  */
-async function persistMotionState(motion, log) {
+async function persistMotionState(motion, log, paths = DEFAULT_STORAGE_PATHS) {
   const now = new Date();
   const state = {
     ...motion,
@@ -303,8 +381,8 @@ async function persistMotionState(motion, log) {
     source: "recall-telemetry",
   };
   try {
-    await fs.mkdir(MEMORY_ROOT, { recursive: true });
-    await fs.writeFile(MOTION_STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+    await fs.mkdir(dirname(paths.motion), { recursive: true });
+    await fs.writeFile(paths.motion, JSON.stringify(state, null, 2), "utf-8");
   } catch (err) {
     log?.warn?.(`recall-telemetry: failed to persist motion-state.json: ${err.message}`);
   }
@@ -313,7 +391,7 @@ async function persistMotionState(motion, log) {
 /**
  * Persist now playing state to disk.
  */
-async function persistNowPlayingState(nowPlaying, log) {
+async function persistNowPlayingState(nowPlaying, log, paths = DEFAULT_STORAGE_PATHS) {
   const now = new Date();
   const state = {
     ...nowPlaying,
@@ -322,8 +400,8 @@ async function persistNowPlayingState(nowPlaying, log) {
     source: "recall-telemetry",
   };
   try {
-    await fs.mkdir(MEMORY_ROOT, { recursive: true });
-    await fs.writeFile(NOW_PLAYING_STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+    await fs.mkdir(dirname(paths.nowPlaying), { recursive: true });
+    await fs.writeFile(paths.nowPlaying, JSON.stringify(state, null, 2), "utf-8");
   } catch (err) {
     log?.warn?.(`recall-telemetry: failed to persist now-playing-state.json: ${err.message}`);
   }
@@ -421,9 +499,10 @@ function sendJson(res, data) {
  * @param {object} api - OpenClaw plugin API
  * @returns {(req: import("http").IncomingMessage, res: import("http").ServerResponse) => Promise<void>}
  */
-export function createTelemetryHandler(api) {
+export function createTelemetryHandler(api, options = {}) {
   const gatewayToken = api.config?.gateway?.auth?.token;
   const log = api.logger;
+  const paths = storagePaths(options.storageRoot);
 
   if (!gatewayToken) {
     log?.warn?.("recall-telemetry: no gateway auth token found in config");
@@ -471,7 +550,7 @@ export function createTelemetryHandler(api) {
         timestamp: s.timestamp,
         data: { lat: s.lat, lon: s.lon, accuracy: s.accuracy, altitude: s.altitude, speed: s.speed }
       }));
-    } else if (body.health && typeof body.health === "object") {
+    } else if (isLegacyHealthPayload(body.health) || isHealth2Payload(body.health2)) {
       events = [];
     } else {
       sendError(res, 400, "BAD_REQUEST", '"events", "samples", or "health" payload is required');
@@ -480,6 +559,7 @@ export function createTelemetryHandler(api) {
 
     // Process events with dedup
     let received = 0;
+    const acknowledgedIDs = new Set();
     for (const event of events) {
       if (!event.id || !event.type) continue;
 
@@ -490,11 +570,13 @@ export function createTelemetryHandler(api) {
             log?.debug?.(`recall-telemetry: skipping invalid location event: ${JSON.stringify(event).slice(0, 100)}`);
             break;
           }
+          const duplicate = isDuplicate(sample.id);
           if (storeSample(sample)) {
             received++;
-            maybeWriteDiary(sample, log).catch(() => {});
-            persistCurrentLocation(sample, log).catch(() => {});
+            if (!options.disableDiary) maybeWriteDiary(sample, log).catch(() => {});
+            persistCurrentLocation(sample, log, paths).catch(() => {});
           }
+          if (duplicate || isDuplicate(sample.id)) acknowledgedIDs.add(sample.id);
           break;
         }
         default:
@@ -504,11 +586,22 @@ export function createTelemetryHandler(api) {
 
     // Process health data if present
     let healthReceived = false;
-    if (body.health && typeof body.health === "object") {
-      storeHealth(body.health);
-      healthReceived = true;
-      maybeWriteHealthDiary(body.health, log).catch(() => {});
-      persistHealthState(body.health, log).catch(() => {});
+    if (isLegacyHealthPayload(body.health)) {
+      if (!options.disableDiary) maybeWriteHealthDiary(body.health, log).catch(() => {});
+      if (await persistHealthState(body.health, log, paths)) {
+        storeHealth(body.health);
+        healthReceived = true;
+      }
+    }
+
+    // Structured health2 is a dedicated schema. Never pass records through the
+    // legacy flat health store, which would lose metric metadata and imply the
+    // two payloads are interchangeable.
+    if (isHealth2Payload(body.health2)) {
+      if (await persistHealth2State(body.health2, log, paths)) {
+        storeHealth2(body.health2);
+        healthReceived = true;
+      }
     }
 
     // Process motion data if present
@@ -542,6 +635,7 @@ export function createTelemetryHandler(api) {
 
     sendJson(res, {
       received,
+      acknowledgedIDs: [...acknowledgedIDs],
       healthReceived,
       motionReceived,
       nowPlayingReceived,

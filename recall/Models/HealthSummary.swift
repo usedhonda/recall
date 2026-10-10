@@ -159,3 +159,14 @@ enum HealthSendResult {
         return false
     }
 }
+
+enum HealthUploadSource: String, Codable {
+    case hub
+    case legacy
+}
+
+enum HealthUploadOutcome {
+    case acknowledged(deliveryID: UUID, source: HealthUploadSource)
+    case scheduled(deliveryID: UUID)
+    case failed(deliveryID: UUID, message: String)
+}
