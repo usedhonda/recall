@@ -71,7 +71,9 @@ struct RecordingView: View {
             }
             .ignoresSafeArea()
         }
-        .onAppear { MotionActivityMonitor.shared.startLiveSensors() }
+        .onAppear {
+            if !TestLaunchBoundary.isTesting { MotionActivityMonitor.shared.startLiveSensors() }
+        }
         .onDisappear { MotionActivityMonitor.shared.stopLiveSensors() }
         .onChange(of: viewModel.isActive) { _, active in
             if active {

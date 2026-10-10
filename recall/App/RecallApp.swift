@@ -24,6 +24,7 @@ struct RecallApp: App {
             ContentView()
                 .environment(recordingViewModel)
                 .task {
+                    guard !TestLaunchBoundary.isTesting else { return }
                     recordingViewModel.setModelContainer(sharedModelContainer)
                     if !LaunchContext.launchedInBackground {
                         LaunchContext.markUserForeground()
@@ -39,6 +40,7 @@ struct RecallApp: App {
                     await runNormalStartup()
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    guard !TestLaunchBoundary.isTesting else { return }
                     // Data saver gate: foreground sends, background stays silent.
                     ConnectivityMonitor.shared.isAppActive = (phase == .active)
                     guard phase == .active else { return }

@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        guard !TestLaunchBoundary.isTesting else { return true }
         // First, before any other line lands: how long was nobody running?
         ActivityLogger.shared.noteProcessStart()
         LaunchContext.recordLaunch(applicationState: application.applicationState)
