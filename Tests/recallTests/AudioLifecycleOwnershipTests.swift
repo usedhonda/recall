@@ -1,3 +1,5 @@
+import AVFoundation
+import FluidAudio
 import XCTest
 @testable import recall
 
@@ -75,6 +77,42 @@ final class AudioLifecycleOwnershipTests: XCTestCase {
         admission.write([99], token: old, to: ring)
         admission.write([3], token: replacement, to: ring)
         XCTAssertEqual(ring.readLast(10).samples, [3])
+    }
+
+    func testAcceptedTailProducesOneOriginalWithOldRate() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("original.caf")
+        let ring = RingBuffer(capacity: 144_000)
+        let admission = AudioTapAdmission()
+        let oldTap = admission.open()
+        let oldRate = 48_000.0
+        var cursor = ring.totalWritten
+        var samples: [Float] = []
+        for _ in 0..<10 {
+            admission.write(Array(repeating: 0.02, count: 48_000), token: oldTap, to: ring)
+            let read = ring.readAfter(cursor); cursor = read.nextIndex; samples += read.samples
+        }
+        admission.write(Array(repeating: 0.03, count: 12_000), token: oldTap, to: ring)
+        admission.close()
+        samples += ring.readAfter(cursor).samples
+        let converted = try AudioConverter().resample(samples, from: oldRate)
+        XCTAssertEqual(Double(converted.count), 164_000, accuracy: 2)
+        let writer = ChunkWriter(outputURL: url, sampleRate: 16_000, maximumOutputBytes: 1_000_000)
+        try writer.start()
+        let owner = AudioFinalizationOwner((writer, converted)) {}
+        var finishedDuration = 0.0
+        await owner.finish { snapshot in
+            snapshot.0.appendSamples(snapshot.1, at: .zero)
+            finishedDuration = await snapshot.0.finish().duration
+        }
+        await owner.finish { _ in XCTFail("the same original must not be finished again") }
+        XCTAssertEqual(finishedDuration, 10.25, accuracy: 0.05)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).count, 1)
     }
 
     func testProcessingWaitDoesNotJoinStopThatWaitsForProcessing() async {
