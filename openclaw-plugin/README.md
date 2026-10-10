@@ -145,7 +145,9 @@ Expected response:
 `records[*]` fields (`metricId`, `value`, `unit`, `aggregation`, `measuredAt`,
 `source`, and optional interval/device metadata), plus `sleep`, `workouts`, and
 `collectedAt`, are preserved as received. The response sets `healthReceived`
-only after this structured payload is accepted.
+only after this structured payload is persisted. Writes to the same destination
+are serialized; each writes a unique temporary file completely before atomic
+replacement, so a failed new write preserves the previously acknowledged JSON.
 
 Persisted state: `~/.openclaw/workspace/memory/health2-state.json`.
 

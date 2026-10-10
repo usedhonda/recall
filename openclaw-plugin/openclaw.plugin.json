@@ -1,6 +1,6 @@
 {
   "id": "recall-telemetry",
-  "version": "2026.3.9",
+  "version": "2026.3.10",
   "name": "Recall Telemetry",
   "description": "REST endpoint for recall iOS location and health telemetry",
   "configSchema": {

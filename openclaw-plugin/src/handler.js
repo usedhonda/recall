@@ -26,6 +26,7 @@ import { promises as fs } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
 import { verifyAuth } from "./auth.js";
+import { persistHealth2Json } from "./health2-persistence.js";
 import { getLastSuccessTimes, isDuplicate, storeHealth, storeHealth2, storeMotion, storeNowPlaying, storeSample } from "./store.js";
 
 const NEXT_MIN_INTERVAL_SEC = 60;
@@ -360,8 +361,7 @@ async function persistHealth2State(health2, log, paths = DEFAULT_STORAGE_PATHS) 
     source: "recall-telemetry",
   };
   try {
-    await fs.mkdir(dirname(paths.health2), { recursive: true });
-    await fs.writeFile(paths.health2, JSON.stringify(state, null, 2), "utf-8");
+    await persistHealth2Json(paths.health2, state);
     return true;
   } catch (err) {
     log?.warn?.(`recall-telemetry: failed to persist health2-state.json: ${err.message}`);
