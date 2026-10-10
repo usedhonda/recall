@@ -394,8 +394,13 @@ final class AudioRecordingEngine {
         guard watchdogTask == nil else { return } // don't double-start
         watchdogTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
                 guard let self else { return }
+                let generation = self.captureGeneration.token
+                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
+                guard !Task.isCancelled, !self.userStopped else { return }
+                // A route restart may advance the generation without cancelling
+                // this immortal task. Skip only the stale cycle, not the watchdog.
+                guard self.captureGeneration.acceptsActive(generation, stopped: self.userStopped) else { continue }
 
                 // Heartbeat: always log watchdog cycle for liveness monitoring
                 let route = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portType.rawValue ?? "none"
@@ -1062,9 +1067,14 @@ final class AudioRecordingEngine {
             // Always-on app: force resume even when shouldResume=false (after 2s delay)
             logger.info("shouldResume=false, scheduling forced resume in 2s")
             activity.log(.state, "Interruption ended (shouldResume=false) — will force-resume in 2s")
+            resumeRetryTask?.cancel()
+            let generation = captureGeneration.token
             resumeRetryTask = Task { @MainActor [weak self] in
+                guard let self, self.captureGeneration.acceptsActive(
+                    generation, stopped: self.userStopped) else { return }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard let self, !self.userStopped, self.state == .paused else { return }
+                guard self.captureGeneration.acceptsActive(generation, stopped: self.userStopped),
+                      self.state == .paused else { return }
                 self.resumeAfterInterruption()
             }
         }
@@ -1074,9 +1084,10 @@ final class AudioRecordingEngine {
         let generation = captureGeneration.token
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.finalizations.wait()
-            guard self.captureGeneration.accepts(generation), !self.userStopped else { return }
-            self.performResumeAfterInterruption(attempt: attempt)
+            await self.finalizations.resumeWhenReady(
+                generation: self.captureGeneration, token: generation,
+                stopped: { self.userStopped }, needsResume: { self.state == .paused },
+                resume: { self.performResumeAfterInterruption(attempt: attempt) })
         }
     }
 
@@ -1147,10 +1158,13 @@ final class AudioRecordingEngine {
                 let delaySec = 2.0 * pow(2.0, Double(attempt - 1))
                 let delayNs = UInt64(delaySec * 1_000_000_000)
                 activity.log(.state, "Retry resume in \(Int(delaySec))s...")
+                resumeRetryTask?.cancel()
+                let generation = captureGeneration.token
                 resumeRetryTask = Task { @MainActor [weak self] in
+                    guard let self, self.captureGeneration.acceptsActive(
+                        generation, stopped: self.userStopped) else { return }
                     try? await Task.sleep(nanoseconds: delayNs)
-                    guard let self else { return }
-                    guard !self.userStopped else { return }
+                    guard self.captureGeneration.acceptsActive(generation, stopped: self.userStopped) else { return }
                     // Still need recovery? (not manually restarted)
                     guard self.state == .paused || self.state == .idle else { return }
                     self.resumeAfterInterruption(attempt: attempt + 1)
@@ -1435,10 +1449,12 @@ final class AudioRecordingEngine {
         activity.log(.state, "Recovery scheduled in \(Int(delaySec))s (reason=\(reason), failures=\(attempt))")
 
         resumeRetryTask?.cancel()
+        let generation = captureGeneration.token
         resumeRetryTask = Task { @MainActor [weak self] in
+            guard let self, self.captureGeneration.acceptsActive(
+                generation, stopped: self.userStopped) else { return }
             try? await Task.sleep(for: .seconds(delaySec))
-            guard let self else { return }
-            guard !self.userStopped else { return }
+            guard self.captureGeneration.acceptsActive(generation, stopped: self.userStopped) else { return }
             guard !self.engineNeedsRecreate else { return }
             self.restartEngine()
         }

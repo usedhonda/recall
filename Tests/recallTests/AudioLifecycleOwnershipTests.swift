@@ -12,6 +12,108 @@ final class AudioLifecycleOwnershipTests: XCTestCase {
         XCTAssertFalse(ownership.accepts(old))
     }
 
+    func testCancelledResumeAfterBarrierDoesNotRestart() async {
+        let queue = AudioFinalizationQueue()
+        let generation = AudioCaptureGeneration()
+        let barrier = Gate()
+        let entered = Gate()
+        queue.enqueue { await barrier.wait() }
+        await barrier.waitForEntry()
+        var restarts = 0
+        let request = Task {
+            entered.open()
+            await queue.resumeWhenReady(generation: generation, token: generation.token,
+                stopped: { false }, needsResume: { true }, resume: { restarts += 1 })
+        }
+        await entered.wait()
+        request.cancel()
+        barrier.open()
+        await request.value
+        XCTAssertEqual(restarts, 0)
+    }
+
+    func testInvalidatedResumeAfterBarrierDoesNotRestart() async {
+        let queue = AudioFinalizationQueue()
+        let generation = AudioCaptureGeneration()
+        let token = generation.token
+        let barrier = Gate()
+        let entered = Gate()
+        queue.enqueue { await barrier.wait() }
+        await barrier.waitForEntry()
+        var restarts = 0
+        let request = Task {
+            entered.open()
+            await queue.resumeWhenReady(generation: generation, token: token,
+                stopped: { false }, needsResume: { true }, resume: { restarts += 1 })
+        }
+        await entered.wait()
+        generation.invalidate()
+        barrier.open()
+        await request.value
+        XCTAssertEqual(restarts, 0)
+    }
+
+    func testStoppedMicOperationCannotContinueAfterHFPWait() async {
+        // Same production admission seam used by RecordingViewModel after HFP awaits.
+        let operations = AudioCaptureGeneration()
+        let operation = operations.token
+        let hfpWait = Gate()
+        var stopped = false
+        var replacements = 0
+        let request = Task {
+            await hfpWait.wait()
+            guard operations.acceptsActive(operation, stopped: stopped) else { return }
+            replacements += 1
+        }
+        await hfpWait.waitForEntry()
+        operations.invalidate()
+        stopped = true
+        // A later Start clears stop intent, but cannot grant an old HFP operation ownership.
+        stopped = false
+        hfpWait.open()
+        await request.value
+        XCTAssertEqual(replacements, 0)
+        XCTAssertTrue(operations.acceptsActive(operations.token, stopped: false))
+        XCTAssertFalse(operations.acceptsActive(operations.token, stopped: true))
+    }
+
+    func testTwoResumeRequestsAfterSharedBarrierResetAndInstallOnlyOnce() async {
+        let queue = AudioFinalizationQueue()
+        let generation = AudioCaptureGeneration()
+        let token = generation.token
+        let barrier = Gate()
+        let firstEntered = Gate()
+        let secondEntered = Gate()
+        queue.enqueue { await barrier.wait() }
+        await barrier.waitForEntry()
+        var paused = true
+        var resets = 0
+        var installs = 0
+        let resume = {
+            resets += 1
+            installs += 1
+            paused = false
+        }
+        let first = Task {
+            firstEntered.open()
+            await queue.resumeWhenReady(generation: generation, token: token,
+                stopped: { false }, needsResume: { paused }, resume: resume)
+        }
+        await firstEntered.wait()
+        let second = Task {
+            secondEntered.open()
+            await queue.resumeWhenReady(generation: generation, token: token,
+                stopped: { false }, needsResume: { paused }, resume: resume)
+        }
+        await secondEntered.wait()
+        XCTAssertEqual(installs, 0)
+        barrier.open()
+        await first.value
+        await second.value
+        XCTAssertEqual(resets, 1)
+        XCTAssertEqual(installs, 1)
+    }
+
     func testDetachedOwnerRetainsResourceAndJoinsRepeatedFinish() async {
         let gate = Gate()
         var finishes = 0

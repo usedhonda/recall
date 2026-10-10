@@ -29,6 +29,16 @@ final class RecordingViewModel {
     var currentChunkDuration: TimeInterval { engine?.currentChunkDuration ?? 0 }
     var errorMessage: String?
 
+    // Stop/start invalidate suspended recording work without cancelling an
+    // independent settings selection. Mic requests also supersede older requests.
+    private let recordingOperationGeneration = AudioCaptureGeneration()
+    private var micSwitchGeneration = UUID()
+
+    private func acceptsRecordingOperation(_ generation: UUID) -> Bool {
+        recordingOperationGeneration.acceptsActive(
+            generation, stopped: RecordingStateManager.shared.userStopIntent)
+    }
+
     // MARK: - Mic Mode
 
     var currentMicMode: MicMode {
@@ -36,8 +46,14 @@ final class RecordingViewModel {
     }
 
     func switchMicMode(_ mode: MicMode) async {
+        let operation = recordingOperationGeneration.token
+        let micRequest = UUID()
+        micSwitchGeneration = micRequest
         let mgr = AudioSessionManager.shared
         mgr.setDesiredMicMode(mode)
+        // Saving the selection is independent of permission to restart Audio.
+        AppSettings.shared.preferredMicMode = mode.rawValue
+        guard acceptsRecordingOperation(operation) else { return }
         var appliedMode = mode
 
         do {
@@ -57,7 +73,11 @@ final class RecordingViewModel {
                     btPort = mgr.availableInputs.first { $0.portType == .bluetoothHFP }
                     if btPort != nil { break }
                     try await Task.sleep(for: .milliseconds(200))
+                    guard acceptsRecordingOperation(operation),
+                          micSwitchGeneration == micRequest else { return }
                 }
+                guard acceptsRecordingOperation(operation),
+                      micSwitchGeneration == micRequest else { return }
                 if let btPort {
                     try mgr.setPreferredInput(btPort)
                 } else {
@@ -74,16 +94,22 @@ final class RecordingViewModel {
             // c. Persist
             AppSettings.shared.preferredMicMode = appliedMode.rawValue
 
-            // d. Recreate engine to pick up new route
+            // d. Recreate only while this request still owns the recording lane.
+            guard acceptsRecordingOperation(operation),
+                  micSwitchGeneration == micRequest else { return }
             if let container = lastModelContainer {
                 engine?.stop()
                 engine = nil
                 engine = AudioRecordingEngine()
                 engine?.setModelContainer(container)
                 try await engine?.start()
+                guard acceptsRecordingOperation(operation),
+                      micSwitchGeneration == micRequest else { return }
             }
 
         } catch {
+            guard acceptsRecordingOperation(operation),
+                  micSwitchGeneration == micRequest else { return }
             logger.error("switchMicMode failed: \(error)")
             ActivityLogger.shared.log(.error, "Mic switch failed: \(error.localizedDescription)")
         }
@@ -138,18 +164,23 @@ final class RecordingViewModel {
     private var healthCheckTask: Task<Void, Never>?
 
     func start(modelContainer: ModelContainer) async {
+        recordingOperationGeneration.invalidate()
+        let operation = recordingOperationGeneration.token
         RecordingStateManager.shared.userStopIntent = false
         lastModelContainer = modelContainer
         for attempt in 1...maxStartRetries {
+            guard acceptsRecordingOperation(operation) else { return }
             do {
                 if engine == nil {
                     engine = AudioRecordingEngine()
                     engine?.setModelContainer(modelContainer)
                 }
                 try await engine?.start()
+                guard acceptsRecordingOperation(operation) else { return }
                 errorMessage = nil
                 logger.info("Recording started")
                 await restorePreferredMicMode()
+                guard acceptsRecordingOperation(operation) else { return }
 
                 // Resume upload queue if not already running
                 if !UploadManager.shared.isUploading {
@@ -162,6 +193,7 @@ final class RecordingViewModel {
                 startMusicAutoSwitch()
                 return
             } catch {
+                guard acceptsRecordingOperation(operation) else { return }
                 logger.error("Engine start attempt \(attempt)/\(self.maxStartRetries) failed: \(error)")
                 ActivityLogger.shared.log(.error, "ENGINE start failed (#\(attempt)): \(error)")
                 if attempt < maxStartRetries {
@@ -285,6 +317,7 @@ final class RecordingViewModel {
     }
 
     func stop() {
+        recordingOperationGeneration.invalidate()
         RecordingStateManager.shared.userStopIntent = true
         musicSwitchTask?.cancel()
         musicSwitchTask = nil

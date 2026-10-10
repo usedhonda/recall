@@ -37,6 +37,17 @@ final class AudioFinalizationQueue {
         await existing?.value
     }
 
+    /// Admit a synchronous resume only while its caller still owns a paused lane.
+    /// Recheck after the shared barrier: an earlier waiter may already have resumed.
+    func resumeWhenReady(generation: AudioCaptureGeneration, token: UUID,
+                         stopped: () -> Bool, needsResume: () -> Bool,
+                         resume: () -> Void) async {
+        guard generation.acceptsActive(token, stopped: stopped()), needsResume() else { return }
+        await wait()
+        guard generation.acceptsActive(token, stopped: stopped()), needsResume() else { return }
+        resume()
+    }
+
     private var revision: UInt64 = 0
 }
 
@@ -47,6 +58,9 @@ final class AudioCaptureGeneration {
     private(set) var token = UUID()
     func invalidate() { token = UUID() }
     func accepts(_ candidate: UUID) -> Bool { candidate == token }
+    func acceptsActive(_ candidate: UUID, stopped: Bool) -> Bool {
+        accepts(candidate) && !stopped && !Task.isCancelled
+    }
 }
 
 /// Small production ownership seam used by the engine and deterministic lifecycle tests.
