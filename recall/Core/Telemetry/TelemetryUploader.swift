@@ -299,6 +299,14 @@ final class TelemetryUploader: NSObject {
         var hubAcked = true
         do {
             for sample in samples {
+                // Already acknowledged under this identity: delivered. Do not re-admit it, or an
+                // encoding that drifted since turns it into a permanent conflict that aborts the
+                // whole batch and strands every sample queued behind it.
+                if let acknowledged = await HubDeliveryService.shared.acknowledgedIdentity(
+                    route: .gpsDelivery, observationID: sample.id.uuidString) {
+                    hubIDs[sample.id] = acknowledged
+                    continue
+                }
                 if let externalID = try await HubTelemetryAdmission.admit(
                     route: .gpsDelivery,
                     observationID: sample.id.uuidString,
@@ -694,6 +702,8 @@ extension TelemetryUploader: URLSessionDelegate, URLSessionDataDelegate {
         var allAcked = true
         for sample in target {
             do {
+                if await HubDeliveryService.shared.acknowledgedIdentity(
+                    route: .gpsDelivery, observationID: sample.id.uuidString) != nil { continue }
                 let external = try await HubTelemetryAdmission.admit(route: .gpsDelivery,
                     observationID: sample.id.uuidString, occurredAt: sample.timestamp,
                     payload: TelemetrySample(from: sample))

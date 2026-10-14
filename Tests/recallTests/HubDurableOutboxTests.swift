@@ -307,4 +307,27 @@ final class HubDurableOutboxTests: XCTestCase {
         XCTAssertEqual(HubDeliveryService.usageTransition(wasHigh: true, ratio: 0.69), .recovered)
         XCTAssertNil(HubDeliveryService.usageTransition(wasHigh: false, ratio: 0.5))
     }
+
+    func testAnAcknowledgedIdentityStaysAcknowledgedWhenALaterBodyDiffers() async throws {
+        // A queued sample is released by asking whether its identity has a receipt, not by
+        // re-admitting a body that may have drifted since: the same identity with another body
+        // is a conflict by contract, and the receipt is still there.
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: 100_000, slots: 100))
+        let first = try event("queued-fix", value: 1)
+        try await box.enqueue(first)
+        try await box.acknowledge(responseData: response(first), externalID: first.externalID)
+
+        let drifted = try event("queued-fix", value: 2)
+        XCTAssertEqual(drifted.externalID, first.externalID, "same identity")
+        do { try await box.enqueue(drifted); XCTFail("a different body must conflict") }
+        catch { XCTAssertEqual(error as? HubDurableOutbox.Failure, .immutableConflict) }
+
+        let receipt = try await box.storedReceipt(externalID: drifted.externalID)
+        XCTAssertNotNil(receipt, "the identity is still acknowledged after the conflict")
+        let other = try event("not-yet-sent")
+        let none = try await box.storedReceipt(externalID: other.externalID)
+        XCTAssertNil(none, "an identity that was never acknowledged has no receipt")
+    }
 }

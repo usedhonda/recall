@@ -89,6 +89,19 @@ final class HubDeliveryService {
         }
     }
 
+    /// The external ID of an observation whose identity already has an acknowledged receipt,
+    /// regardless of what body is offered now; nil when it has none (or the outbox cannot be
+    /// read). A queued sample whose identity the Hub has already acknowledged is delivered:
+    /// re-admitting it only measures how its encoding has drifted since, and the immutable
+    /// envelope rightly refuses that. Asking again must not block everything behind it.
+    func acknowledgedIdentity(route: HubRecallRoute, observationID: String) async -> String? {
+        guard isEnabled(route), let configuration, let outbox,
+              let id = try? HubProducerContract.canonicalExternalID(
+                route: route, deviceID: configuration.deviceID, observationID: observationID),
+              let receipt = try? await outbox.storedReceipt(externalID: id), receipt != nil else { return nil }
+        return id
+    }
+
     func isAcknowledged(externalID: String) async throws -> Bool {
         guard let outbox else { throw Failure.notConfigured }
         return try await outbox.storedReceipt(externalID: externalID) != nil
