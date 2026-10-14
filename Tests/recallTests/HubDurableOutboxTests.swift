@@ -271,4 +271,40 @@ final class HubDurableOutboxTests: XCTestCase {
         try await box.enqueue(original)
         try await box.enqueue(original)
     }
+
+    func testUsageSplitsPendingAcknowledgedAndReservedWithoutReadingBodies() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: 100_000, slots: 100))
+        let done = try event("done")
+        try await box.enqueue(done)
+        try await box.enqueue(event("waiting"))
+        try await box.acknowledge(responseData: response(done), externalID: done.externalID)
+        try await box.setExternalReservation(lane: "gps-delivery", key: "queue", bytes: 777)
+
+        let usage = try await box.usage().first { $0.lane == "gps-delivery" }
+        let lane = try XCTUnwrap(usage)
+        XCTAssertEqual(lane.pendingCount, 1)
+        XCTAssertEqual(lane.acknowledgedCount, 1)
+        XCTAssertEqual(lane.reservedBytes, 777)
+        XCTAssertEqual(lane.capBytes, 100_000)
+        XCTAssertGreaterThan(lane.pendingBytes, 4096)
+        XCTAssertLessThanOrEqual(lane.acknowledgedBytes, 4096)
+        XCTAssertEqual(lane.usedBytes, lane.pendingBytes + lane.acknowledgedBytes + 777)
+        XCTAssertNotNil(lane.lastReceiptAt)
+    }
+
+    @MainActor
+    func testRefusalReasonsAreFixedAndUsageWarnsOnTransitionsOnly() {
+        XCTAssertEqual(HubDeliveryService.admissionRefusalReason(HubDurableOutbox.Failure.laneFull), "admission_lane_full")
+        XCTAssertEqual(HubDeliveryService.admissionRefusalReason(HubDurableOutbox.Failure.receiptSlotsFull), "admission_ledger_full")
+        XCTAssertEqual(HubDeliveryService.admissionRefusalReason(HubDurableOutbox.Failure.immutableConflict), "admission_conflict")
+        XCTAssertEqual(HubDeliveryService.admissionRefusalReason(CocoaError(.fileWriteOutOfSpace)), "admission_persistence")
+
+        XCTAssertEqual(HubDeliveryService.usageTransition(wasHigh: false, ratio: 0.81), .becameHigh)
+        XCTAssertNil(HubDeliveryService.usageTransition(wasHigh: true, ratio: 0.95), "no repeat while it stays high")
+        XCTAssertNil(HubDeliveryService.usageTransition(wasHigh: true, ratio: 0.75), "hysteresis between 70% and 80%")
+        XCTAssertEqual(HubDeliveryService.usageTransition(wasHigh: true, ratio: 0.69), .recovered)
+        XCTAssertNil(HubDeliveryService.usageTransition(wasHigh: false, ratio: 0.5))
+    }
 }

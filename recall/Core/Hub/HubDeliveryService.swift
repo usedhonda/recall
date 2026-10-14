@@ -84,6 +84,7 @@ final class HubDeliveryService {
             return id
         } catch {
             await recordGap(route: route, reason: "admission_failed")
+            await recordGap(route: route, reason: Self.admissionRefusalReason(error))
             throw error
         }
     }
@@ -138,6 +139,69 @@ final class HubDeliveryService {
         } catch { await recordGap(route: .audioOriginal, reason: "capture_reservation_release_failed") }
     }
 
+    /// A fixed, bounded vocabulary: the lane being full is not the same fault as the disk
+    /// refusing a write, and a diagnostic that says only "failed" hid the difference for days.
+    static func admissionRefusalReason(_ error: Error) -> String {
+        switch error as? HubDurableOutbox.Failure {
+        case .laneFull?: return "admission_lane_full"
+        case .receiptSlotsFull?: return "admission_ledger_full"
+        case .immutableConflict?: return "admission_conflict"
+        case .invalidEnvelope?, .invalidBudget?: return "admission_invalid"
+        default: return "admission_persistence"
+        }
+    }
+
+    /// Body-free usage per lane, or nil when the outbox cannot be read. A caller must treat
+    /// nil as unknown, never as healthy.
+    func usageSnapshot() async -> [HubDurableOutbox.LaneUsage]? {
+        guard let outbox else { return nil }
+        return try? await outbox.usage()
+    }
+
+    enum UsageTransition: Equatable { case becameHigh, recovered }
+
+    /// Hysteresis: warn once on the way up at 80%, once on the way back under 70%.
+    static func usageTransition(wasHigh: Bool, ratio: Double) -> UsageTransition? {
+        if !wasHigh, ratio >= highUsageThreshold { return .becameHigh }
+        if wasHigh, ratio < recoveredUsageThreshold { return .recovered }
+        return nil
+    }
+
+    private var lastUsageCheck = Date.distantPast
+    private static let highUsageThreshold = 0.8
+    private static let recoveredUsageThreshold = 0.7
+
+    /// Records one gap when a lane crosses 80% of its budget and one when it falls back under
+    /// 70%, so a lane filling up is visible before it refuses anything and does not repeat
+    /// every minute while it stays high.
+    func evaluateUsageTransitions() async {
+        guard Date().timeIntervalSince(lastUsageCheck) >= 60 else { return }
+        lastUsageCheck = Date()
+        guard let usage = await usageSnapshot() else { return }
+        let defaults = UserDefaults.standard
+        for lane in usage {
+            let key = "hub.usage.high." + lane.lane
+            switch Self.usageTransition(wasHigh: defaults.bool(forKey: key), ratio: lane.ratio) {
+            case .becameHigh?:
+                defaults.set(true, forKey: key)
+                await recordLaneGap(lane: lane.lane, reason: "usage_ge_80")
+            case .recovered?:
+                defaults.set(false, forKey: key)
+                await recordLaneGap(lane: lane.lane, reason: "usage_recovered")
+            case nil:
+                break
+            }
+        }
+    }
+
+    private func recordLaneGap(lane: String, reason: String) async {
+        do {
+            guard let outbox else { throw Failure.notConfigured }
+            try await outbox.recordGap(lane: lane, reason: reason)
+            report("Hub lane \(lane): \(reason)")
+        } catch { report("Hub lane \(lane): durable write failed; \(reason) NOT persisted") }
+    }
+
     func recordGap(route: HubRecallRoute, reason: String) async {
         let lane = HubDurableOutbox.lane(for: route)
         do {
@@ -180,6 +244,7 @@ final class HubDeliveryService {
     private func refreshRuntime() {
         guard Date().timeIntervalSince(lastRefresh) >= 5 else { return }
         lastRefresh = Date()
+        Task { await self.evaluateUsageTransitions() }
         do { try HubProvisioning.shared.loadAndImport() }
         catch { report("Hub private configuration unavailable; activation preserved") }
         if outbox == nil {

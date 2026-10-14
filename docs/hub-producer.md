@@ -115,6 +115,12 @@ slot; once acknowledged, only the identity/receipt ledger remains and it is coun
 128, never above 4096 (`HubDurableOutbox.retainedCostSQL`). Counting every acknowledged row a full page
 filled the 32 MiB GPS lane at about 8,192 rows (2026-10-11) and rejected all new positions. No receipt or
 identity is removed; this is lane byte accounting, not a free-disk guarantee.
+Diagnostics are body-free and bounded: per lane the channel status carries pending /
+acknowledged / reserved counts and bytes, the cap, the newest receipt time written by this
+build, and the last specific refusal (`admission_lane_full`, `admission_ledger_full`,
+`admission_conflict`, `admission_invalid`, `admission_persistence`). A lane crossing 80% of its
+budget records one `usage_ge_80` gap, and one `usage_recovered` below 70%. When the outbox cannot
+be read the state is `unknown`, never healthy.
 Tombstones are not silently pruned. Full lanes reject new admissions and retain
 previous unACKed items. These logical limits are not measurements of SQLite
 page/journal overhead or a guarantee against physical disk exhaustion.

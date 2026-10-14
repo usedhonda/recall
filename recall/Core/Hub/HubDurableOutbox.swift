@@ -55,6 +55,7 @@ actor HubDurableOutbox {
             try execute("CREATE TABLE IF NOT EXISTS hub_outbox_v1 (id TEXT PRIMARY KEY, lane TEXT NOT NULL, body BLOB, body_hash TEXT NOT NULL, original_hash TEXT NOT NULL, original_bytes INTEGER NOT NULL, state INTEGER NOT NULL DEFAULT 0, lease_until REAL NOT NULL DEFAULT 0, receipt BLOB, processing_receipt BLOB)")
             try execute("CREATE TABLE IF NOT EXISTS hub_reservations_v1 (lane TEXT NOT NULL, reservation_key TEXT NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(lane,reservation_key))")
             try migrateProcessingReceiptColumn()
+            try ensureColumn("acked_at", type: "REAL")
             try execute("CREATE TABLE IF NOT EXISTS hub_gaps_v1 (lane TEXT NOT NULL, reason TEXT NOT NULL, first_at REAL NOT NULL, last_at REAL NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(lane,reason))")
         } catch {
             sqlite3_close(handle)
@@ -207,13 +208,72 @@ actor HubDurableOutbox {
             let processingEncoded = try processing.map { try JSONEncoder().encode($0) }
             guard encoded.count + (processingEncoded?.count ?? 0) <= 3072 else { throw Failure.receiptMismatch }
             if let processingEncoded {
-                try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, processing_receipt=?, lease_until=0 WHERE id=?",
-                            [.blob(encoded), .blob(processingEncoded), .text(externalID)])
+                try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, processing_receipt=?, lease_until=0, acked_at=? WHERE id=?",
+                            [.blob(encoded), .blob(processingEncoded), .double(Date().timeIntervalSince1970), .text(externalID)])
             } else {
-                try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, lease_until=0 WHERE id=?",
-                            [.blob(encoded), .text(externalID)])
+                try execute("UPDATE hub_outbox_v1 SET state=2, body=NULL, receipt=?, lease_until=0, acked_at=? WHERE id=?",
+                            [.blob(encoded), .double(Date().timeIntervalSince1970), .text(externalID)])
             }
         }
+    }
+
+    /// Body-free usage of one lane, split the way the budget is spent: rows still owed to the
+    /// Hub (body + one reserved page each), the acknowledged identity/receipt ledger (counted by
+    /// real size), and bytes reserved by producers outside the table.
+    struct LaneUsage: Sendable, Equatable {
+        let lane: String
+        let pendingCount: Int64
+        let pendingBytes: Int64
+        let acknowledgedCount: Int64
+        let acknowledgedBytes: Int64
+        let reservedBytes: Int64
+        let capBytes: Int64
+        /// Newest acknowledgement written by this build; nil on rows acknowledged before the
+        /// column existed.
+        let lastReceiptAt: Date?
+        let lastRejectionReason: String?
+        let lastRejectionAt: Date?
+        let rejectionCount: Int64
+
+        var usedBytes: Int64 { pendingBytes + acknowledgedBytes + reservedBytes }
+        var ratio: Double { capBytes > 0 ? Double(usedBytes) / Double(capBytes) : 1 }
+    }
+
+    func usage() throws -> [LaneUsage] {
+        try budgets.keys.sorted().map { lane in
+            let key: [Binding] = [.text(lane)]
+            let pendingCount = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=? AND state!=2", key)
+            let pendingBytes = try scalar("SELECT COALESCE(SUM(\(Self.retainedCostSQL)),0) FROM hub_outbox_v1 WHERE lane=? AND state!=2", key)
+            let ackCount = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=? AND state=2", key)
+            let ackBytes = try scalar("SELECT COALESCE(SUM(\(Self.retainedCostSQL)),0) FROM hub_outbox_v1 WHERE lane=? AND state=2", key)
+            let reserved = try scalar("SELECT COALESCE(SUM(bytes),0) FROM hub_reservations_v1 WHERE lane=?", key)
+            let lastAck = try optionalDouble("SELECT MAX(acked_at) FROM hub_outbox_v1 WHERE lane=? AND state=2", key)
+            let rejection = try rejectionSummary(lane: lane)
+            return LaneUsage(lane: lane, pendingCount: pendingCount, pendingBytes: pendingBytes,
+                             acknowledgedCount: ackCount, acknowledgedBytes: ackBytes, reservedBytes: reserved,
+                             capBytes: budgets[lane]?.maxBytes ?? 0,
+                             lastReceiptAt: lastAck.map { Date(timeIntervalSince1970: $0) },
+                             lastRejectionReason: rejection.reason, lastRejectionAt: rejection.at,
+                             rejectionCount: rejection.count)
+        }
+    }
+
+    /// The most recent specific admission refusal (`admission_*`, not the generic
+    /// `admission_failed`) and how many there have been.
+    private func rejectionSummary(lane: String) throws -> (reason: String?, at: Date?, count: Int64) {
+        let count = try scalar("SELECT COALESCE(SUM(count),0) FROM hub_gaps_v1 WHERE lane=? AND reason LIKE 'admission\\_%' ESCAPE '\\' AND reason!='admission_failed'", [.text(lane)])
+        guard count > 0 else { return (nil, nil, 0) }
+        let statement = try prepare("SELECT reason,last_at FROM hub_gaps_v1 WHERE lane=? AND reason LIKE 'admission\\_%' ESCAPE '\\' AND reason!='admission_failed' ORDER BY last_at DESC LIMIT 1", [.text(lane)])
+        defer { sqlite3_finalize(statement) }
+        guard try step(statement) == SQLITE_ROW else { return (nil, nil, count) }
+        return (try textColumn(statement, 0), Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)), count)
+    }
+
+    private func optionalDouble(_ sql: String, _ values: [Binding]) throws -> Double? {
+        let statement = try prepare(sql, values)
+        defer { sqlite3_finalize(statement) }
+        guard try step(statement) == SQLITE_ROW else { return nil }
+        return sqlite3_column_type(statement, 0) == SQLITE_NULL ? nil : sqlite3_column_double(statement, 0)
     }
 
     func pendingBytes(lane: String) throws -> Int64 {
@@ -317,6 +377,17 @@ actor HubDurableOutbox {
         return Record(lane: try textColumn(statement, 0), body: body,
                       bodyHash: try textColumn(statement, 2), originalHash: hash.isEmpty ? nil : hash,
                       originalBytes: byteCount, receipt: receipt, processingReceipt: processingReceipt)
+    }
+
+    /// Additive, nullable column; existing rows keep NULL and nothing is rewritten.
+    private func ensureColumn(_ name: String, type: String) throws {
+        let statement = try prepare("PRAGMA table_info(hub_outbox_v1)")
+        defer { sqlite3_finalize(statement) }
+        var found = false
+        while try step(statement) == SQLITE_ROW {
+            if let column = sqlite3_column_text(statement, 1), String(cString: column) == name { found = true }
+        }
+        if !found { try execute("ALTER TABLE hub_outbox_v1 ADD COLUMN \(name) \(type)") }
     }
 
     private func migrateProcessingReceiptColumn() throws {

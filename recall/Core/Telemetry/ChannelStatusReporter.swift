@@ -192,13 +192,25 @@ final class ChannelStatusReporter {
     // MARK: - Send (reuses the immediate-telemetry auth path)
 
     private func send(entries: [ChannelEntry], sentAt: String, audio: AudioSnapshot) async -> Bool {
+        let usage = await HubDeliveryService.shared.usageSnapshot()
         let currentPayload = ChannelStatusPayload(
             deviceId: AppSettings.shared.deviceId,
             sentAt: sentAt,
             channels: entries,
             audioState: audio.state,
             audioStateSince: audio.since,
-            lastChunkAt: audio.lastChunkAt
+            lastChunkAt: audio.lastChunkAt,
+            hubOutboxState: usage == nil ? "unknown" : "ok",
+            hubOutbox: usage?.map { lane in
+                OutboxLaneEntry(
+                    lane: lane.lane, pendingCount: lane.pendingCount, pendingBytes: lane.pendingBytes,
+                    acknowledgedCount: lane.acknowledgedCount, acknowledgedBytes: lane.acknowledgedBytes,
+                    reservedBytes: lane.reservedBytes, capBytes: lane.capBytes,
+                    lastReceiptAt: lane.lastReceiptAt.map { Self.iso.string(from: $0) },
+                    lastRejection: lane.lastRejectionReason,
+                    lastRejectionAt: lane.lastRejectionAt.map { Self.iso.string(from: $0) },
+                    rejections: lane.rejectionCount)
+            }
         )
 
         var payload = currentPayload
@@ -308,6 +320,10 @@ private struct ChannelStatusPayload: Codable {
     let audioStateSince: String
     /// When a chunk was last opened. nil only before the first one ever.
     let lastChunkAt: String?
+    /// Body-free state of the durable outbox, lane by lane. `hubOutboxState` is "ok" when the
+    /// lanes could be read and "unknown" when they could not; unknown is never healthy.
+    let hubOutboxState: String?
+    let hubOutbox: [OutboxLaneEntry]?
 
     enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
@@ -317,6 +333,36 @@ private struct ChannelStatusPayload: Codable {
         case audioState = "audio_state"
         case audioStateSince = "audio_state_since"
         case lastChunkAt = "last_chunk_at"
+        case hubOutboxState = "hub_outbox_state"
+        case hubOutbox = "hub_outbox"
+    }
+}
+
+private struct OutboxLaneEntry: Codable {
+    let lane: String
+    let pendingCount: Int64
+    let pendingBytes: Int64
+    let acknowledgedCount: Int64
+    let acknowledgedBytes: Int64
+    let reservedBytes: Int64
+    let capBytes: Int64
+    let lastReceiptAt: String?
+    let lastRejection: String?
+    let lastRejectionAt: String?
+    let rejections: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case lane
+        case pendingCount = "pending_count"
+        case pendingBytes = "pending_bytes"
+        case acknowledgedCount = "acknowledged_count"
+        case acknowledgedBytes = "acknowledged_bytes"
+        case reservedBytes = "reserved_bytes"
+        case capBytes = "cap_bytes"
+        case lastReceiptAt = "last_receipt_at"
+        case lastRejection = "last_rejection"
+        case lastRejectionAt = "last_rejection_at"
+        case rejections
     }
 }
 
