@@ -47,15 +47,18 @@ So the server can tell "intentionally off" from "broken", recall reports channel
 
 - `type: "channel_status"`, channels: `audio | location | health | glasses | media`,
   state: `active | gated_by_user`, plus per-channel `since` (ISO8601 UTC).
-- Send on every state **edge**, plus once per hour while any channel is `gated_by_user`.
-  All-active steady state sends nothing (the location POSTs themselves are the liveness signal).
+- Send on every state **edge**, plus once per hour in every state (since 2026-10-14, so the
+  outbox capacity diagnostic keeps arriving while everything is normal and silence is never
+  mistaken for health). The location POSTs remain the liveness signal for the location lane.
 - The same payload carries whether the audio switch is actually being honoured (added
   2026-09-17, agreed with oc-general): `audio_state` = `recording | listening |
   blocked:<reason> | stopped:user | stopped:internal`, `audio_state_since` (when that
   *health class* began — listening and recording count as one, "capturing", so a sentence
   does not send a message), and `last_chunk_at`. A change of health class is an edge.
-  While audio is not capturing, the payload also repeats hourly, so a long outage never
-  ages past what the server trusts.
+  The owner's stop always reads `stopped:user`; otherwise a live engine (listening, recording,
+  paused) means the switch is on even if the shared `isRecording` mirror is stale (2026-10-14:
+  the mirror read false for hours while the engine captured). The hourly repeat keeps a long
+  outage from ageing past what the server trusts.
   The server alarms when `blocked:*` or `stopped:internal` lasts 10 minutes; `stopped:user`
   is information only, because the owner switches recording off on purpose. Mapping and its
   tests: `AudioStateSignal`.
