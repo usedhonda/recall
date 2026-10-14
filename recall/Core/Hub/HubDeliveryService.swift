@@ -158,18 +158,18 @@ final class HubDeliveryService {
         return try? await outbox.usage()
     }
 
-    enum UsageTransition: Equatable { case becameHigh, recovered }
+    nonisolated enum UsageTransition: Equatable { case becameHigh, recovered }
 
     /// Hysteresis: warn once on the way up at 80%, once on the way back under 70%.
-    static func usageTransition(wasHigh: Bool, ratio: Double) -> UsageTransition? {
+    nonisolated static func usageTransition(wasHigh: Bool, ratio: Double) -> UsageTransition? {
         if !wasHigh, ratio >= highUsageThreshold { return .becameHigh }
         if wasHigh, ratio < recoveredUsageThreshold { return .recovered }
         return nil
     }
 
     private var lastUsageCheck = Date.distantPast
-    private static let highUsageThreshold = 0.8
-    private static let recoveredUsageThreshold = 0.7
+    nonisolated private static let highUsageThreshold = 0.8
+    nonisolated private static let recoveredUsageThreshold = 0.7
 
     /// Records one gap when a lane crosses 80% of its budget and one when it falls back under
     /// 70%, so a lane filling up is visible before it refuses anything and does not repeat
@@ -179,27 +179,39 @@ final class HubDeliveryService {
         lastUsageCheck = Date()
         guard let usage = await usageSnapshot() else { return }
         let defaults = UserDefaults.standard
+        let tracker = UsageGapTracker(
+            isHigh: { defaults.bool(forKey: "hub.usage.gap." + $0) },
+            setHigh: { defaults.set($1, forKey: "hub.usage.gap." + $0) },
+            record: { await self.recordLaneGap(lane: $0, reason: $1) })
         for lane in usage {
-            let key = "hub.usage.high." + lane.lane
-            switch Self.usageTransition(wasHigh: defaults.bool(forKey: key), ratio: lane.ratio) {
-            case .becameHigh?:
-                defaults.set(true, forKey: key)
-                await recordLaneGap(lane: lane.lane, reason: "usage_ge_80")
-            case .recovered?:
-                defaults.set(false, forKey: key)
-                await recordLaneGap(lane: lane.lane, reason: "usage_recovered")
-            case nil:
-                break
+            // The alert (what the status reports) follows the lane at once; the gap record is
+            // retried on the next evaluation until it has actually been written.
+            let alertKey = "hub.usage.alert." + lane.lane
+            let wasAlert = defaults.bool(forKey: alertKey)
+            switch Self.usageTransition(wasHigh: wasAlert, ratio: lane.ratio) {
+            case .becameHigh?: defaults.set(true, forKey: alertKey)
+            case .recovered?: defaults.set(false, forKey: alertKey)
+            case nil: break
             }
+            await tracker.apply(lane: lane.lane, ratio: lane.ratio)
         }
     }
 
-    private func recordLaneGap(lane: String, reason: String) async {
+    /// Lanes currently over the alert threshold (80%, back under at 70%), by name.
+    func alertLanes(_ lanes: [String]) -> [String] {
+        lanes.filter { UserDefaults.standard.bool(forKey: "hub.usage.alert." + $0) }.sorted()
+    }
+
+    private func recordLaneGap(lane: String, reason: String) async -> Bool {
         do {
             guard let outbox else { throw Failure.notConfigured }
             try await outbox.recordGap(lane: lane, reason: reason)
             report("Hub lane \(lane): \(reason)")
-        } catch { report("Hub lane \(lane): durable write failed; \(reason) NOT persisted") }
+            return true
+        } catch {
+            report("Hub lane \(lane): durable write failed; \(reason) NOT persisted")
+            return false
+        }
     }
 
     func recordGap(route: HubRecallRoute, reason: String) async {
@@ -302,3 +314,44 @@ final class HubDeliveryService {
         }
     }
 }
+
+/// Records the 80% / 70% crossings as gaps. The remembered state moves only after the gap was
+/// really written, so a write that failed once is attempted again at the next evaluation
+/// instead of being forgotten for as long as the lane stays high.
+struct UsageGapTracker {
+    var isHigh: (String) -> Bool
+    var setHigh: (String, Bool) -> Void
+    var record: (String, String) async -> Bool
+
+    func apply(lane: String, ratio: Double) async {
+        switch HubDeliveryService.usageTransition(wasHigh: isHigh(lane), ratio: ratio) {
+        case .becameHigh?:
+            if await record(lane, "usage_ge_80") { setHigh(lane, true) }
+        case .recovered?:
+            if await record(lane, "usage_recovered") { setHigh(lane, false) }
+        case nil:
+            break
+        }
+    }
+}
+
+/// What the channel status says about the outbox, and when that is worth a send. Steady
+/// all-active sends nothing; a lane crossing 80%, an unreadable outbox, and the return to
+/// normal must still reach the server, so each is an edge of its own and a non-normal state
+/// repeats hourly like a stretch without capture does.
+enum OutboxAlert {
+    static let normal = "ok"
+
+    static func classify(snapshotAvailable: Bool, alertLanes: [String]) -> String {
+        guard snapshotAvailable else { return "unknown" }
+        return alertLanes.isEmpty ? normal : "high:" + alertLanes.joined(separator: ",")
+    }
+
+    /// `lastSent` is nil until something has been acknowledged; that counts as normal.
+    static func isEdge(current: String, lastSent: String?) -> Bool {
+        current != (lastSent ?? normal)
+    }
+
+    static func needsLevel(current: String) -> Bool { current != normal }
+}
+

@@ -35,6 +35,8 @@ final class ChannelStatusReporter {
     /// The audio health class the server last acknowledged. Kept apart from the per-channel
     /// state so a failed send is retried on the next tick rather than lost.
     private var lastSentAudioClass: String?
+    /// The outbox class of the payload the server last acknowledged (see `OutboxAlert`).
+    private var lastSentOutboxClass: String?
     private let audioClassKey = "audioState.class"
     private let audioSinceKey = "audioState.since"
 
@@ -118,12 +120,22 @@ final class ChannelStatusReporter {
         let audio = currentAudioState(nowISO: nowISO)
         let audioEdge = audio.healthClass != lastSentAudioClass
 
-        let sendEdge = changed || (firstRun && anyGated) || audioEdge
+        // Without this the steady all-active state sends nothing, and a lane filling up
+        // would be recorded locally and never reported.
+        await HubDeliveryService.shared.evaluateUsageTransitions()
+        let usage = await HubDeliveryService.shared.usageSnapshot()
+        let outboxClass = OutboxAlert.classify(
+            snapshotAvailable: usage != nil,
+            alertLanes: HubDeliveryService.shared.alertLanes(usage?.map(\.lane) ?? []))
+        let outboxEdge = OutboxAlert.isEdge(current: outboxClass, lastSent: lastSentOutboxClass)
+
+        let sendEdge = changed || (firstRun && anyGated) || audioEdge || outboxEdge
 
         // A stretch without capture repeats itself hourly, like a gated channel does. An
         // edge alone is not enough: the server stops trusting a state it has not heard for
         // two hours, and an outage that outlasts that would otherwise go quiet again.
         let needsLevel = anyGated || audio.healthClass != "capturing"
+            || OutboxAlert.needsLevel(current: outboxClass)
 
         var sendLevel = false
         if needsLevel {
@@ -135,7 +147,7 @@ final class ChannelStatusReporter {
 
         guard sendEdge || sendLevel else { return }
 
-        let ok = await send(entries: entries, sentAt: nowISO, audio: audio)
+        let ok = await send(entries: entries, sentAt: nowISO, audio: audio, usage: usage, outboxClass: outboxClass)
         // Reset the hourly clock only on a successful send that needed repeating, so a
         // failed send stays retried by the next tick.
         if ok && needsLevel {
@@ -191,8 +203,8 @@ final class ChannelStatusReporter {
 
     // MARK: - Send (reuses the immediate-telemetry auth path)
 
-    private func send(entries: [ChannelEntry], sentAt: String, audio: AudioSnapshot) async -> Bool {
-        let usage = await HubDeliveryService.shared.usageSnapshot()
+    private func send(entries: [ChannelEntry], sentAt: String, audio: AudioSnapshot,
+                      usage: [HubDurableOutbox.LaneUsage]?, outboxClass: String) async -> Bool {
         let currentPayload = ChannelStatusPayload(
             deviceId: AppSettings.shared.deviceId,
             sentAt: sentAt,
@@ -201,6 +213,7 @@ final class ChannelStatusReporter {
             audioStateSince: audio.since,
             lastChunkAt: audio.lastChunkAt,
             hubOutboxState: usage == nil ? "unknown" : "ok",
+            hubOutboxClass: outboxClass,
             hubOutbox: usage?.map { lane in
                 OutboxLaneEntry(
                     lane: lane.lane, pendingCount: lane.pendingCount, pendingBytes: lane.pendingBytes,
@@ -240,6 +253,7 @@ final class ChannelStatusReporter {
                 defaults.removeObject(forKey: "hub.channel.pending.payload")
                 defaults.removeObject(forKey: "hub.channel.pending.id")
                 lastSentAudioClass = AudioStateSignal.healthClass(of: payload.audioState)
+                lastSentOutboxClass = payload.hubOutboxClass ?? OutboxAlert.normal
                 return true
             }
         } catch {
@@ -276,6 +290,7 @@ final class ChannelStatusReporter {
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.payload")
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.id")
             lastSentAudioClass = AudioStateSignal.healthClass(of: payload.audioState)
+                lastSentOutboxClass = payload.hubOutboxClass ?? OutboxAlert.normal
             return true
         } catch {
             ActivityLogger.shared.log(.telemetry, "channel_status send failed: \(error.localizedDescription)")
@@ -323,6 +338,9 @@ private struct ChannelStatusPayload: Codable {
     /// Body-free state of the durable outbox, lane by lane. `hubOutboxState` is "ok" when the
     /// lanes could be read and "unknown" when they could not; unknown is never healthy.
     let hubOutboxState: String?
+    /// `OutboxAlert` class of this payload; what the reporter marks as delivered, so an older
+    /// pending payload being acknowledged never counts as having reported a newer state.
+    let hubOutboxClass: String?
     let hubOutbox: [OutboxLaneEntry]?
 
     enum CodingKeys: String, CodingKey {
@@ -334,6 +352,7 @@ private struct ChannelStatusPayload: Codable {
         case audioStateSince = "audio_state_since"
         case lastChunkAt = "last_chunk_at"
         case hubOutboxState = "hub_outbox_state"
+        case hubOutboxClass = "hub_outbox_class"
         case hubOutbox = "hub_outbox"
     }
 }
