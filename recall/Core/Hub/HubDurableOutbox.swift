@@ -83,7 +83,7 @@ actor HubDurableOutbox {
             }
             // Reserve one SQLite page per retained identity/receipt in addition
             // to actual JSON bytes. ACK cannot consume an unreserved receipt slot.
-            let used = try scalar("SELECT COALESCE(SUM(COALESCE(length(body),0)+4096),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+            let used = try scalar("SELECT COALESCE(SUM(\(Self.retainedCostSQL)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
             let reservations = try scalar("SELECT COALESCE(SUM(bytes),0) FROM hub_reservations_v1 WHERE lane=?", [.text(lane)])
             let pending = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=? AND state!=2", [.text(lane)])
             let reserved = try scalar("SELECT COUNT(*) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
@@ -103,6 +103,25 @@ actor HubDurableOutbox {
                  .text(envelope.originalSHA256 ?? ""), .int(Int64(envelope.originalByteLength))])
         }
     }
+
+    /// What one retained row costs against its lane budget.
+    ///
+    /// A row that is not yet acknowledged keeps its body and one SQLite page (4096 B) reserved,
+    /// so acknowledging it can never need an unreserved slot. After acknowledgement the body is
+    /// gone and only the identity and receipt ledger remains; that is counted at its real byte
+    /// size plus a fixed overhead, never above the page it was admitted with. Charging every
+    /// acknowledged row a full page overstated each GPS row about nine times and filled the
+    /// 32 MiB lane at ~8,192 rows (2026-10-11), rejecting every new position while nothing was
+    /// actually near the disk limit. No receipt, identity or history is removed. This is
+    /// byte accounting for the lane budget, not a guarantee about free disk space.
+    private static let retainedCostSQL = """
+        CASE WHEN state=2 AND body IS NULL THEN MIN(4096,
+            COALESCE(length(CAST(id AS BLOB)),0) + COALESCE(length(CAST(lane AS BLOB)),0)
+            + COALESCE(length(CAST(body_hash AS BLOB)),0) + COALESCE(length(CAST(original_hash AS BLOB)),0)
+            + COALESCE(length(CAST(receipt AS BLOB)),0) + COALESCE(length(CAST(processing_receipt AS BLOB)),0)
+            + 128)
+        ELSE COALESCE(length(body),0) + 4096 END
+        """
 
     static func lane(for route: HubRecallRoute) -> String {
         switch route {
@@ -212,7 +231,7 @@ actor HubDurableOutbox {
                 try execute("DELETE FROM hub_reservations_v1 WHERE lane=? AND reservation_key=?", [.text(lane), .text(key)])
                 return
             }
-            let retained = try scalar("SELECT COALESCE(SUM(COALESCE(length(body),0)+4096),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+            let retained = try scalar("SELECT COALESCE(SUM(\(Self.retainedCostSQL)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
             let other = try scalar("SELECT COALESCE(SUM(bytes),0) FROM hub_reservations_v1 WHERE lane=? AND reservation_key<>?", [.text(lane), .text(key)])
             guard externalOriginalBytes >= 0, externalOriginalBytes <= budget.maxBytes,
                   bytes <= budget.maxBytes - externalOriginalBytes,
@@ -235,7 +254,7 @@ actor HubDurableOutbox {
     }
 
     func retainedBytes(lane: String) throws -> Int64 {
-        try scalar("SELECT COALESCE(SUM(COALESCE(length(body),0)+4096),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+        try scalar("SELECT COALESCE(SUM(\(Self.retainedCostSQL)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
     }
 
     func contains(externalID: String) throws -> Bool { try row(externalID) != nil }

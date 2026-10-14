@@ -110,7 +110,11 @@ Such pairs are explicitly unadmitted, not proof of complete glasses coverage.
 Approved independent limits are GPS 32 MiB, Health aggregate snapshots 64 MiB,
 status 32 MiB, glasses 512 MiB and control 16 MiB. Audio retains the existing
 `storageCapMB` setting. Outbox bodies use their actual encoded byte length;
-each retained identity reserves 4096 bytes for receipt/fingerprint bookkeeping.
+a row that is not yet acknowledged reserves its body plus 4096 bytes, so its ACK never needs an unreserved
+slot; once acknowledged, only the identity/receipt ledger remains and it is counted at its real byte size plus
+128, never above 4096 (`HubDurableOutbox.retainedCostSQL`). Counting every acknowledged row a full page
+filled the 32 MiB GPS lane at about 8,192 rows (2026-10-11) and rejected all new positions. No receipt or
+identity is removed; this is lane byte accounting, not a free-disk guarantee.
 Tombstones are not silently pruned. Full lanes reject new admissions and retain
 previous unACKed items. These logical limits are not measurements of SQLite
 page/journal overhead or a guarantee against physical disk exhaustion.

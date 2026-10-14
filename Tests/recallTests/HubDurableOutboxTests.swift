@@ -149,7 +149,44 @@ final class HubDurableOutboxTests: XCTestCase {
         XCTAssertEqual(before, required)
         try await box.acknowledge(responseData: response(original), externalID: original.externalID)
         let after = try await box.retainedBytes(lane: "audio-original")
-        XCTAssertEqual(after, 4096)
+        // The body is gone; the ledger row is counted at its real size, never above one page.
+        XCTAssertGreaterThan(after, 0)
+        XCTAssertLessThanOrEqual(after, 4096)
+    }
+
+    func testAcknowledgedLedgerRowsAreCountedByRealSizeSoAFullLaneKeepsAdmitting() async throws {
+        // 40 acknowledged rows used to cost 40 pages (163,840 B) and fill a 60,000 B lane
+        // after 14; at their real size they take a fraction of it.
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: 60_000, slots: 1_000))
+        var first: HubProducerEnvelope?
+        var previous: Int64 = 0
+        for index in 0..<40 {
+            let item = try event("ledger-\(index)")
+            try await box.enqueue(item)
+            let pendingCost = try await box.retainedBytes(lane: "gps-delivery")
+            try await box.acknowledge(responseData: response(item), externalID: item.externalID)
+            let acknowledgedCost = try await box.retainedBytes(lane: "gps-delivery")
+            XCTAssertLessThanOrEqual(acknowledgedCost, pendingCost, "ACK must never need more room")
+            XCTAssertGreaterThan(acknowledgedCost, previous)
+            previous = acknowledgedCost
+            if first == nil { first = item }
+        }
+        XCTAssertLessThan(previous, 40 * 4096)
+
+        // Same identity and body: the existing receipt. Same identity, other body: a conflict.
+        let again = try XCTUnwrap(first)
+        try await box.enqueue(again)
+        do { try await box.enqueue(event("ledger-0", value: 2)); XCTFail("changed body must conflict") }
+        catch { XCTAssertEqual(error as? HubDurableOutbox.Failure, .immutableConflict) }
+
+        // A pending row keeps its body and lease after the ledger grew.
+        let waiting = try event("waiting")
+        try await box.enqueue(waiting)
+        let lease = try await box.leaseNext(lane: "gps-delivery", duration: 60)
+        XCTAssertEqual(lease?.externalID, waiting.externalID)
+        XCTAssertEqual(lease?.encodedJSON, waiting.encodedJSON)
     }
 
     func testOriginalReservationIsIndependentLaneBudget() async throws {
