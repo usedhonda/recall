@@ -10,7 +10,8 @@ import Observation
 ///   - EDGE:  immediately when any channel's state changes.
 ///   - LEVEL: once per hour, always. The capacity diagnostic must keep arriving while all is
 ///     normal, otherwise the server cannot tell a quiet healthy device from a silent one. The
-///     first tick after start sends at once (no acknowledged level yet).
+///     first tick sends when no acknowledged-level time is stored; otherwise the next level is
+///     due within an hour of the last acknowledged one (the time persists in UserDefaults).
 ///
 /// Failures are logged and dropped — the next 60s tick is the retry (no queue).
 @Observable
