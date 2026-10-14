@@ -90,6 +90,14 @@ A remote mirror exists at `~/logs/recall-udp/` on the macmini (`ssh macmini`), b
 on-device file is authoritative — the mirror can lag or drop. A 200 / PASS / healthcheck is a
 hint, not proof; confirm end-to-end from the on-device log.
 
+**Before overwriting the app on the phone** (an install replaces the process; nothing restarts
+it until it is launched or iOS wakes it): confirm the phone is unlocked and launchable
+(`devicectl device process launch` needs it), that no recording is in flight or that losing the
+open chunk is accepted, and that the next step is `launch --no-activate` straight after the
+install. Never uninstall, delete the Hub outbox, or kill the process to "refresh". A stretch
+between install and launch is not "deployed" and not lossless: report it as a gap, not as a
+success (2026-10-14: installed, launch refused because the phone was locked, app stopped).
+
 **Before commit: run `scripts/check-contract.sh` (must pass).**
 
 ## 5. Binding constraints (owner-ruled; changing any of these needs explicit owner approval)
