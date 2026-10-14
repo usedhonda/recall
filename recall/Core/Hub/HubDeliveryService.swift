@@ -89,16 +89,22 @@ final class HubDeliveryService {
         }
     }
 
-    /// The external ID of an observation whose identity already has an acknowledged receipt,
-    /// regardless of what body is offered now; nil when it has none (or the outbox cannot be
-    /// read). A queued sample whose identity the Hub has already acknowledged is delivered:
-    /// re-admitting it only measures how its encoding has drifted since, and the immutable
-    /// envelope rightly refuses that. Asking again must not block everything behind it.
-    func acknowledgedIdentity(route: HubRecallRoute, observationID: String) async -> String? {
+    /// The external ID of an observation that was already admitted AND acknowledged with this
+    /// very content: a receipt exists and the envelope this sample produces now equals the
+    /// stored one apart from the milliseconds of `occurred_at` (see
+    /// `HubProducerContract.matchesStoredEnvelope`). An identity alone is never enough: a
+    /// sample whose content differs stays a conflict and stays queued.
+    func acknowledgedEquivalent(route: HubRecallRoute, observationID: String, occurredAt: Date,
+                                timeBasis: String, sourcePayloadJSON: Data) async -> String? {
         guard isEnabled(route), let configuration, let outbox,
               let id = try? HubProducerContract.canonicalExternalID(
                 route: route, deviceID: configuration.deviceID, observationID: observationID),
-              let receipt = try? await outbox.storedReceipt(externalID: id), receipt != nil else { return nil }
+              (try? await outbox.storedReceipt(externalID: id)) != nil,
+              let stored = try? await outbox.storedBodyHash(externalID: id),
+              HubProducerContract.matchesStoredEnvelope(
+                storedBodyHash: stored, route: route, deviceID: configuration.deviceID,
+                observationID: observationID, occurredAt: occurredAt, timeBasis: timeBasis,
+                sourcePayloadJSON: sourcePayloadJSON) else { return nil }
         return id
     }
 

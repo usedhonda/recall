@@ -338,6 +338,12 @@ actor HubDurableOutbox {
         }
     }
 
+    /// The hash of the envelope this identity was admitted with, for an acknowledged row.
+    func storedBodyHash(externalID: String) throws -> String? {
+        guard let record = try row(externalID), record.receipt != nil else { return nil }
+        return record.bodyHash
+    }
+
     func storedReceipt(externalID: String) throws -> HubStorageReceipt? {
         guard let record = try row(externalID), let receiptData = record.receipt else { return nil }
         if record.lane == "audio-original" {

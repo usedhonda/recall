@@ -18,15 +18,7 @@ enum HubTelemetryAdmission {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         let sourcePayloadJSON = try encoder.encode(payload)
-        let basis: String
-        switch route {
-        case .gpsDelivery, .nowPlaying: basis = "timestamp"
-        case .healthSnapshot: basis = "collectedAt"
-        case .geofence, .wifi: basis = "occurred_at"
-        case .channelReport: basis = "sent_at"
-        case .audioOriginal: basis = "chunk_start_utc"
-        case .glassesOriginal: basis = "captured_at"
-        }
+        let basis = defaultTimeBasis(for: route)
         return try await HubDeliveryService.shared.admit(
             route: route,
             observationID: observationID,
@@ -35,6 +27,31 @@ enum HubTelemetryAdmission {
             sourcePayloadJSON: sourcePayloadJSON,
             originalBytes: originalBytes
         )
+    }
+
+    /// The external ID when this observation was already acknowledged with this content (up to
+    /// the milliseconds of `occurred_at`), so a re-admission would only measure queue-file drift.
+    static func acknowledgedEquivalent<Payload: Encodable>(
+        route: HubRecallRoute, observationID: String, occurredAt: Date, payload: Payload
+    ) async -> String? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        guard let sourcePayloadJSON = try? encoder.encode(payload) else { return nil }
+        return await HubDeliveryService.shared.acknowledgedEquivalent(
+            route: route, observationID: observationID, occurredAt: occurredAt,
+            timeBasis: defaultTimeBasis(for: route), sourcePayloadJSON: sourcePayloadJSON)
+    }
+
+    static func defaultTimeBasis(for route: HubRecallRoute) -> String {
+        switch route {
+        case .gpsDelivery, .nowPlaying: return "timestamp"
+        case .healthSnapshot: return "collectedAt"
+        case .geofence, .wifi: return "occurred_at"
+        case .channelReport: return "sent_at"
+        case .audioOriginal: return "chunk_start_utc"
+        case .glassesOriginal: return "captured_at"
+        }
     }
 
     static func legacyAllowed(_ route: HubRecallRoute) -> Bool {

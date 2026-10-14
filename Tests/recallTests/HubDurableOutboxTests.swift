@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import recall
 
 final class HubDurableOutboxTests: XCTestCase {
@@ -308,26 +309,36 @@ final class HubDurableOutboxTests: XCTestCase {
         XCTAssertNil(HubDeliveryService.usageTransition(wasHigh: false, ratio: 0.5))
     }
 
-    func testAnAcknowledgedIdentityStaysAcknowledgedWhenALaterBodyDiffers() async throws {
-        // A queued sample is released by asking whether its identity has a receipt, not by
-        // re-admitting a body that may have drifted since: the same identity with another body
-        // is a conflict by contract, and the receipt is still there.
-        let path = url()
-        defer { try? FileManager.default.removeItem(at: path) }
-        let box = try HubDurableOutbox(url: path, budgets: budgets(bytes: 100_000, slots: 100))
-        let first = try event("queued-fix", value: 1)
-        try await box.enqueue(first)
-        try await box.acknowledge(responseData: response(first), externalID: first.externalID)
+    func testASampleIsEquivalentToItsStoredEnvelopeOnlyUpToTheMillisecondsOfOccurredAt() throws {
+        // What was admitted: a fix at 12:00:00.789. After a restart the queue file hands back
+        // 12:00:00.000. Same sample, so it matches; another second or another content does not.
+        let payload = Data("{\"value\":1}".utf8)
+        let admittedAt = Date(timeIntervalSince1970: 1_790_000_000.789)
+        let stored = try HubProducerContract.makeEnvelope(
+            route: .gpsDelivery, deviceID: "fixture-device", observationID: "fix",
+            occurredAt: admittedAt, timeBasis: "timestamp", sourcePayloadJSON: payload)
+        let storedHash = SHA256.hash(data: stored.encodedJSON).map { String(format: "%02x", $0) }.joined()
 
-        let drifted = try event("queued-fix", value: 2)
-        XCTAssertEqual(drifted.externalID, first.externalID, "same identity")
-        do { try await box.enqueue(drifted); XCTFail("a different body must conflict") }
-        catch { XCTAssertEqual(error as? HubDurableOutbox.Failure, .immutableConflict) }
+        func matches(at date: Date, body: Data = payload, id: String = "fix") -> Bool {
+            HubProducerContract.matchesStoredEnvelope(
+                storedBodyHash: storedHash, route: .gpsDelivery, deviceID: "fixture-device",
+                observationID: id, occurredAt: date, timeBasis: "timestamp", sourcePayloadJSON: body)
+        }
+        XCTAssertTrue(matches(at: admittedAt), "unchanged")
+        XCTAssertTrue(matches(at: Date(timeIntervalSince1970: 1_790_000_000)), "milliseconds dropped by the queue file")
+        XCTAssertFalse(matches(at: Date(timeIntervalSince1970: 1_790_000_001)), "another second is another fix")
+        XCTAssertFalse(matches(at: admittedAt, body: Data("{\"value\":2}".utf8)), "changed content is a conflict")
+        XCTAssertFalse(matches(at: admittedAt, id: "other"), "another identity")
+    }
 
-        let receipt = try await box.storedReceipt(externalID: drifted.externalID)
-        XCTAssertNotNil(receipt, "the identity is still acknowledged after the conflict")
-        let other = try event("not-yet-sent")
-        let none = try await box.storedReceipt(externalID: other.externalID)
-        XCTAssertNil(none, "an identity that was never acknowledged has no receipt")
+    func testTheQueueFileKeepsMillisecondsAndStillReadsWholeSecondFiles() throws {
+        let sample = Date(timeIntervalSince1970: 1_790_000_000.789)
+        let data = try LocationQueueCoding.encoder().encode([sample])
+        let back = try LocationQueueCoding.decoder().decode([Date].self, from: data)
+        XCTAssertEqual(back.first?.timeIntervalSince1970 ?? 0, sample.timeIntervalSince1970, accuracy: 0.0005)
+
+        let legacy = Data("[\"2026-10-14T04:00:00Z\"]".utf8)
+        let old = try LocationQueueCoding.decoder().decode([Date].self, from: legacy)
+        XCTAssertEqual(old.count, 1)
     }
 }

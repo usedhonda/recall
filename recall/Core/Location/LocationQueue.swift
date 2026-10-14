@@ -195,7 +195,7 @@ actor LocationQueue {
 
     private func reserve(samples proposed: [LocationSample], delivered: Set<UUID>) async throws {
         guard await MainActor.run(body: { HubDeliveryService.shared.isEnabled(.gpsDelivery) }) else { return }
-        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let encoder = LocationQueueCoding.encoder()
         let bytes = Int64((try encoder.encode(proposed)).count +
             (try encoder.encode(delivered.map(\.uuidString).sorted())).count)
         try await HubDeliveryService.shared.reserveQueueBytes(route: .gpsDelivery,
@@ -213,8 +213,7 @@ actor LocationQueue {
 
         do {
             let data = try Data(contentsOf: fileURL)
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            let decoder = LocationQueueCoding.decoder()
             let samples = try decoder.decode([LocationSample].self, from: data)
             print("[LocationQueue] Loaded \(samples.count) pending samples from disk")
             return (samples, true)
@@ -227,8 +226,7 @@ actor LocationQueue {
     @discardableResult
     private func saveToDisk() -> Bool {
         do {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            let encoder = LocationQueueCoding.encoder()
             let data = try encoder.encode(samples)
             try data.write(to: fileURL, options: .atomic)
             return true
@@ -258,3 +256,39 @@ actor LocationQueue {
         return true
     }
 }
+
+/// How the queue file stores a sample's time.
+///
+/// Whole-second ISO 8601 dropped the milliseconds of a fix, so a sample reloaded after a restart
+/// produced a different Hub envelope (`occurred_at` carries milliseconds) than the one it was
+/// first admitted with, and every such sample became an immutable conflict (2026-10-11).
+/// Fractional seconds are written now; files written with whole seconds still load.
+enum LocationQueueCoding {
+    private static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let whole = ISO8601DateFormatter()
+
+    static func encoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(fractional.string(from: date))
+        }
+        return encoder
+    }
+
+    static func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let text = try decoder.singleValueContainer().decode(String.self)
+            if let date = fractional.date(from: text) ?? whole.date(from: text) { return date }
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "unrecognized date \(text)"))
+        }
+        return decoder
+    }
+}
+
