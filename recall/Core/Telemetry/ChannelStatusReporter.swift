@@ -70,7 +70,10 @@ final class ChannelStatusReporter {
         case .audio:
             // Durable App Group state driven by the Audio toggle / widget.
             let rec = RecordingStateManager.shared
-            return (rec.isRecording && !rec.userStopIntent) ? .active : .gatedByUser
+            let on = AudioStateSignal.toggleOn(
+                isRecordingFlag: rec.isRecording, ownerStopped: rec.userStopIntent,
+                engine: Self.audioEngineState(RecordingViewModel.shared.engine?.state))
+            return on ? .active : .gatedByUser
         case .location:
             return telemetry.locationManager.isEnabled ? .active : .gatedByUser
         case .health:
@@ -151,6 +154,16 @@ final class ChannelStatusReporter {
 
     // MARK: - Audio state
 
+    private static func audioEngineState(_ state: AudioRecordingEngine.RecordingState?) -> AudioStateSignal.Engine {
+        switch state {
+        case nil: return .none
+        case .idle?: return .idle
+        case .listening?: return .listening
+        case .recording?: return .recording
+        case .paused?: return .paused
+        }
+    }
+
     private struct AudioSnapshot {
         let state: String
         let healthClass: String
@@ -164,16 +177,10 @@ final class ChannelStatusReporter {
     private func currentAudioState(nowISO: String) -> AudioSnapshot {
         let rec = RecordingStateManager.shared
         let engine = RecordingViewModel.shared.engine
-        let engineState: AudioStateSignal.Engine
-        switch engine?.state {
-        case nil: engineState = .none
-        case .idle: engineState = .idle
-        case .listening: engineState = .listening
-        case .recording: engineState = .recording
-        case .paused: engineState = .paused
-        }
+        let engineState = Self.audioEngineState(engine?.state)
         let state = AudioStateSignal.describe(
-            toggleOn: rec.isRecording && !rec.userStopIntent,
+            toggleOn: AudioStateSignal.toggleOn(
+                isRecordingFlag: rec.isRecording, ownerStopped: rec.userStopIntent, engine: engineState),
             engine: engineState,
             blockReason: engine?.activationBlockReason
         )

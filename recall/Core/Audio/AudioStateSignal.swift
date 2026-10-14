@@ -18,6 +18,18 @@ enum AudioStateSignal {
     /// anything" has an answer even straight after a relaunch.
     static let lastChunkKey = "audioState.lastChunkAt"
 
+    /// Whether the owner's audio switch is on. A stop the owner asked for always wins. The shared
+    /// `isRecording` flag is only a mirror, written when a start completes or a stop happens; on
+    /// 2026-10-14 it read false for hours while the engine was listening and writing chunks, and
+    /// the server was told `stopped:user`. A live engine means the switch was honoured.
+    static func toggleOn(isRecordingFlag: Bool, ownerStopped: Bool, engine: Engine) -> Bool {
+        if ownerStopped { return false }
+        switch engine {
+        case .listening, .recording, .paused: return true
+        case .none, .idle: return isRecordingFlag
+        }
+    }
+
     /// - Parameters:
     ///   - toggleOn: the owner's own switch for the audio stream. Off means off by choice,
     ///     whatever the engine is doing.

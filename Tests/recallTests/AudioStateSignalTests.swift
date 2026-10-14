@@ -42,4 +42,13 @@ final class AudioStateSignalTests: XCTestCase {
         XCTAssertEqual(AudioStateSignal.healthClass(of: "blocked:cannotInterruptOthers"), "blocked:cannotInterruptOthers")
         XCTAssertEqual(AudioStateSignal.healthClass(of: "stopped:user"), "stopped:user")
     }
+
+    func testLiveEngineOverridesStaleRecordingFlagButNotAUserStop() {
+        XCTAssertTrue(AudioStateSignal.toggleOn(isRecordingFlag: false, ownerStopped: false, engine: .listening))
+        XCTAssertTrue(AudioStateSignal.toggleOn(isRecordingFlag: false, ownerStopped: false, engine: .recording))
+        XCTAssertFalse(AudioStateSignal.toggleOn(isRecordingFlag: true, ownerStopped: true, engine: .listening),
+                       "a stop the owner asked for always wins")
+        XCTAssertFalse(AudioStateSignal.toggleOn(isRecordingFlag: false, ownerStopped: false, engine: .idle))
+        XCTAssertTrue(AudioStateSignal.toggleOn(isRecordingFlag: true, ownerStopped: false, engine: .none))
+    }
 }
