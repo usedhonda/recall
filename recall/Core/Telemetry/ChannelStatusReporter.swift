@@ -8,8 +8,9 @@ import Observation
 ///
 /// Send policy:
 ///   - EDGE:  immediately when any channel's state changes.
-///   - LEVEL: once per hour while at least one channel is gated_by_user.
-///   - Steady all-active: send nothing.
+///   - LEVEL: once per hour, always. The capacity diagnostic must keep arriving while all is
+///     normal, otherwise the server cannot tell a quiet healthy device from a silent one. The
+///     first tick after start sends at once (no acknowledged level yet).
 ///
 /// Failures are logged and dropped — the next 60s tick is the retry (no queue).
 @Observable
@@ -131,26 +132,18 @@ final class ChannelStatusReporter {
 
         let sendEdge = changed || (firstRun && anyGated) || audioEdge || outboxEdge
 
-        // A stretch without capture repeats itself hourly, like a gated channel does. An
-        // edge alone is not enough: the server stops trusting a state it has not heard for
-        // two hours, and an outage that outlasts that would otherwise go quiet again.
-        let needsLevel = anyGated || audio.healthClass != "capturing"
-            || OutboxAlert.needsLevel(current: outboxClass)
-
-        var sendLevel = false
-        if needsLevel {
-            let last = defaults.object(forKey: lastLevelKey) as? Date
-            if last == nil || now.timeIntervalSince(last!) >= levelInterval {
-                sendLevel = true
-            }
-        }
+        // The level repeats hourly in every state: the outbox capacity diagnostic has to keep
+        // arriving while everything is normal, or silence cannot be told from health. An edge
+        // alone is not enough, the server stops trusting a state it has not heard for two hours.
+        let last = defaults.object(forKey: lastLevelKey) as? Date
+        let sendLevel = OutboxAlert.levelDue(lastAcknowledgedAt: last, now: now, interval: levelInterval)
 
         guard sendEdge || sendLevel else { return }
 
         let ok = await send(entries: entries, sentAt: nowISO, audio: audio, usage: usage, outboxClass: outboxClass)
-        // Reset the hourly clock only on a successful send that needed repeating, so a
-        // failed send stays retried by the next tick.
-        if ok && needsLevel {
+        // Reset the hourly clock only on a successful send, so a failed send is retried by
+        // the next tick.
+        if ok {
             defaults.set(now, forKey: lastLevelKey)
         }
     }

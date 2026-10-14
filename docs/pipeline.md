@@ -252,7 +252,7 @@ steady-state cost low. Values verified in code (2026-09-11):
 | Upload queue (idle) | Sleeps until a chunk is saved or the network changes; 60 s fallback | `UploadManager` |
 | Server probe | Foreground 60 s / background 300 s; network-change probes coalesced to >= 30 s apart | `ServerHealthMonitor` |
 | Activity log file | Buffered; flushed every 2 s, at 16 KB, immediately on `.error`, and on day rollover | `ActivityLogger` |
-| Channel status | On every edge + hourly while any channel is gated | `ChannelStatusReporter` |
+| Channel status | On every edge + once an hour in every state (first tick after start sends at once) | `ChannelStatusReporter` |
 
 Server-side limits (oc-general, 2026-09-11) — do not lengthen past these:
 - Location: the smallest gap threshold is 10 min (stationary-cluster continuity), so the

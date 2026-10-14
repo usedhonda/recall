@@ -48,4 +48,13 @@ final class OutboxAlertTests: XCTestCase {
         XCTAssertEqual(high["metadata-gps"], false)
         XCTAssertEqual(attempts.last, "metadata-gps:usage_recovered")
     }
+
+    func testNormalLevelIsDueFirstThenHourly() {
+        let now = Date()
+        XCTAssertTrue(OutboxAlert.levelDue(lastAcknowledgedAt: nil, now: now, interval: 3600), "first tick sends")
+        XCTAssertFalse(OutboxAlert.levelDue(lastAcknowledgedAt: now.addingTimeInterval(-3599), now: now, interval: 3600))
+        XCTAssertTrue(OutboxAlert.levelDue(lastAcknowledgedAt: now.addingTimeInterval(-3600), now: now, interval: 3600))
+        XCTAssertTrue(OutboxAlert.levelDue(lastAcknowledgedAt: now.addingTimeInterval(60), now: now, interval: 3600),
+                      "a clock set backwards must not silence the level")
+    }
 }

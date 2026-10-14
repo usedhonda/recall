@@ -128,7 +128,9 @@ acknowledged / reserved counts and bytes, the cap, the newest receipt time writt
 build, and the last specific refusal (`admission_lane_full`, `admission_ledger_full`,
 `admission_conflict`, `admission_invalid`, `admission_persistence`). A lane crossing 80% of its
 budget records one `usage_ge_80` gap, and one `usage_recovered` below 70%. When the outbox cannot
-be read the state is `unknown`, never healthy.
+be read the state is `unknown`, never healthy. The channel status, and with it this capacity
+diagnostic, is sent at least once an hour even when everything is normal (the first tick after
+start sends at once), so the server can tell a quiet healthy device from one that stopped reporting.
 Tombstones are not silently pruned. Full lanes reject new admissions and retain
 previous unACKed items. These logical limits are not measurements of SQLite
 page/journal overhead or a guarantee against physical disk exhaustion.

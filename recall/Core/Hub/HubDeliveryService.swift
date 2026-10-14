@@ -374,5 +374,13 @@ enum OutboxAlert {
     }
 
     static func needsLevel(current: String) -> Bool { current != normal }
+
+    /// The capacity diagnostic repeats once per `interval` even when everything is normal, so the
+    /// server can tell "healthy and quiet" from "no longer reporting". Due at once when nothing was
+    /// ever acknowledged (first tick after install or a cleared clock), then at most hourly.
+    static func levelDue(lastAcknowledgedAt: Date?, now: Date, interval: TimeInterval) -> Bool {
+        guard let last = lastAcknowledgedAt else { return true }
+        return now.timeIntervalSince(last) >= interval || last > now
+    }
 }
 
