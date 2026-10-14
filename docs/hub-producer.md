@@ -115,6 +115,14 @@ slot; once acknowledged, only the identity/receipt ledger remains and it is coun
 128, never above 4096 (`HubDurableOutbox.retainedCostSQL`). Counting every acknowledged row a full page
 filled the 32 MiB GPS lane at about 8,192 rows (2026-10-11) and rejected all new positions. No receipt or
 identity is removed; this is lane byte accounting, not a free-disk guarantee.
+A queued GPS sample is released by content, not by identity: its stored envelope hash must equal
+the envelope it produces now (`HubProducerContract.matchesStoredEnvelope`). The exact envelope is
+tried first. Only a sample persisted by a queue file that stored whole seconds (`timePrecision` is
+nil) whose time has no fractional part is also tried with the 999 other millisecond values of
+`occurred_at`, because those milliseconds are gone for good; a sample recorded with milliseconds is
+never searched, and a different millisecond there is a different observation. The queue file now
+writes fractional seconds and still reads whole-second files.
+
 Diagnostics are body-free and bounded: per lane the channel status carries pending /
 acknowledged / reserved counts and bytes, the cap, the newest receipt time written by this
 build, and the last specific refusal (`admission_lane_full`, `admission_ledger_full`,

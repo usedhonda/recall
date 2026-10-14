@@ -304,7 +304,8 @@ final class TelemetryUploader: NSObject {
                 // whole batch and strands every sample queued behind it.
                 if let acknowledged = await HubTelemetryAdmission.acknowledgedEquivalent(
                     route: .gpsDelivery, observationID: sample.id.uuidString,
-                    occurredAt: sample.timestamp, payload: TelemetrySample(from: sample)) {
+                    occurredAt: sample.timestamp, payload: TelemetrySample(from: sample),
+                    allowLostMilliseconds: sample.timePrecision == nil) {
                     hubIDs[sample.id] = acknowledged
                     continue
                 }
@@ -705,7 +706,8 @@ extension TelemetryUploader: URLSessionDelegate, URLSessionDataDelegate {
             do {
                 if await HubTelemetryAdmission.acknowledgedEquivalent(
                     route: .gpsDelivery, observationID: sample.id.uuidString,
-                    occurredAt: sample.timestamp, payload: TelemetrySample(from: sample)) != nil { continue }
+                    occurredAt: sample.timestamp, payload: TelemetrySample(from: sample),
+                    allowLostMilliseconds: sample.timePrecision == nil) != nil { continue }
                 let external = try await HubTelemetryAdmission.admit(route: .gpsDelivery,
                     observationID: sample.id.uuidString, occurredAt: sample.timestamp,
                     payload: TelemetrySample(from: sample))

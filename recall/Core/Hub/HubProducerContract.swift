@@ -195,26 +195,28 @@ enum HubProducerContract {
         return encoded
     }
 
-    /// True when `storedBodyHash` is the hash of the envelope this observation produces now,
-    /// ignoring only the milliseconds of `occurred_at`.
+    /// True when `storedBodyHash` is the hash of the envelope this observation produces now.
     ///
-    /// The envelope carries `occurred_at` with fractional seconds, while a queue file written
-    /// with whole-second dates loses them on reload, so the same sample re-admitted after a
-    /// restart is a different envelope and an immutable conflict. Only that one component is
-    /// searched (at most 1,000 candidates); every other byte of the envelope has to match, so
-    /// this never accepts a sample whose content changed.
+    /// The exact envelope is always tried first (one hash). Only when `allowLostMilliseconds`
+    /// is set, and `occurredAt` has no fractional part, are the milliseconds of `occurred_at`
+    /// searched (at most 999 more candidates). That is for a sample read back from a queue file
+    /// that stored whole seconds, whose milliseconds are gone for good; every other byte of the
+    /// envelope still has to match. A sample recorded with milliseconds is never searched: a
+    /// different millisecond there is a different observation, not lost precision.
     static func matchesStoredEnvelope(storedBodyHash: String, route: HubRecallRoute, deviceID: String,
                                       observationID: String, occurredAt: Date, timeBasis: String,
-                                      sourcePayloadJSON: Data) -> Bool {
+                                      sourcePayloadJSON: Data, allowLostMilliseconds: Bool = false) -> Bool {
         func hash(_ date: Date) -> String? {
             guard let envelope = try? makeEnvelope(route: route, deviceID: deviceID, observationID: observationID,
                                                    occurredAt: date, timeBasis: timeBasis,
                                                    sourcePayloadJSON: sourcePayloadJSON) else { return nil }
             return SHA256.hash(data: envelope.encodedJSON).map { String(format: "%02x", $0) }.joined()
         }
-        let whole = Date(timeIntervalSince1970: occurredAt.timeIntervalSince1970.rounded(.down))
-        for millisecond in 0..<1000 {
-            if hash(whole.addingTimeInterval(Double(millisecond) / 1000)) == storedBodyHash { return true }
+        if hash(occurredAt) == storedBodyHash { return true }
+        let seconds = occurredAt.timeIntervalSince1970
+        guard allowLostMilliseconds, seconds == seconds.rounded(.down) else { return false }
+        for millisecond in 1..<1000 {
+            if hash(occurredAt.addingTimeInterval(Double(millisecond) / 1000)) == storedBodyHash { return true }
         }
         return false
     }

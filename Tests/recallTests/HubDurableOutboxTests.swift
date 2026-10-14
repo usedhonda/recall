@@ -309,26 +309,32 @@ final class HubDurableOutboxTests: XCTestCase {
         XCTAssertNil(HubDeliveryService.usageTransition(wasHigh: false, ratio: 0.5))
     }
 
-    func testASampleIsEquivalentToItsStoredEnvelopeOnlyUpToTheMillisecondsOfOccurredAt() throws {
-        // What was admitted: a fix at 12:00:00.789. After a restart the queue file hands back
-        // 12:00:00.000. Same sample, so it matches; another second or another content does not.
+    func testOnlyAWholeSecondSampleFromAnOldQueueFileMayLoseItsMilliseconds() throws {
+        // Admitted at 12:00:00.789. A queue file that stored whole seconds hands back 12:00:00.000.
         let payload = Data("{\"value\":1}".utf8)
         let admittedAt = Date(timeIntervalSince1970: 1_790_000_000.789)
+        let wholeSecond = Date(timeIntervalSince1970: 1_790_000_000)
         let stored = try HubProducerContract.makeEnvelope(
             route: .gpsDelivery, deviceID: "fixture-device", observationID: "fix",
             occurredAt: admittedAt, timeBasis: "timestamp", sourcePayloadJSON: payload)
         let storedHash = SHA256.hash(data: stored.encodedJSON).map { String(format: "%02x", $0) }.joined()
 
-        func matches(at date: Date, body: Data = payload, id: String = "fix") -> Bool {
+        func matches(at date: Date, allowLost: Bool, body: Data = payload, id: String = "fix") -> Bool {
             HubProducerContract.matchesStoredEnvelope(
                 storedBodyHash: storedHash, route: .gpsDelivery, deviceID: "fixture-device",
-                observationID: id, occurredAt: date, timeBasis: "timestamp", sourcePayloadJSON: body)
+                observationID: id, occurredAt: date, timeBasis: "timestamp", sourcePayloadJSON: body,
+                allowLostMilliseconds: allowLost)
         }
-        XCTAssertTrue(matches(at: admittedAt), "unchanged")
-        XCTAssertTrue(matches(at: Date(timeIntervalSince1970: 1_790_000_000)), "milliseconds dropped by the queue file")
-        XCTAssertFalse(matches(at: Date(timeIntervalSince1970: 1_790_000_001)), "another second is another fix")
-        XCTAssertFalse(matches(at: admittedAt, body: Data("{\"value\":2}".utf8)), "changed content is a conflict")
-        XCTAssertFalse(matches(at: admittedAt, id: "other"), "another identity")
+        XCTAssertTrue(matches(at: admittedAt, allowLost: false), "the exact envelope needs no search")
+        XCTAssertFalse(matches(at: wholeSecond, allowLost: false),
+                       "a sample recorded with milliseconds is never searched")
+        XCTAssertTrue(matches(at: wholeSecond, allowLost: true),
+                      "an old whole-second queue sample may have lost them")
+        XCTAssertFalse(matches(at: Date(timeIntervalSince1970: 1_790_000_000.5), allowLost: true),
+                       "a time that still has milliseconds is not lost precision")
+        XCTAssertFalse(matches(at: Date(timeIntervalSince1970: 1_790_000_001), allowLost: true), "another second")
+        XCTAssertFalse(matches(at: wholeSecond, allowLost: true, body: Data("{\"value\":2}".utf8)), "changed content")
+        XCTAssertFalse(matches(at: wholeSecond, allowLost: true, id: "other"), "another identity")
     }
 
     func testTheQueueFileKeepsMillisecondsAndStillReadsWholeSecondFiles() throws {

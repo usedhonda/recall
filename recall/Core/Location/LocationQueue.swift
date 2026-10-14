@@ -14,6 +14,10 @@ struct LocationSample: Codable, Identifiable {
     /// signal survives the queue path. Older samples persisted before this
     /// field existed decode as nil thanks to the optional declaration.
     var quality: String?
+    /// "ms" on samples created by a build that persists the queue with fractional seconds.
+    /// nil on a sample persisted before that: its queue file stored whole seconds, so its
+    /// `timestamp` may have lost the milliseconds it was first admitted with.
+    var timePrecision: String?
     /// See `TelemetrySample.fixId`. Optional so samples persisted before this field
     /// existed still decode.
     var fixId: String?
@@ -54,6 +58,7 @@ struct LocationSample: Codable, Identifiable {
 
     init(from location: CLLocation, quality: String? = nil, fixId: String? = nil) {
         self.id = UUID()
+        self.timePrecision = "ms"
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.accuracy = location.horizontalAccuracy
