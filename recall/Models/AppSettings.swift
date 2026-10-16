@@ -115,6 +115,11 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "homeSSID") }
     }
 
+    var departureBoostSSIDs: Set<String> {
+        let additional = UserDefaults.standard.stringArray(forKey: "departureBoostSSIDs") ?? []
+        return Set((additional + [homeSSID]).filter { !$0.isEmpty })
+    }
+
     var preferredMicMode: String {
         get { UserDefaults.standard.string(forKey: "preferredMicMode") ?? MicMode.builtIn.rawValue }
         set { UserDefaults.standard.set(newValue, forKey: "preferredMicMode") }

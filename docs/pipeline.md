@@ -208,6 +208,22 @@ tell "intentionally off" from "broken". Full server contract and send policy:
 
 ## 8. Stream cadences (battery budget)
 
+Registered Wi-Fi departure temporarily overrides only the location cadence. A confirmed
+SSID from the same current Wi-Fi connection must match `homeSSID` or an entry in the
+private UserDefaults string array `departureBoostSSIDs`. The latter supports additional
+home/work networks without adding a UI or embedding real network names in source.
+Unknown names do not start a window, and callbacks from a disconnected generation are ignored.
+The window lasts at most 180 seconds; duplicate departure callbacks do not extend it.
+Continuous positioning uses Best accuracy and no distance filter, with a 10-second time
+send condition for newly accepted fixes. The first accepted fix after departure can send
+immediately; cached, duplicate and future fixes are not new fixes. Distance-driven sends
+may still be earlier. Cached heartbeats do not substitute for fresh fixes during the window.
+Any Wi-Fi rejoin, location OFF, authorization loss or expiry restores the normal policy.
+The window is memory-only and does not survive a process restart. Fast cadence alone does
+not end it (30 seconds is slower than the temporary 10 seconds). Existing FG100/BG200-meter
+acceptance, server-side departure confirmation, all data-policy gates and other streams
+remain unchanged. Neither iOS fix arrival nor greeting delivery within 10 seconds is promised.
+
 **Location cadence tiers** (`LocationCadencePolicy`, decided per accepted fix):
 
 | Tier | Entered when | Sends | GPS |

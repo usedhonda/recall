@@ -31,6 +31,7 @@ final class ConnectivityMonitor {
     /// True once a real (non-nil) SSID has been observed. Gates the "away"
     /// classification on a Wi-Fi drop so probe failures don't fake a departure.
     private var hasSeenSSIDState = false
+    private var wifiConnection = WiFiConnectionGeneration()
 
     /// Whether the app is currently in the foreground. Updated from RecallApp's
     /// scenePhase observer. Used by data saver mode: foreground = send all,
@@ -101,8 +102,13 @@ final class ConnectivityMonitor {
     /// source of truth, Wi-Fi is reinforcement only).
     @MainActor
     private func updateWiFiContext(wifi: Bool, wasWiFi: Bool) {
+        let previousSSID = wifiConnection.ssid
+        wifiConnection.update(isConnected: wifi)
+        if wifi, !wasWiFi {
+            TelemetryService.shared.locationManager.endWiFiDepartureBoost()
+        }
         // Feature disabled: no home SSID set -> no derived state, no kick.
-        guard !AppSettings.shared.homeSSID.isEmpty else {
+        guard !AppSettings.shared.departureBoostSSIDs.isEmpty else {
             hasSeenSSIDState = false
             applyWiFiContext(nil)
             return
@@ -116,6 +122,9 @@ final class ConnectivityMonitor {
             guard !wasWiFi else { return }
             readSSID()
         } else if wasWiFi {
+            if let previousSSID, AppSettings.shared.departureBoostSSIDs.contains(previousSSID) {
+                TelemetryService.shared.locationManager.beginWiFiDepartureBoost()
+            }
             // Left Wi-Fi. The drop is visible in the background even though the name is
             // not, so this is the earliest doorway signal we get: announce it with the
             // network we were on and push a fresh position immediately.
@@ -123,15 +132,15 @@ final class ConnectivityMonitor {
             ActivityLogger.shared.log(.network, "wifi left: \(currentSSID ?? "unknown")")
             GeofenceEventReporter.reportWiFi(
                 transition: "left",
-                ssid: currentSSID,
+                ssid: previousSSID,
                 at: Date(),
                 fixId: TelemetryService.shared.locationManager.lastGoodFixId
             )
-            applyWiFiContext(hasSeenSSIDState ? "away" : nil)
+            applyWiFiContext(!AppSettings.shared.homeSSID.isEmpty && hasSeenSSIDState ? "away" : nil)
             TelemetryService.shared.locationManager.kickFreshFix(reason: "wifi left \(currentSSID ?? "unknown")")
             Task { await TelemetryService.shared.locationManager.sendCurrentLocationNow() }
         } else {
-            applyWiFiContext(hasSeenSSIDState ? "away" : nil)
+            applyWiFiContext(!AppSettings.shared.homeSSID.isEmpty && hasSeenSSIDState ? "away" : nil)
         }
     }
 
@@ -153,16 +162,20 @@ final class ConnectivityMonitor {
     /// caller keeps whatever it already knew.
     @MainActor
     func readSSID() {
+        guard isWiFi else { return }
+        let generation = wifiConnection.generation
         NEHotspotNetwork.fetchCurrent { network in
             guard let ssid = network?.ssid, !ssid.isEmpty else { return }
             Task { @MainActor in
-                ConnectivityMonitor.shared.applySSID(ssid)
+                ConnectivityMonitor.shared.applySSID(ssid, generation: generation)
             }
         }
     }
 
     @MainActor
-    private func applySSID(_ ssid: String) {
+    private func applySSID(_ ssid: String, generation: UInt64) {
+        guard wifiConnection.observe(ssid: ssid, generation: generation) else { return }
+        TelemetryService.shared.locationManager.endWiFiDepartureBoost()
         let changed = ssid != currentSSID || !isOnNamedWiFi
         currentSSID = ssid
         ssidReadAt = Date()
@@ -179,7 +192,7 @@ final class ConnectivityMonitor {
             Task { await TelemetryService.shared.locationManager.sendCurrentLocationNow() }
         }
         let home = AppSettings.shared.homeSSID
-        applyWiFiContext(ssid == home ? "home" : "away")
+        applyWiFiContext(home.isEmpty ? nil : ssid == home ? "home" : "away")
     }
 
     // Single data policy gate. All streams (audio/health/location) follow the

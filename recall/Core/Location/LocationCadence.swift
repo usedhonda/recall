@@ -52,3 +52,57 @@ enum LocationCadencePolicy {
         cadence == .fast ? fastSendInterval : slowSendInterval
     }
 }
+
+struct WiFiConnectionGeneration {
+    private(set) var generation: UInt64 = 0
+    private(set) var isConnected = false
+    private(set) var ssid: String?
+
+    mutating func update(isConnected: Bool) {
+        guard self.isConnected != isConnected else { return }
+        generation &+= 1
+        self.isConnected = isConnected
+        ssid = nil
+    }
+
+    mutating func observe(ssid: String, generation: UInt64) -> Bool {
+        guard isConnected, self.generation == generation, !ssid.isEmpty else { return false }
+        self.ssid = ssid
+        return true
+    }
+}
+
+struct LocationDepartureWindow {
+    static let duration: TimeInterval = 180
+    static let sendInterval: TimeInterval = 10
+    private(set) var startedAt: Date?
+    private(set) var lastSentFixAt: Date?
+
+    func isActive(at now: Date) -> Bool {
+        guard let startedAt else { return false }
+        return now >= startedAt && now.timeIntervalSince(startedAt) < Self.duration
+    }
+
+    @discardableResult
+    mutating func start(at now: Date) -> Bool {
+        guard !isActive(at: now) else { return false }
+        startedAt = now
+        lastSentFixAt = nil
+        return true
+    }
+
+    mutating func cancel() {
+        startedAt = nil
+        lastSentFixAt = nil
+    }
+
+    func acceptsNewFix(at fixAt: Date, now: Date) -> Bool {
+        guard isActive(at: now), let startedAt, fixAt > startedAt, fixAt <= now else { return false }
+        return lastSentFixAt.map { fixAt > $0 } ?? true
+    }
+
+    mutating func noteSent(fixAt: Date, now: Date) {
+        guard acceptsNewFix(at: fixAt, now: now) else { return }
+        lastSentFixAt = fixAt
+    }
+}

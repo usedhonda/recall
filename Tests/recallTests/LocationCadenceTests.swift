@@ -3,6 +3,47 @@ import XCTest
 
 /// Cadence policy: GPS speed owns the fast tier, motion owns walking vs parked.
 final class LocationCadenceTests: XCTestCase {
+    func testDepartureWindowIsFiniteAndOnlyAcceptsNewFixes() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var window = LocationDepartureWindow()
+        XCTAssertFalse(window.isActive(at: start))
+        XCTAssertTrue(window.start(at: start))
+        XCTAssertFalse(window.start(at: start.addingTimeInterval(30)))
+        XCTAssertEqual(window.startedAt, start)
+        XCTAssertFalse(window.acceptsNewFix(at: start, now: start.addingTimeInterval(1)))
+        XCTAssertTrue(window.acceptsNewFix(at: start.addingTimeInterval(1), now: start.addingTimeInterval(2)))
+        window.noteSent(fixAt: start.addingTimeInterval(1), now: start.addingTimeInterval(2))
+        XCTAssertFalse(window.acceptsNewFix(at: start.addingTimeInterval(1), now: start.addingTimeInterval(3)))
+        XCTAssertTrue(window.acceptsNewFix(at: start.addingTimeInterval(2), now: start.addingTimeInterval(3)))
+        XCTAssertFalse(window.acceptsNewFix(at: start.addingTimeInterval(4), now: start.addingTimeInterval(3)))
+        XCTAssertTrue(window.isActive(at: start.addingTimeInterval(179)))
+        XCTAssertFalse(window.isActive(at: start.addingTimeInterval(180)))
+        XCTAssertFalse(window.isActive(at: start.addingTimeInterval(-1)))
+        XCTAssertEqual(LocationDepartureWindow.sendInterval, 10)
+        window.cancel()
+        XCTAssertNil(window.startedAt)
+        XCTAssertNil(window.lastSentFixAt)
+    }
+
+    func testWiFiObservationsCannotCrossConnectionGenerations() {
+        var connection = WiFiConnectionGeneration()
+        let beforeJoin = connection.generation
+        connection.update(isConnected: true)
+        let first = connection.generation
+        XCTAssertFalse(connection.observe(ssid: "fixture-home", generation: beforeJoin))
+        XCTAssertTrue(connection.observe(ssid: "fixture-home", generation: first))
+        connection.update(isConnected: true)
+        XCTAssertEqual(connection.generation, first)
+        XCTAssertEqual(connection.ssid, "fixture-home")
+        connection.update(isConnected: false)
+        XCTAssertNil(connection.ssid)
+        XCTAssertFalse(connection.observe(ssid: "fixture-home", generation: first))
+        connection.update(isConnected: true)
+        XCTAssertFalse(connection.observe(ssid: "fixture-home", generation: first))
+        XCTAssertFalse(connection.observe(ssid: "", generation: connection.generation))
+        XCTAssertTrue(connection.observe(ssid: "fixture-work", generation: connection.generation))
+    }
+
     func testFastSpeedEntersFastTierEvenWhenMotionSaysStill() {
         // A train or a smooth car can read as stationary to the motion chip.
         let tier = LocationCadencePolicy.tier(

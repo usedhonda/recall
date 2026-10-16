@@ -60,7 +60,13 @@ final class LocationManager: NSObject {
     /// tier, the motion coprocessor decides walking vs parked — see LocationCadencePolicy.
     private(set) var cadence: LocationCadence = .walking
     /// Seconds between sends at the current cadence, for the HUD.
-    var currentSendInterval: TimeInterval { LocationCadencePolicy.sendInterval(for: cadence) }
+    var currentSendInterval: TimeInterval {
+        departureWindow.isActive(at: Date())
+            ? LocationDepartureWindow.sendInterval
+            : LocationCadencePolicy.sendInterval(for: cadence)
+    }
+    private var departureWindow = LocationDepartureWindow()
+    private var departureWindowTask: Task<Void, Never>?
     private var lastMovementAt = Date()
     private var continuousUpdatesRunning = false
 
@@ -130,6 +136,9 @@ final class LocationManager: NSObject {
             lastSendGap = Date().timeIntervalSince(previous)
         }
         lastSentTime = Date()
+        if let location = lastSentLocation {
+            departureWindow.noteSent(fixAt: location.timestamp, now: Date())
+        }
     }
     /// Geofence armed around wherever the phone parked, so leaving is caught even if
     /// the motion chip is slow to call it walking (and coarse parked fixes cannot).
@@ -272,6 +281,9 @@ final class LocationManager: NSObject {
     }
 
     func stopUpdates() {
+        departureWindowTask?.cancel()
+        departureWindowTask = nil
+        departureWindow.cancel()
         isUpdating = false
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
@@ -453,7 +465,7 @@ final class LocationManager: NSObject {
             // re-sending: indoors it returns ~1.8 km readings, which the accuracy filter
             // rejects. Until one good fix exists, stay on Best.
             let probing = (parkedProbeUntil.map { $0 > Date() } ?? false)
-            let needsAFix = (lastGoodLocation == nil || probing)
+            let needsAFix = (lastGoodLocation == nil || probing || departureWindow.isActive(at: Date()))
             locationManager.desiredAccuracy = needsAFix
                 ? kCLLocationAccuracyBest
                 : kCLLocationAccuracyHundredMeters
@@ -483,6 +495,27 @@ final class LocationManager: NSObject {
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
             locationManager.distanceFilter = kCLDistanceFilterNone
         }
+    }
+
+    func beginWiFiDepartureBoost() {
+        guard isEnabled, hasAuthorization, departureWindow.start(at: Date()) else { return }
+        departureWindowTask?.cancel()
+        reevaluateCadence()
+        ActivityLogger.shared.log(.location, "WiFi departure boost started (window=180s send=10s)")
+        departureWindowTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 180_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.endWiFiDepartureBoost()
+        }
+    }
+
+    func endWiFiDepartureBoost() {
+        guard departureWindow.startedAt != nil else { return }
+        departureWindowTask?.cancel()
+        departureWindowTask = nil
+        departureWindow.cancel()
+        reevaluateCadence()
+        ActivityLogger.shared.log(.location, "WiFi departure boost ended")
     }
 
     /// Re-decide the cadence without a new fix (heartbeat tick).
@@ -733,6 +766,11 @@ final class LocationManager: NSObject {
     }
 
     private func shouldSendLocation(_ location: CLLocation) -> Bool {
+        let now = Date()
+        if departureWindow.isActive(at: now) {
+            guard departureWindow.acceptsNewFix(at: location.timestamp, now: now) else { return false }
+            if departureWindow.lastSentFixAt == nil { return true }
+        }
         guard let lastSent = lastSentLocation, let lastTime = lastSentTime else {
             return true
         }
@@ -791,6 +829,7 @@ final class LocationManager: NSObject {
     }
 
     private func sendHeartbeat() {
+        guard !departureWindow.isActive(at: Date()) else { return }
         // Only ever re-send a fix that passed the accuracy filter. `currentLocation` is
         // assigned before filtering, so falling back to it published rejected fixes:
         // a 1844 m reading went out at 00:40 JST on 2026-09-13, right after a relaunch
@@ -941,6 +980,7 @@ extension LocationManager: CLLocationManagerDelegate {
         Task { @MainActor in
             let oldStatus = authorizationStatus
             authorizationStatus = manager.authorizationStatus
+            if !hasAuthorization { endWiFiDepartureBoost() }
             ActivityLogger.shared.log(.location, "Authorization changed: \(oldStatus.rawValue) -> \(authorizationStatus.rawValue) (always=\(canUseBackground))")
 
             // Reconfigure background mode when authorization changes
