@@ -30,6 +30,12 @@ Stopping one stream must never stop, gate, defer, or degrade another. Concretely
   streams start on every launch, silent or not (`RecallApp.startIndependentStreams()`).
 - Stopping recording does not stop the upload queue: chunks already recorded keep draining.
 
+- An OFF from Control Center / App Intents saves `userStopIntent` in the same step
+  (`RecordingStateManager.applyExternalToggle`), and an OFF that arrives while the engine is idle
+  still invalidates a start waiting in its retry back-off.
+- A deployment launch with `RECALL_PRESERVE_OFF=1` and a stored stop stays silent for that process,
+  including after the scene becomes active; the independent streams still start.
+
 ## Why this is binding (incident history)
 
 - 2026-07-10: a background relaunch read `userStopIntent=true` and tore down location —

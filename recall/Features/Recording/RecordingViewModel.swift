@@ -31,10 +31,10 @@ final class RecordingViewModel {
 
     // Stop/start invalidate suspended recording work without cancelling an
     // independent settings selection. Mic requests also supersede older requests.
-    private let recordingOperationGeneration = AudioCaptureGeneration()
+    let recordingOperationGeneration = AudioCaptureGeneration()
     private var micSwitchGeneration = UUID()
 
-    private func acceptsRecordingOperation(_ generation: UUID) -> Bool {
+    func acceptsRecordingOperation(_ generation: UUID) -> Bool {
         recordingOperationGeneration.acceptsActive(
             generation, stopped: RecordingStateManager.shared.userStopIntent)
     }
@@ -316,7 +316,9 @@ final class RecordingViewModel {
         }
     }
 
-    func stop() {
+    /// Invalidate start / retry work that is suspended while the engine is idle, and keep the
+    /// stop durable. Shared by `stop()` and an OFF that arrives with nothing running.
+    private func cancelPendingRecordingWork() {
         recordingOperationGeneration.invalidate()
         RecordingStateManager.shared.userStopIntent = true
         musicSwitchTask?.cancel()
@@ -325,6 +327,10 @@ final class RecordingViewModel {
         healthCheckTask = nil
         retryTask?.cancel()
         retryTask = nil
+    }
+
+    func stop() {
+        cancelPendingRecordingWork()
         engine?.stop(intentional: true)
         AudioSessionManager.shared.deactivate()
         logger.info("Recording stopped")
@@ -352,6 +358,12 @@ final class RecordingViewModel {
         let current = isActive
 
         guard desired != current else {
+            if !desired {
+                // Idle is not proof nothing is pending: a start may be waiting in its
+                // retry back-off. Record the stop and invalidate that work; the engine and
+                // the audio session are not touched.
+                cancelPendingRecordingWork()
+            }
             ActivityLogger.shared.log(.state, "External toggle: ignored — already \(current ? "recording" : "stopped")")
             return
         }

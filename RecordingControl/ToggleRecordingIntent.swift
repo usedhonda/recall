@@ -8,7 +8,7 @@ struct ToggleRecordingIntent: SetValueIntent {
     var value: Bool
 
     func perform() async throws -> some IntentResult {
-        RecordingStateManager.shared.isRecording = value
+        RecordingStateManager.shared.applyExternalToggle(value)
         return .result()
     }
 }

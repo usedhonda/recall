@@ -45,6 +45,16 @@ struct RecallApp: App {
                     ConnectivityMonitor.shared.isAppActive = (phase == .active)
                     guard phase == .active else { return }
                     LaunchContext.markUserForeground()
+                    if LaunchContext.foregroundAction(
+                        deploymentPreservesOff: LaunchContext.deploymentPreservesOff) == .independentStreamsOnly {
+                        // A deployment kept the owner's stop: leave the recording lane
+                        // alone; every other stream still starts and drains.
+                        Task {
+                            await startIndependentStreams()
+                            await TelemetryUploader.shared.triggerUpload()
+                        }
+                        return
+                    }
                     RecordingStateManager.shared.userStopIntent = false
                     // Foreground is the moment iOS is most likely to grant setActive —
                     // nudge the engine to retry any background-blocked (-50) activation.

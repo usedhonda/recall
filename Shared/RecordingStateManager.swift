@@ -33,6 +33,14 @@ final class RecordingStateManager {
         }
     }
 
+    /// Control Center / App Intents switch. An OFF is saved as the durable stop intent in the
+    /// same step, because the app process may not exist yet to apply it: a later launch,
+    /// retry or pending start must still find the owner's stop.
+    func applyExternalToggle(_ on: Bool) {
+        if !on { userStopIntent = true }
+        isRecording = on
+    }
+
     func postDarwinNotification() {
         let name = CFNotificationName(Self.darwinNotificationName as CFString)
         let center = CFNotificationCenterGetDarwinNotifyCenter()

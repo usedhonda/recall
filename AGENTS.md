@@ -96,7 +96,9 @@ it until it is launched or iOS wakes it): confirm the phone is unlocked and laun
 recording in progress is the default; accepting the loss of an open chunk is a decision of the
 owner about that specific chunk, never inferred from a broad task), and that the next step is
 `launch --no-activate` straight after the install. An app that is already installed and merely
-stopped is restarted by launching it, not by installing again. Never uninstall, delete the Hub outbox, or kill the process to "refresh". A stretch
+stopped is restarted by launching it, not by installing again. When the owner's audio switch is OFF (`stopped:user`), launch with
+`--environment-variables '{"RECALL_PRESERVE_OFF":"1"}'`: that process keeps the stored stop and
+starts only the independent streams (the flag lasts for that process only). Never uninstall, delete the Hub outbox, or kill the process to "refresh". A stretch
 between install and launch is not "deployed" and not lossless: report it as a gap, not as a
 success (2026-10-14: installed, launch refused because the phone was locked, app stopped).
 

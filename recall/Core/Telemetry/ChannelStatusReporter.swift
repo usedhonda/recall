@@ -105,18 +105,31 @@ final class ChannelStatusReporter {
             let sinceKey = "channelSince.\(channel.rawValue)"
             let stored = defaults.string(forKey: stateKey)
 
-            if stored == nil {
-                // First observation of this channel: seed `since` = now.
+            // `stateKey` is what this tick last observed (it only decides when `since` is
+            // stamped). Whether the server has heard the state is a separate fact, kept in
+            // `ackedKey` and written only after an acknowledged send, so a failed send leaves
+            // the channel dirty for the next tick.
+            let ackedKey = ChannelAckLedger.key(channel.rawValue)
+            if defaults.string(forKey: ackedKey) == nil, let stored {
+                // State saved by an older build: what it had observed is the baseline.
+                defaults.set(stored, forKey: ackedKey)
+            }
+            if defaults.string(forKey: ackedKey) == nil {
+                // Never acknowledged: first run.
                 firstRun = true
+            }
+            if stored == nil {
                 if defaults.string(forKey: sinceKey) == nil {
                     defaults.set(nowISO, forKey: sinceKey)
                 }
             } else if stored != current.rawValue {
                 // State flipped: stamp a fresh `since`.
-                changed = true
                 defaults.set(nowISO, forKey: sinceKey)
             }
             defaults.set(current.rawValue, forKey: stateKey)
+            if ChannelAckLedger.isDirty(current: current.rawValue, acked: defaults.string(forKey: ackedKey)) {
+                changed = true
+            }
 
             let since = defaults.string(forKey: sinceKey) ?? nowISO
             entries.append(ChannelEntry(channel: channel.rawValue, state: current.rawValue, since: since))
@@ -204,6 +217,14 @@ final class ChannelStatusReporter {
 
     // MARK: - Send (reuses the immediate-telemetry auth path)
 
+    /// Records what the server acknowledged: the payload actually sent, which can be an older
+    /// retained one, so a newer state observed meanwhile stays dirty.
+    private func markAcknowledged(_ payload: ChannelStatusPayload) {
+        lastSentAudioClass = AudioStateSignal.healthClass(of: payload.audioState)
+        lastSentOutboxClass = payload.hubOutboxClass ?? OutboxAlert.normal
+        ChannelAckLedger.record(payload.channels.map { ($0.channel, $0.state) }, in: .standard)
+    }
+
     private func send(entries: [ChannelEntry], sentAt: String, audio: AudioSnapshot,
                       usage: [HubDurableOutbox.LaneUsage]?, outboxClass: String) async -> Bool {
         let currentPayload = ChannelStatusPayload(
@@ -253,8 +274,7 @@ final class ChannelStatusReporter {
                 defaults.removeObject(forKey: "hub.channel.pending.fingerprint")
                 defaults.removeObject(forKey: "hub.channel.pending.payload")
                 defaults.removeObject(forKey: "hub.channel.pending.id")
-                lastSentAudioClass = AudioStateSignal.healthClass(of: payload.audioState)
-                lastSentOutboxClass = payload.hubOutboxClass ?? OutboxAlert.normal
+                markAcknowledged(payload)
                 return true
             }
         } catch {
@@ -290,13 +310,31 @@ final class ChannelStatusReporter {
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.fingerprint")
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.payload")
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.id")
-            lastSentAudioClass = AudioStateSignal.healthClass(of: payload.audioState)
-                lastSentOutboxClass = payload.hubOutboxClass ?? OutboxAlert.normal
+            markAcknowledged(payload)
             return true
         } catch {
             ActivityLogger.shared.log(.telemetry, "channel_status send failed: \(error.localizedDescription)")
             return false
         }
+    }
+}
+
+/// What the server has acknowledged for each channel, apart from what the reporter last
+/// observed. A channel is dirty while its current state differs from the acknowledged one, so
+/// a failed send leaves it dirty and an acknowledgement of an older payload cannot clear a
+/// newer state.
+internal enum ChannelAckLedger {
+    static func key(_ channel: String) -> String { "channelAcked.\(channel)" }
+
+    /// A channel never acknowledged has no baseline here; the first-run rule covers it.
+    static func isDirty(current: String, acked: String?) -> Bool {
+        guard let acked else { return false }
+        return acked != current
+    }
+
+    /// Called only with the channels of a payload the server acknowledged.
+    static func record(_ channels: [(channel: String, state: String)], in defaults: UserDefaults) {
+        for entry in channels { defaults.set(entry.state, forKey: key(entry.channel)) }
     }
 }
 
