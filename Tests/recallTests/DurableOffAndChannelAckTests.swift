@@ -50,6 +50,9 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         let model = RecordingViewModel()
         state.userStopIntent = false
         state.isRecording = true
+        let engine = AudioRecordingEngine()
+        model.engine = engine
+        let engineStart = engine.startGenerationToken
         let pendingStart = model.recordingOperationGeneration.token
         XCTAssertTrue(model.acceptsRecordingOperation(pendingStart), "a start waiting in back-off is accepted before the OFF")
 
@@ -62,6 +65,9 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         await model.handleExternalToggle()
         XCTAssertFalse(model.acceptsRecordingOperation(pendingStart),
                        "the pending start must not resume capture after the OFF")
+
+        XCTAssertNotEqual(engine.startGenerationToken, engineStart,
+                          "a first Engine.start() still suspended must also be invalidated, not only the VM operation")
 
         // A later explicit ON is not refused by the stop that was kept.
         state.applyExternalToggle(true)

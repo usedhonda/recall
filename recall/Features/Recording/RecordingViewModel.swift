@@ -363,6 +363,7 @@ final class RecordingViewModel {
                 // retry back-off. Record the stop and invalidate that work; the engine and
                 // the audio session are not touched.
                 cancelPendingRecordingWork()
+                engine?.cancelPendingStart()
             }
             ActivityLogger.shared.log(.state, "External toggle: ignored — already \(current ? "recording" : "stopped")")
             return

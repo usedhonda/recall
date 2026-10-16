@@ -201,6 +201,17 @@ final class AudioRecordingEngine {
 
     private var isStarting = false
 
+    /// The generation a `start()` in flight is holding. Exposed so the OFF path can be tested.
+    var startGenerationToken: UUID { captureGeneration.token }
+
+    /// An OFF that arrives while a first `start()` is still suspended (finalization wait, VAD
+    /// load) and the engine therefore reads idle: invalidate that start so it returns instead
+    /// of installing the tap. Nothing else is touched; a later explicit start takes a fresh token.
+    func cancelPendingStart() {
+        _ = lifecycle.beginStop()
+        userStopped = true
+    }
+
     func start() async throws {
         guard !isStarting else { return }
         isStarting = true
