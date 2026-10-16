@@ -97,10 +97,6 @@ final class ChannelStatusReporter {
         var anyGated = false
         var entries: [ChannelEntry] = []
 
-        ChannelAckLedger.migrateOnce(
-            observed: Channel.allCases.map { ($0.rawValue, defaults.string(forKey: "channelState.\($0.rawValue)")) },
-            in: defaults)
-
         for channel in Channel.allCases {
             let current = currentState(channel)
             if current == .gatedByUser { anyGated = true }
@@ -116,7 +112,8 @@ final class ChannelStatusReporter {
             let ackedKey = ChannelAckLedger.key(channel.rawValue)
             let ackedBefore = defaults.string(forKey: ackedKey)
             if ackedBefore == nil {
-                // Never acknowledged: first run, until the server actually acknowledges.
+                // Never acknowledged (a state saved by an older build counts as unknown, not
+                // as sent): first run, until the server actually acknowledges.
                 firstRun = true
             }
             if stored == nil {
@@ -331,22 +328,6 @@ internal enum ChannelAckLedger {
     static func isDirty(current: String, acked: String?) -> Bool {
         guard let acked else { return false }
         return acked != current
-    }
-
-    private static let migratedKey = "channelAcked.migrated"
-
-    /// An older build kept only what it observed, and treated it as sent. Carry that over once,
-    /// at the first tick of this build, so an upgrade is not an edge. After that a channel
-    /// without an acknowledgement stays unacknowledged until the server really acknowledges it:
-    /// an observation is never promoted to an acknowledgement.
-    static func migrateOnce(observed: [(channel: String, state: String?)], in defaults: UserDefaults) {
-        guard !defaults.bool(forKey: migratedKey) else { return }
-        for entry in observed {
-            if let state = entry.state, defaults.string(forKey: key(entry.channel)) == nil {
-                defaults.set(state, forKey: key(entry.channel))
-            }
-        }
-        defaults.set(true, forKey: migratedKey)
     }
 
     /// Called only with the channels of a payload the server acknowledged.
