@@ -100,8 +100,9 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         XCTAssertFalse(dirty("gated_by_user"))
     }
 
-    func testAnExplicitOnDuringASuspendedOldStartIsNotDroppedAsAlreadyStarting() async {
-        // Hold the shared finalization barrier so a first start() stays suspended on it.
+    /// A first start() held on the shared finalization barrier, an OFF, then an explicit ON.
+    /// `secondOff` adds a newer OFF while that ON is still waiting.
+    private func runHeldStart(secondOff: Bool) async -> (onEndedAfterOldStart: Bool?, userStopped: Bool) {
         var release: CheckedContinuation<Void, Never>?
         AudioFinalizationQueue.shared.enqueue { await withCheckedContinuation { release = $0 } }
         await Task.yield()
@@ -113,21 +114,32 @@ final class DurableOffAndChannelAckTests: XCTestCase {
             oldStartReturned = true
         }
         await Task.yield()
-        engine.cancelPendingStart()                      // the OFF
+        engine.cancelPendingStart()                      // OFF 1
 
-        var onReturnedBeforeOldStartEnded: Bool?
+        var onEndedAfterOldStart: Bool?
         let explicitOn = Task { @MainActor in
-            try? await engine.start()                    // the newer ON
-            onReturnedBeforeOldStartEnded = !oldStartReturned
+            try? await engine.start()                    // the ON, waiting on the old start
+            onEndedAfterOldStart = oldStartReturned
         }
         try? await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertNil(onReturnedBeforeOldStartEnded,
-                     "the newer ON must wait for the old start, not return at once as if started")
+        XCTAssertNil(onEndedAfterOldStart, "the ON must wait for the old start, not return at once as if started")
+        if secondOff { engine.cancelPendingStart() }     // OFF 2 while the ON waits
 
         release?.resume()
         await oldStart.value
         await explicitOn.value
-        XCTAssertEqual(onReturnedBeforeOldStartEnded, false)
+        let userStopped = engine.userStopped
         engine.stop(intentional: false)
+        return (onEndedAfterOldStart, userStopped)
+    }
+
+    func testAnExplicitOnWaitsForTheOldStartAndAnOffThatArrivesWhileItWaitsStillWins() async {
+        let plain = await runHeldStart(secondOff: false)
+        XCTAssertEqual(plain.onEndedAfterOldStart, true, "the ON returns only after the old start ended")
+        XCTAssertFalse(plain.userStopped, "and it then really started (stop flag cleared)")
+
+        let withOff2 = await runHeldStart(secondOff: true)
+        XCTAssertEqual(withOff2.onEndedAfterOldStart, true)
+        XCTAssertTrue(withOff2.userStopped, "OFF 2 invalidated the waiting ON: it must not take a fresh generation and start")
     }
 }

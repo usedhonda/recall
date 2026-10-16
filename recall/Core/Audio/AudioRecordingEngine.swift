@@ -200,6 +200,7 @@ final class AudioRecordingEngine {
     // MARK: - Start / Stop
 
     private var isStarting = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// The generation a `start()` in flight is holding. Exposed so the OFF path can be tested.
     var startGenerationToken: UUID { captureGeneration.token }
@@ -213,19 +214,21 @@ final class AudioRecordingEngine {
     }
 
     func start() async throws {
-        // A start already suspended (finalization wait, VAD load) may have been invalidated by an
-        // OFF. A newer explicit ON must not be dropped as "already starting": join the old one
-        // (bounded) and then start for real. The old start returns on its stale generation.
-        var waited = 0
-        while isStarting, waited < 300 {
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            if Task.isCancelled { return }
-            waited += 1
-        }
-        guard !isStarting else { return }
-        isStarting = true
-        defer { isStarting = false }
+        // Bind to the engine generation before any waiting: an OFF that arrives later must
+        // cancel this start too. A start already suspended (finalization wait, VAD load) is
+        // joined, not raced and not dropped: this call resumes when that start really ends.
         let generation = captureGeneration.token
+        while isStarting {
+            await withCheckedContinuation { startWaiters.append($0) }
+            guard captureGeneration.accepts(generation), !Task.isCancelled else { return }
+        }
+        isStarting = true
+        defer {
+            isStarting = false
+            let waiters = startWaiters
+            startWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
         await finalizations.wait()
         guard captureGeneration.accepts(generation), !Task.isCancelled else { return }
         guard state == .idle || state == .paused else {
