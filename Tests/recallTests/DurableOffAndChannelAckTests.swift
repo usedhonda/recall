@@ -16,6 +16,27 @@ final class DurableOffAndChannelAckTests: XCTestCase {
 
         // The same process later receives scene-active: the caller's decision must not run
         // normal startup (which clears the stop and starts recording).
+        // Ordering: the active callback marks the user foreground BEFORE the startup task reads
+        // shouldStaySilent. With the deployment flag that must still be silent (start 0).
+        let savedFlag = LaunchContext.deploymentPreservesOff
+        let savedForeground = LaunchContext.userDidForeground
+        let savedBackground = LaunchContext.launchedInBackground
+        defer {
+            LaunchContext.deploymentPreservesOff = savedFlag
+            LaunchContext.userDidForeground = savedForeground
+            LaunchContext.launchedInBackground = savedBackground
+        }
+        LaunchContext.deploymentPreservesOff = true
+        LaunchContext.launchedInBackground = true
+        LaunchContext.userDidForeground = true            // scene-active callback ran first
+        XCTAssertTrue(LaunchContext.shouldStaySilent, "task after the active callback must not start recording")
+        LaunchContext.userDidForeground = false           // task ran first
+        XCTAssertTrue(LaunchContext.shouldStaySilent)
+        LaunchContext.deploymentPreservesOff = false
+        LaunchContext.userDidForeground = true
+        LaunchContext.launchedInBackground = false
+        XCTAssertFalse(LaunchContext.shouldStaySilent, "an ordinary foreground launch is unchanged")
+
         XCTAssertEqual(LaunchContext.foregroundAction(deploymentPreservesOff: true), .independentStreamsOnly)
         XCTAssertEqual(LaunchContext.foregroundAction(deploymentPreservesOff: false), .normalStartup)
     }

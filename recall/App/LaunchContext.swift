@@ -49,6 +49,9 @@ enum LaunchContext {
     }
 
     static var shouldStaySilent: Bool {
-        !userDidForeground && (launchedInBackground || RecordingStateManager.shared.userStopIntent)
+        // A deployment-preserved stop wins over any ordering of the scene-active callback and
+        // the startup task: markUserForeground() alone cannot turn recording on for that process.
+        deploymentPreservesOff
+            || (!userDidForeground && (launchedInBackground || RecordingStateManager.shared.userStopIntent))
     }
 }
