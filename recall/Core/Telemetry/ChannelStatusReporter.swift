@@ -153,7 +153,11 @@ final class ChannelStatusReporter {
         let last = defaults.object(forKey: lastLevelKey) as? Date
         let sendLevel = OutboxAlert.levelDue(lastAcknowledgedAt: last, now: now, interval: levelInterval)
 
-        guard sendEdge || sendLevel else { return }
+        // A payload retained from a failed send is sent again as it is (same id, same body)
+        // whatever the current state: the state may have flipped back since, which would hide
+        // the retained edge from the checks above until the next hourly level.
+        let hasPending = defaults.string(forKey: ChannelAckLedger.pendingPayloadKey) != nil
+        guard ChannelAckLedger.sendEligible(edge: sendEdge, level: sendLevel, hasPending: hasPending) else { return }
 
         let ok = await send(entries: entries, sentAt: nowISO, audio: audio, usage: usage, outboxClass: outboxClass)
         // Reset the hourly clock only on a successful send, so a failed send is retried by
@@ -250,13 +254,13 @@ final class ChannelStatusReporter {
         do {
             let defaults = UserDefaults.standard
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-            if let pending = defaults.string(forKey: "hub.channel.pending.payload"),
+            if let pending = defaults.string(forKey: ChannelAckLedger.pendingPayloadKey),
                let pendingData = Data(base64Encoded: pending),
                let decoded = try? JSONDecoder().decode(ChannelStatusPayload.self, from: pendingData) {
                 payload = decoded
             } else {
                 payload = currentPayload
-                defaults.set((try encoder.encode(payload)).base64EncodedString(), forKey: "hub.channel.pending.payload")
+                defaults.set((try encoder.encode(payload)).base64EncodedString(), forKey: ChannelAckLedger.pendingPayloadKey)
                 defaults.set(UUID().uuidString, forKey: "hub.channel.pending.id")
             }
             let id = defaults.string(forKey: "hub.channel.pending.id") ?? UUID().uuidString
@@ -270,7 +274,7 @@ final class ChannelStatusReporter {
                !HubTelemetryAdmission.legacyAllowed(.channelReport) {
                 guard try await HubDeliveryService.shared.isAcknowledged(externalID: externalID) else { return false }
                 defaults.removeObject(forKey: "hub.channel.pending.fingerprint")
-                defaults.removeObject(forKey: "hub.channel.pending.payload")
+                defaults.removeObject(forKey: ChannelAckLedger.pendingPayloadKey)
                 defaults.removeObject(forKey: "hub.channel.pending.id")
                 markAcknowledged(payload)
                 return true
@@ -306,7 +310,7 @@ final class ChannelStatusReporter {
             }
             ActivityLogger.shared.log(.telemetry, "channel_status sent: HTTP \(http.statusCode) audio=\(audio.state) since=\(audio.since)")
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.fingerprint")
-            UserDefaults.standard.removeObject(forKey: "hub.channel.pending.payload")
+            UserDefaults.standard.removeObject(forKey: ChannelAckLedger.pendingPayloadKey)
             UserDefaults.standard.removeObject(forKey: "hub.channel.pending.id")
             markAcknowledged(payload)
             return true
@@ -328,6 +332,12 @@ internal enum ChannelAckLedger {
     static func isDirty(current: String, acked: String?) -> Bool {
         guard let acked else { return false }
         return acked != current
+    }
+
+    static let pendingPayloadKey = "hub.channel.pending.payload"
+
+    static func sendEligible(edge: Bool, level: Bool, hasPending: Bool) -> Bool {
+        edge || level || hasPending
     }
 
     /// Called only with the channels of a payload the server acknowledged.

@@ -100,6 +100,23 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         XCTAssertFalse(dirty("gated_by_user"))
     }
 
+    func testARetainedPayloadIsSentAgainEvenWhenTheStateFlippedBackToTheAcknowledgedOne() {
+        let suite = UserDefaults(suiteName: "channel-ack-test-\(UUID().uuidString)")!
+        ChannelAckLedger.record([("health", "active")], in: suite)
+        // Health goes off: the payload is retained and its send fails.
+        suite.set("{retained}", forKey: ChannelAckLedger.pendingPayloadKey)
+        XCTAssertTrue(ChannelAckLedger.isDirty(current: "gated_by_user", acked: "active"))
+        // Health goes back on before the next tick: current == acknowledged, no edge, level recent.
+        let dirtyNow = ChannelAckLedger.isDirty(current: "active", acked: suite.string(forKey: ChannelAckLedger.key("health")))
+        XCTAssertFalse(dirtyNow, "the ABA flip hides the edge from the dirty check")
+        let pending = suite.string(forKey: ChannelAckLedger.pendingPayloadKey) != nil
+        XCTAssertTrue(ChannelAckLedger.sendEligible(edge: dirtyNow, level: false, hasPending: pending),
+                      "the retained payload must still go out on the next tick, not wait for the hourly level")
+        suite.removeObject(forKey: ChannelAckLedger.pendingPayloadKey)   // acknowledged
+        XCTAssertFalse(ChannelAckLedger.sendEligible(edge: false, level: false,
+                       hasPending: suite.string(forKey: ChannelAckLedger.pendingPayloadKey) != nil))
+    }
+
     /// A first start() held on the shared finalization barrier, an OFF, then an explicit ON.
     /// `secondOff` adds a newer OFF while that ON is still waiting.
     private func runHeldStart(secondOff: Bool) async -> (onEndedAfterOldStart: Bool?, userStopped: Bool) {
