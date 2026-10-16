@@ -99,4 +99,35 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         ChannelAckLedger.record([("health", "gated_by_user")], in: suite)
         XCTAssertFalse(dirty("gated_by_user"))
     }
+
+    func testAnExplicitOnDuringASuspendedOldStartIsNotDroppedAsAlreadyStarting() async {
+        // Hold the shared finalization barrier so a first start() stays suspended on it.
+        var release: CheckedContinuation<Void, Never>?
+        AudioFinalizationQueue.shared.enqueue { await withCheckedContinuation { release = $0 } }
+        await Task.yield()
+
+        let engine = AudioRecordingEngine()
+        var oldStartReturned = false
+        let oldStart = Task { @MainActor in
+            try? await engine.start()
+            oldStartReturned = true
+        }
+        await Task.yield()
+        engine.cancelPendingStart()                      // the OFF
+
+        var onReturnedBeforeOldStartEnded: Bool?
+        let explicitOn = Task { @MainActor in
+            try? await engine.start()                    // the newer ON
+            onReturnedBeforeOldStartEnded = !oldStartReturned
+        }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertNil(onReturnedBeforeOldStartEnded,
+                     "the newer ON must wait for the old start, not return at once as if started")
+
+        release?.resume()
+        await oldStart.value
+        await explicitOn.value
+        XCTAssertEqual(onReturnedBeforeOldStartEnded, false)
+        engine.stop(intentional: false)
+    }
 }

@@ -213,6 +213,15 @@ final class AudioRecordingEngine {
     }
 
     func start() async throws {
+        // A start already suspended (finalization wait, VAD load) may have been invalidated by an
+        // OFF. A newer explicit ON must not be dropped as "already starting": join the old one
+        // (bounded) and then start for real. The old start returns on its stale generation.
+        var waited = 0
+        while isStarting, waited < 300 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            if Task.isCancelled { return }
+            waited += 1
+        }
         guard !isStarting else { return }
         isStarting = true
         defer { isStarting = false }
