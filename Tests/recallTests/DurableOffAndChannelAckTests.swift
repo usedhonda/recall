@@ -70,4 +70,23 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         ChannelAckLedger.record([("health", "gated_by_user")], in: suite)
         XCTAssertFalse(dirty("gated_by_user"))
     }
+
+    func testAFailedFirstSendIsNotTurnedIntoAnAcknowledgementByTheNextTick() {
+        let suite = UserDefaults(suiteName: "channel-ack-test-\(UUID().uuidString)")!
+        let observedKey = "channelState.health"
+        // Tick 1 on a new install: migration runs (nothing to carry), the observation is saved,
+        // the send fails.
+        ChannelAckLedger.migrateOnce(observed: [("health", suite.string(forKey: observedKey))], in: suite)
+        suite.set("gated_by_user", forKey: observedKey)
+        // Tick 2: the unacknowledged observation must not become the acknowledged state.
+        ChannelAckLedger.migrateOnce(observed: [("health", suite.string(forKey: observedKey))], in: suite)
+        XCTAssertNil(suite.string(forKey: ChannelAckLedger.key("health")),
+                     "still unacknowledged: the tick keeps treating it as a first run")
+
+        // An older build's observation, carried over once at the first tick of this build.
+        let upgraded = UserDefaults(suiteName: "channel-ack-test-\(UUID().uuidString)")!
+        upgraded.set("active", forKey: observedKey)
+        ChannelAckLedger.migrateOnce(observed: [("health", upgraded.string(forKey: observedKey))], in: upgraded)
+        XCTAssertEqual(upgraded.string(forKey: ChannelAckLedger.key("health")), "active")
+    }
 }
