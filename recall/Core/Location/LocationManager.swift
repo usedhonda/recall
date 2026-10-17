@@ -131,12 +131,14 @@ final class LocationManager: NSObject {
     }
 
     /// Records a send and how far it fell from the one before it.
-    private func noteSendTime() {
+    /// `landed` is false when neither the direct send nor the queue took the fix: the
+    /// ordinary throttle still advances, but the departure window does not count it as sent.
+    private func noteSendTime(landed: Bool = true) {
         if let previous = lastSentTime {
             lastSendGap = Date().timeIntervalSince(previous)
         }
         lastSentTime = Date()
-        if let location = lastSentLocation {
+        if landed, let location = lastSentLocation {
             departureWindow.noteSent(fixAt: location.timestamp, now: Date())
         }
     }
@@ -325,9 +327,12 @@ final class LocationManager: NSObject {
         defer { departureWindow.release(fixAt: location.timestamp) }
 
         let quality = qualityFor(location)
+        // A newer fix accepted during the await below replaces lastGoodFixId; the id sent
+        // (or queued) with this fix must stay this fix's own.
+        let fixId = lastGoodFixId
 
         if isInForeground {
-            let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
+            let payload = LocationPayload(from: location, quality: quality, fixId: fixId)
 
             totalAttemptedSends += 1
             lastAttemptAt = Date()
@@ -358,7 +363,7 @@ final class LocationManager: NSObject {
             }
         } else {
             // BG: try direct send first, fallback to queue on failure
-            let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
+            let payload = LocationPayload(from: location, quality: quality, fixId: fixId)
 
             totalAttemptedSends += 1
             lastAttemptAt = Date()
@@ -391,13 +396,14 @@ final class LocationManager: NSObject {
                     totalHttpErrors += 1
                     recordNetworkError(detail)
                 }
-                let sample = LocationSample(from: location, quality: quality, fixId: lastGoodFixId)
-                if !(await LocationQueue.shared.enqueue(sample)) {
+                let sample = LocationSample(from: location, quality: quality, fixId: fixId)
+                let queued = await LocationQueue.shared.enqueue(sample)
+                if !queued {
                     ActivityLogger.shared.log(.telemetry, "location queue admission rejected")
                 }
                 totalQueuedBackgroundSends += 1
                 lastSentLocation = location
-                noteSendTime()
+                noteSendTime(landed: queued)
                 resetHeartbeatTimer()
 
                 ActivityLogger.shared.log(.location, String(
