@@ -10,11 +10,13 @@ final class GeofenceEventPayloadTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    private func wifi(ssid: String?, fixId: String?) -> WiFiEventPayload {
+    private func wifi(ssid: String?, fixId: String?, lastKnownSSID: String? = nil) -> WiFiEventPayload {
         WiFiEventPayload(
             deviceId: "kana",
             transition: "left",
             ssid: ssid,
+            ssidConfirmed: ssid != nil,
+            lastKnownSSID: lastKnownSSID,
             occurredAt: "2026-09-13T00:33:44.500Z",
             fixId: fixId
         )
@@ -41,6 +43,20 @@ final class GeofenceEventPayloadTests: XCTestCase {
         XCTAssertNil(body["ssid"])
         XCTAssertNil(body["fix_id"])
         XCTAssertEqual(body["transition"] as? String, "left")
+    }
+
+    func testAnUnconfirmedNameTravelsApartFromSSID() throws {
+        // A name from an earlier connection must never be read as this departure's
+        // network: the server matches only `ssid` (agreed with chi, 2026-10-18).
+        let unconfirmed = try json(wifi(ssid: nil, fixId: nil, lastKnownSSID: "test-earlier"))
+        XCTAssertNil(unconfirmed["ssid"])
+        XCTAssertEqual(unconfirmed["ssid_confirmed"] as? Bool, false)
+        XCTAssertEqual(unconfirmed["last_known_ssid"] as? String, "test-earlier")
+
+        let confirmed = try json(wifi(ssid: "test-ssid", fixId: nil))
+        XCTAssertEqual(confirmed["ssid"] as? String, "test-ssid")
+        XCTAssertEqual(confirmed["ssid_confirmed"] as? Bool, true)
+        XCTAssertNil(confirmed["last_known_ssid"])
     }
 
     func testGeofenceEventKeysAndVocabulary() throws {

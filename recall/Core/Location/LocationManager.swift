@@ -320,6 +320,9 @@ final class LocationManager: NSObject {
         noteGoodFix(location)
 
         guard shouldSendLocation(location) else { return }
+        // A departure reservation must not outlive this attempt: a send that never
+        // lands frees the window for the next new fix.
+        defer { departureWindow.release(fixAt: location.timestamp) }
 
         let quality = qualityFor(location)
 
@@ -613,7 +616,9 @@ final class LocationManager: NSObject {
         disarmParkedRegion()
         cadence = .walking
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = UIApplication.shared.applicationState == .active ? kCLDistanceFilterNone : 10
+        // The departure boost keeps delivery open in the background as well.
+        let openDelivery = UIApplication.shared.applicationState == .active || departureWindow.isActive(at: Date())
+        locationManager.distanceFilter = openDelivery ? kCLDistanceFilterNone : 10
         lastMovementAt = Date()
         resumeContinuousUpdates()
         forceNextSend()
@@ -767,18 +772,17 @@ final class LocationManager: NSObject {
 
     private func shouldSendLocation(_ location: CLLocation) -> Bool {
         let now = Date()
+        let ordinary: Bool
+        if let lastSent = lastSentLocation, let lastTime = lastSentTime {
+            ordinary = now.timeIntervalSince(lastTime) >= currentSendInterval
+                || location.distance(from: lastSent) >= minDistance
+        } else {
+            ordinary = true
+        }
         if departureWindow.isActive(at: now) {
-            guard departureWindow.acceptsNewFix(at: location.timestamp, now: now) else { return false }
-            if departureWindow.lastSentFixAt == nil { return true }
+            return departureWindow.reserve(fixAt: location.timestamp, now: now, fallback: ordinary)
         }
-        guard let lastSent = lastSentLocation, let lastTime = lastSentTime else {
-            return true
-        }
-
-        let timeSinceLastSend = Date().timeIntervalSince(lastTime)
-        let distance = location.distance(from: lastSent)
-
-        return timeSinceLastSend >= currentSendInterval || distance >= minDistance
+        return ordinary
     }
 
     /// Formats Phase 1 (Track 2) sample metadata for ActivityLog visibility.

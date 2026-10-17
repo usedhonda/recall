@@ -32,6 +32,9 @@ final class ConnectivityMonitor {
     /// classification on a Wi-Fi drop so probe failures don't fake a departure.
     private var hasSeenSSIDState = false
     private var wifiConnection = WiFiConnectionGeneration()
+    /// A name read asked for before the path monitor reported Wi-Fi (the foreground read
+    /// can run first at launch). Done on the next Wi-Fi join instead of being dropped.
+    private var ssidReadPending = false
 
     /// Whether the app is currently in the foreground. Updated from RecallApp's
     /// scenePhase observer. Used by data saver mode: foreground = send all,
@@ -106,6 +109,7 @@ final class ConnectivityMonitor {
         wifiConnection.update(isConnected: wifi)
         if wifi, !wasWiFi {
             TelemetryService.shared.locationManager.endWiFiDepartureBoost()
+            if ssidReadPending { readSSID() }
         }
         // Feature disabled: no home SSID set -> no derived state, no kick.
         guard !AppSettings.shared.departureBoostSSIDs.isEmpty else {
@@ -132,10 +136,11 @@ final class ConnectivityMonitor {
             ActivityLogger.shared.log(.network, "wifi left: \(currentSSID ?? "unknown")")
             GeofenceEventReporter.reportWiFi(
                 transition: "left",
-                // The name confirmed on this connection when there is one; otherwise the
-                // last known name, as before, so a join seen only in the background still
-                // gives the server-side departure check its network witness.
-                ssid: previousSSID ?? currentSSID,
+                // Only a name confirmed on the connection that just ended counts as this
+                // event's network. An unconfirmed join (typically in the background) sends
+                // the older name separately, so it is never attributed to this departure.
+                ssid: previousSSID,
+                lastKnownSSID: currentSSID,
                 at: Date(),
                 fixId: TelemetryService.shared.locationManager.lastGoodFixId
             )
@@ -165,7 +170,11 @@ final class ConnectivityMonitor {
     /// caller keeps whatever it already knew.
     @MainActor
     func readSSID() {
-        guard isWiFi else { return }
+        guard isWiFi else {
+            ssidReadPending = true
+            return
+        }
+        ssidReadPending = false
         let generation = wifiConnection.generation
         NEHotspotNetwork.fetchCurrent { network in
             guard let ssid = network?.ssid, !ssid.isEmpty else { return }

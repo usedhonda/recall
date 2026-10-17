@@ -77,6 +77,9 @@ struct LocationDepartureWindow {
     static let sendInterval: TimeInterval = 10
     private(set) var startedAt: Date?
     private(set) var lastSentFixAt: Date?
+    /// The fix whose send is in flight. Taken before the network await so a second
+    /// delivery cannot also pass as the first send; released if the send never lands.
+    private(set) var reservedFixAt: Date?
 
     func isActive(at now: Date) -> Bool {
         guard let startedAt else { return false }
@@ -88,12 +91,14 @@ struct LocationDepartureWindow {
         guard !isActive(at: now) else { return false }
         startedAt = now
         lastSentFixAt = nil
+        reservedFixAt = nil
         return true
     }
 
     mutating func cancel() {
         startedAt = nil
         lastSentFixAt = nil
+        reservedFixAt = nil
     }
 
     func acceptsNewFix(at fixAt: Date, now: Date) -> Bool {
@@ -101,7 +106,22 @@ struct LocationDepartureWindow {
         return lastSentFixAt.map { fixAt > $0 } ?? true
     }
 
+    /// Whether this fix may be sent now, and if so reserves it. While a send is in
+    /// flight nothing else may go out; the first new fix of the window goes at once,
+    /// later ones fall back to `fallback` (the ordinary time/distance rule).
+    mutating func reserve(fixAt: Date, now: Date, fallback: Bool) -> Bool {
+        guard reservedFixAt == nil, acceptsNewFix(at: fixAt, now: now) else { return false }
+        guard lastSentFixAt == nil || fallback else { return false }
+        reservedFixAt = fixAt
+        return true
+    }
+
+    mutating func release(fixAt: Date) {
+        if reservedFixAt == fixAt { reservedFixAt = nil }
+    }
+
     mutating func noteSent(fixAt: Date, now: Date) {
+        release(fixAt: fixAt)
         guard acceptsNewFix(at: fixAt, now: now) else { return }
         lastSentFixAt = fixAt
     }

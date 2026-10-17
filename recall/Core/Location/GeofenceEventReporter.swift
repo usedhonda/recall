@@ -16,11 +16,16 @@ enum GeofenceEventReporter {
     /// the earliest doorway signal there is, and unlike reading the SSID it works in the
     /// background: the drop itself comes from NWPathMonitor and the name is the one we
     /// last read while on it.
-    static func reportWiFi(transition: String, ssid: String?, at occurredAt: Date, fixId: String?) {
+    /// `ssid` must be a name confirmed on the connection in question; an older name goes in
+    /// `lastKnownSSID` so the server can never attribute it to this event.
+    static func reportWiFi(transition: String, ssid: String?, lastKnownSSID: String? = nil,
+                           at occurredAt: Date, fixId: String?) {
         let payload = WiFiEventPayload(
             deviceId: AppSettings.shared.deviceId,
             transition: transition,
             ssid: ssid,
+            ssidConfirmed: ssid != nil,
+            lastKnownSSID: ssid == nil ? lastKnownSSID : nil,
             occurredAt: ISO8601DateFormatter.geofence.string(from: occurredAt),
             fixId: fixId
         )
@@ -143,8 +148,14 @@ struct WiFiEventPayload: Encodable {
     let type = "wifi_event"
     /// "left" or "joined".
     let transition: String
-    /// The network involved. nil when iOS never let us read the name.
+    /// The network involved, only when its name was confirmed on that connection.
+    /// nil when iOS never let us read it.
     let ssid: String?
+    /// false when `ssid` is nil. Older servers ignore it.
+    let ssidConfirmed: Bool
+    /// When the name was not confirmed: the last name read on any earlier connection.
+    /// Not evidence for this event; omitted otherwise.
+    let lastKnownSSID: String?
     let occurredAt: String
     /// See `GeofenceEventPayload.fixId`.
     let fixId: String?
@@ -154,6 +165,8 @@ struct WiFiEventPayload: Encodable {
         case type
         case transition
         case ssid
+        case ssidConfirmed = "ssid_confirmed"
+        case lastKnownSSID = "last_known_ssid"
         case occurredAt = "occurred_at"
         case fixId = "fix_id"
     }

@@ -213,9 +213,14 @@ SSID from the same current Wi-Fi connection must match `homeSSID` or an entry in
 private UserDefaults string array `departureBoostSSIDs`. The latter supports additional
 home/work networks without adding a UI or embedding real network names in source.
 Unknown names do not start a window, and callbacks from a disconnected generation are ignored.
-The `wifi left` server event still carries the last known name when this connection's name
-was never confirmed (a background join), as it did before the boost; only the boost needs the
-confirmed name.
+The `wifi_event` payload carries `ssid` only when the name was confirmed on that connection,
+plus `ssid_confirmed`. An unconfirmed `left` (typically a background join) sends `ssid` absent,
+`ssid_confirmed=false` and the older name as `last_known_ssid`, so a name from an earlier
+connection is never attributed to this departure (agreed with chi, 2026-10-18; the server matches
+only `ssid`). A send in flight during the window reserves its fix, so a second delivery cannot also
+go out as the first send; a send that never lands releases it. Leaving the parked tier during the
+window keeps the distance filter off in the background too. A name read requested before the path
+monitor reports Wi-Fi is performed on the next join instead of being dropped.
 The window lasts at most 180 seconds; duplicate departure callbacks do not extend it.
 Continuous positioning uses Best accuracy and no distance filter, with a 10-second time
 send condition for newly accepted fixes. The first accepted fix after departure can send

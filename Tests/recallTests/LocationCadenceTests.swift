@@ -25,6 +25,28 @@ final class LocationCadenceTests: XCTestCase {
         XCTAssertNil(window.lastSentFixAt)
     }
 
+    func testDepartureReservationBlocksASecondFirstSendUntilReleased() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var window = LocationDepartureWindow()
+        window.start(at: start)
+        let first = start.addingTimeInterval(1)
+        let second = start.addingTimeInterval(2)
+        let now = start.addingTimeInterval(3)
+        XCTAssertTrue(window.reserve(fixAt: first, now: now, fallback: false))
+        // A second delivery while the first send is in flight is not another "first".
+        XCTAssertFalse(window.reserve(fixAt: second, now: now, fallback: true))
+        // The send never landed: the next new fix may go as the first again.
+        window.release(fixAt: first)
+        XCTAssertTrue(window.reserve(fixAt: second, now: now, fallback: false))
+        window.noteSent(fixAt: second, now: now)
+        XCTAssertNil(window.reservedFixAt)
+        XCTAssertEqual(window.lastSentFixAt, second)
+        // After a landed send, later fixes follow the ordinary rule.
+        let third = start.addingTimeInterval(3)
+        XCTAssertFalse(window.reserve(fixAt: third, now: now, fallback: false))
+        XCTAssertTrue(window.reserve(fixAt: third, now: now, fallback: true))
+    }
+
     func testWiFiObservationsCannotCrossConnectionGenerations() {
         var connection = WiFiConnectionGeneration()
         let beforeJoin = connection.generation
