@@ -78,8 +78,12 @@ struct LocationDepartureWindow {
     private(set) var startedAt: Date?
     private(set) var lastSentFixAt: Date?
     /// The fix whose send is in flight. Taken before the network await so a second
-    /// delivery cannot also pass as the first send; released if the send never lands.
+    /// delivery cannot also pass as the first send.
     private(set) var reservedFixAt: Date?
+    /// The one immediate attempt of the window has been used, whether or not it landed.
+    private(set) var immediateAttemptUsed = false
+    /// After an attempt that never landed, nothing goes out before this.
+    private(set) var retryNotBefore: Date?
 
     func isActive(at now: Date) -> Bool {
         guard let startedAt else { return false }
@@ -89,16 +93,13 @@ struct LocationDepartureWindow {
     @discardableResult
     mutating func start(at now: Date) -> Bool {
         guard !isActive(at: now) else { return false }
+        self = LocationDepartureWindow()
         startedAt = now
-        lastSentFixAt = nil
-        reservedFixAt = nil
         return true
     }
 
     mutating func cancel() {
-        startedAt = nil
-        lastSentFixAt = nil
-        reservedFixAt = nil
+        self = LocationDepartureWindow()
     }
 
     func acceptsNewFix(at fixAt: Date, now: Date) -> Bool {
@@ -107,22 +108,29 @@ struct LocationDepartureWindow {
     }
 
     /// Whether this fix may be sent now, and if so reserves it. While a send is in
-    /// flight nothing else may go out; the first new fix of the window goes at once,
-    /// later ones fall back to `fallback` (the ordinary time/distance rule).
+    /// flight nothing else may go out. Only the first attempt of the window goes at once;
+    /// every later one needs `fallback` (the ordinary time/distance rule), and after a
+    /// failed attempt the retry waits `sendInterval`.
     mutating func reserve(fixAt: Date, now: Date, fallback: Bool) -> Bool {
         guard reservedFixAt == nil, acceptsNewFix(at: fixAt, now: now) else { return false }
-        guard lastSentFixAt == nil || fallback else { return false }
+        if let retryNotBefore, now < retryNotBefore { return false }
+        guard !immediateAttemptUsed || fallback else { return false }
+        immediateAttemptUsed = true
         reservedFixAt = fixAt
         return true
     }
 
-    mutating func release(fixAt: Date) {
-        if reservedFixAt == fixAt { reservedFixAt = nil }
+    /// The reserved send never landed (direct send failed and the queue refused it).
+    mutating func release(fixAt: Date, now: Date) {
+        guard reservedFixAt == fixAt else { return }
+        reservedFixAt = nil
+        retryNotBefore = now.addingTimeInterval(Self.sendInterval)
     }
 
     mutating func noteSent(fixAt: Date, now: Date) {
-        release(fixAt: fixAt)
+        if reservedFixAt == fixAt { reservedFixAt = nil }
         guard acceptsNewFix(at: fixAt, now: now) else { return }
         lastSentFixAt = fixAt
+        retryNotBefore = nil
     }
 }

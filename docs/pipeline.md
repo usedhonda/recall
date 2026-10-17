@@ -218,7 +218,9 @@ plus `ssid_confirmed`. An unconfirmed `left` (typically a background join) sends
 `ssid_confirmed=false` and the older name as `last_known_ssid`, so a name from an earlier
 connection is never attributed to this departure (agreed with chi, 2026-10-18; the server matches
 only `ssid`). A send in flight during the window reserves its fix, so a second delivery cannot also
-go out as the first send; a send that never lands releases it. Leaving the parked tier during the
+go out as the first send. Only the window's first attempt is immediate, whether or not it lands; a
+send that never lands (direct send failed and the queue refused it) is not counted as sent and its
+retry waits 10 seconds. Leaving the parked tier during the
 window keeps the distance filter off in the background too. A name read requested before the path
 monitor reports Wi-Fi is performed on the next join instead of being dropped.
 The window lasts at most 180 seconds; duplicate departure callbacks do not extend it.

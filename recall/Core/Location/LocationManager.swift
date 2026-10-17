@@ -324,7 +324,7 @@ final class LocationManager: NSObject {
         guard shouldSendLocation(location) else { return }
         // A departure reservation must not outlive this attempt: a send that never
         // lands frees the window for the next new fix.
-        defer { departureWindow.release(fixAt: location.timestamp) }
+        defer { departureWindow.release(fixAt: location.timestamp, now: Date()) }
 
         let quality = qualityFor(location)
         // A newer fix accepted during the await below replaces lastGoodFixId; the id sent
@@ -401,13 +401,16 @@ final class LocationManager: NSObject {
                 if !queued {
                     ActivityLogger.shared.log(.telemetry, "location queue admission rejected")
                 }
-                totalQueuedBackgroundSends += 1
+                if queued { totalQueuedBackgroundSends += 1 }
+                // lastSentTime is the attempt throttle here, not a delivery time: a refused
+                // fix still waits the interval, but it is not counted as sent anywhere.
                 lastSentLocation = location
                 noteSendTime(landed: queued)
                 resetHeartbeatTimer()
 
                 ActivityLogger.shared.log(.location, String(
-                    format: "BG queued (fallback): %.4f, %.4f (%.0fm)%@",
+                    format: queued ? "BG queued (fallback): %.4f, %.4f (%.0fm)%@"
+                        : "BG not queued (refused): %.4f, %.4f (%.0fm)%@",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
                     location.horizontalAccuracy,
