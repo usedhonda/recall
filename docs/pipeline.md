@@ -213,6 +213,9 @@ SSID from the same current Wi-Fi connection must match `homeSSID` or an entry in
 private UserDefaults string array `departureBoostSSIDs`. The latter supports additional
 home/work networks without adding a UI or embedding real network names in source.
 Unknown names do not start a window, and callbacks from a disconnected generation are ignored.
+The `wifi left` server event still carries the last known name when this connection's name
+was never confirmed (a background join), as it did before the boost; only the boost needs the
+confirmed name.
 The window lasts at most 180 seconds; duplicate departure callbacks do not extend it.
 Continuous positioning uses Best accuracy and no distance filter, with a 10-second time
 send condition for newly accepted fixes. The first accepted fix after departure can send

@@ -132,7 +132,10 @@ final class ConnectivityMonitor {
             ActivityLogger.shared.log(.network, "wifi left: \(currentSSID ?? "unknown")")
             GeofenceEventReporter.reportWiFi(
                 transition: "left",
-                ssid: previousSSID,
+                // The name confirmed on this connection when there is one; otherwise the
+                // last known name, as before, so a join seen only in the background still
+                // gives the server-side departure check its network witness.
+                ssid: previousSSID ?? currentSSID,
                 at: Date(),
                 fixId: TelemetryService.shared.locationManager.lastGoodFixId
             )
