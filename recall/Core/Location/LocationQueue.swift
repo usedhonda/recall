@@ -14,10 +14,16 @@ struct LocationSample: Codable, Identifiable {
     /// signal survives the queue path. Older samples persisted before this
     /// field existed decode as nil thanks to the optional declaration.
     var quality: String?
-    /// "ms" on samples created by a build that persists the queue with fractional seconds.
+    /// "reference" preserves the source Date exactly; "ms" marks the older rounded queue.
     /// nil on a sample persisted before that: its queue file stored whole seconds, so its
     /// `timestamp` may have lost the milliseconds it was first admitted with.
     var timePrecision: String?
+    /// Additive lossless clock; the legacy timestamp string remains readable by
+    /// an older build. Admission and wire payloads use this original clock.
+    var sourceReferenceSeconds: Double?
+    var measurementTimestamp: Date {
+        sourceReferenceSeconds.map { Date(timeIntervalSinceReferenceDate: $0) } ?? timestamp
+    }
     /// See `TelemetrySample.fixId`. Optional so samples persisted before this field
     /// existed still decode.
     var fixId: String?
@@ -43,6 +49,8 @@ struct LocationSample: Codable, Identifiable {
 
     init(latitude: Double, longitude: Double, accuracy: Double, altitude: Double?, speed: Double?, timestamp: Date, quality: String? = nil) {
         self.id = UUID()
+        self.timePrecision = "reference"
+        self.sourceReferenceSeconds = timestamp.timeIntervalSinceReferenceDate
         self.latitude = latitude
         self.longitude = longitude
         self.accuracy = accuracy
@@ -58,7 +66,8 @@ struct LocationSample: Codable, Identifiable {
 
     init(from location: CLLocation, quality: String? = nil, fixId: String? = nil) {
         self.id = UUID()
-        self.timePrecision = "ms"
+        self.timePrecision = "reference"
+        self.sourceReferenceSeconds = location.timestamp.timeIntervalSinceReferenceDate
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.accuracy = location.horizontalAccuracy
@@ -264,10 +273,9 @@ actor LocationQueue {
 
 /// How the queue file stores a sample's time.
 ///
-/// Whole-second ISO 8601 dropped the milliseconds of a fix, so a sample reloaded after a restart
-/// produced a different Hub envelope (`occurred_at` carries milliseconds) than the one it was
-/// first admitted with, and every such sample became an immutable conflict (2026-10-11).
-/// Fractional seconds are written now; files written with whole seconds still load.
+/// Keep the legacy timestamp string readable by older builds. New samples carry
+/// their original binary64 clock separately, avoiding second-boundary rounding
+/// when the immutable Hub payload is reconstructed after reload.
 enum LocationQueueCoding {
     private static let fractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()

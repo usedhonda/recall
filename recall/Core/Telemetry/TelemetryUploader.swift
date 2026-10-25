@@ -291,7 +291,7 @@ final class TelemetryUploader: NSObject {
 
         await reconcileBackgroundTasks()
         await retryPendingHealthBatches()
-        let samples = await LocationQueue.shared.peek(max: 50)
+        var samples = await LocationQueue.shared.peek(max: 50)
         guard !samples.isEmpty else { return }
         let nowPlayingSnapshot = TelemetryService.shared.nowPlayingManager.snapshot
 
@@ -304,15 +304,16 @@ final class TelemetryUploader: NSObject {
                 // whole batch and strands every sample queued behind it.
                 if let acknowledged = await HubTelemetryAdmission.acknowledgedEquivalent(
                     route: .gpsDelivery, observationID: sample.id.uuidString,
-                    occurredAt: sample.timestamp, payload: TelemetrySample(from: sample),
-                    allowLostMilliseconds: sample.timePrecision == nil) {
+                    occurredAt: sample.measurementTimestamp, payload: TelemetrySample(from: sample),
+                    allowLostMilliseconds: sample.timePrecision == nil,
+                    allowRoundedSourceTimestamp: sample.timePrecision == "ms") {
                     hubIDs[sample.id] = acknowledged
                     continue
                 }
                 if let externalID = try await HubTelemetryAdmission.admit(
                     route: .gpsDelivery,
                     observationID: sample.id.uuidString,
-                    occurredAt: sample.timestamp,
+                    occurredAt: sample.measurementTimestamp,
                     payload: TelemetrySample(from: sample)
                 ) { hubIDs[sample.id] = externalID }
             }
@@ -333,6 +334,24 @@ final class TelemetryUploader: NSObject {
         let settings = AppSettings.shared
         let hubEnabled = await MainActor.run { HubDeliveryService.shared.isEnabled(.gpsDelivery) }
         let legacyAllowed = HubTelemetryAdmission.legacyAllowed(.gpsDelivery)
+        // A retained neighbour must not keep an already dual-acknowledged row's
+        // source reservation alive. This removes only queue ownership, not the
+        // Hub's immutable identity/receipt ledger or an unacknowledged delivery.
+        var completed: Set<UUID> = []
+        for sample in samples {
+            guard let externalID = hubIDs[sample.id],
+                  (try? await HubDeliveryService.shared.isAcknowledged(externalID: externalID)) == true else { continue }
+            let legacyDelivered = await LocationQueue.shared.legacyDelivered(sample.id)
+            if !legacyAllowed || legacyDelivered {
+                completed.insert(sample.id)
+            }
+        }
+        if !completed.isEmpty, await LocationQueue.shared.remove(ids: completed) {
+            samples.removeAll { completed.contains($0.id) }
+            for id in completed { hubIDs.removeValue(forKey: id) }
+            TelemetryUploader.log("GPS dual ACK released samples=\(completed.count)")
+            guard !samples.isEmpty else { return }
+        }
         if !legacyAllowed {
             guard hubIDs.count == samples.count, hubAcked else { return }
             if hubIDs.isEmpty || hubAcked { await LocationQueue.shared.remove(ids: Set(samples.map(\.id))) }
@@ -706,10 +725,11 @@ extension TelemetryUploader: URLSessionDelegate, URLSessionDataDelegate {
             do {
                 if await HubTelemetryAdmission.acknowledgedEquivalent(
                     route: .gpsDelivery, observationID: sample.id.uuidString,
-                    occurredAt: sample.timestamp, payload: TelemetrySample(from: sample),
-                    allowLostMilliseconds: sample.timePrecision == nil) != nil { continue }
+                    occurredAt: sample.measurementTimestamp, payload: TelemetrySample(from: sample),
+                    allowLostMilliseconds: sample.timePrecision == nil,
+                    allowRoundedSourceTimestamp: sample.timePrecision == "ms") != nil { continue }
                 let external = try await HubTelemetryAdmission.admit(route: .gpsDelivery,
-                    observationID: sample.id.uuidString, occurredAt: sample.timestamp,
+                    observationID: sample.id.uuidString, occurredAt: sample.measurementTimestamp,
                     payload: TelemetrySample(from: sample))
                 guard let external else { allAcked = false; continue }
                 if !(try await HubDeliveryService.shared.isAcknowledged(externalID: external)) { allAcked = false }

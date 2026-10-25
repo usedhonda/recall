@@ -347,4 +347,65 @@ final class HubDurableOutboxTests: XCTestCase {
         let old = try LocationQueueCoding.decoder().decode([Date].self, from: legacy)
         XCTAssertEqual(old.count, 1)
     }
+
+    func testRoundedGPSQueueBoundaryRecoversOnlyTheExactStoredPayloadAndNewClocksStayLossless() async throws {
+        struct Payload: Encodable { let timestamp: Date; let value: Int }
+        let originalAt = Date(timeIntervalSince1970: 1_790_000_000.9998)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let oldQueue = try JSONEncoder().encode([formatter.string(from: originalAt)])
+        let restored = try XCTUnwrap(LocationQueueCoding.decoder().decode([Date].self, from: oldQueue).first)
+        XCTAssertEqual(restored.timeIntervalSince1970, 1_790_000_001)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let original = try encoder.encode(Payload(timestamp: originalAt, value: 1))
+        let reloaded = try encoder.encode(Payload(timestamp: restored, value: 1))
+        let event = try HubProducerContract.makeEnvelope(route: .gpsDelivery, deviceID: "fixture-device",
+            observationID: "boundary", occurredAt: originalAt, timeBasis: "timestamp", sourcePayloadJSON: original)
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let box = try HubDurableOutbox(url: path, budgets: budgets())
+        try await box.enqueue(event)
+        let unacknowledged = try await box.storedReceipt(externalID: event.externalID)
+        XCTAssertNil(unacknowledged, "fingerprint equivalence is never a receipt")
+        try await box.acknowledge(responseData: response(event), externalID: event.externalID)
+        let receipt = try await box.storedReceipt(externalID: event.externalID)
+        XCTAssertNotNil(receipt)
+        let fingerprint = try await box.storedBodyHash(externalID: event.externalID)
+        let storedHash = try XCTUnwrap(fingerprint)
+
+        func matches(_ payload: Data, at date: Date = restored, id: String = "boundary", legacyMS: Bool) -> Bool {
+            HubProducerContract.matchesStoredEnvelope(storedBodyHash: storedHash, route: .gpsDelivery,
+                deviceID: "fixture-device", observationID: id, occurredAt: date, timeBasis: "timestamp",
+                sourcePayloadJSON: payload, allowRoundedSourceTimestamp: legacyMS)
+        }
+        XCTAssertFalse(matches(reloaded, legacyMS: false), "the pre-fix queue representation conflicts")
+        XCTAssertTrue(matches(reloaded, legacyMS: true), "only the fully matching archived candidate recovers")
+        XCTAssertFalse(matches(try encoder.encode(Payload(timestamp: restored, value: 2)), legacyMS: true))
+        XCTAssertFalse(matches(reloaded, id: "other", legacyMS: true))
+        XCTAssertFalse(matches(reloaded, at: restored.addingTimeInterval(0.1), legacyMS: true))
+        XCTAssertFalse(matches(reloaded, legacyMS: false), "new lossless-clock rows never explore old representations")
+
+        // Converting Date's reference clock to Unix seconds loses one ULP here,
+        // crossing the wire encoder's whole-second boundary even before JSON.
+        let referenceEdge = Date(timeIntervalSinceReferenceDate:
+            (1_800_000_000 - Date.timeIntervalBetween1970AndReferenceDate).nextDown)
+        for sourceDate in [originalAt, referenceEdge] {
+            let sample = LocationSample(latitude: 1, longitude: 2, accuracy: 10, altitude: nil,
+                speed: nil, timestamp: sourceDate)
+            let persisted = try LocationQueueCoding.encoder().encode([sample])
+            let roundtrip = try XCTUnwrap(LocationQueueCoding.decoder().decode([LocationSample].self, from: persisted).first)
+            XCTAssertEqual(roundtrip.measurementTimestamp, sourceDate, "the source Date must survive bit-for-bit")
+            XCTAssertEqual(roundtrip.timePrecision, "reference")
+            XCTAssertEqual(try encoder.encode(Payload(timestamp: roundtrip.measurementTimestamp, value: 1)),
+                try encoder.encode(Payload(timestamp: sourceDate, value: 1)))
+            let wire = TelemetrySample(from: roundtrip)
+            XCTAssertEqual(wire.timestamp, sourceDate)
+            let persistedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: persisted) as? [[String: Any]])
+            XCTAssertTrue(persistedObject[0]["timestamp"] is String, "older queue readers keep their string format")
+        }
+        XCTAssertTrue(matches(original, at: originalAt, legacyMS: false))
+    }
 }

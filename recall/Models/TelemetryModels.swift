@@ -109,7 +109,7 @@ struct TelemetrySample: Encodable {
             accuracy: sample.accuracy,
             altitude: sample.altitude,
             speed: sample.speed,
-            timestamp: sample.timestamp,
+            timestamp: sample.measurementTimestamp,
             quality: sample.quality,
             fixId: sample.fixId,
             wifi: sample.wifi,

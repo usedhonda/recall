@@ -205,18 +205,38 @@ enum HubProducerContract {
     /// different millisecond there is a different observation, not lost precision.
     static func matchesStoredEnvelope(storedBodyHash: String, route: HubRecallRoute, deviceID: String,
                                       observationID: String, occurredAt: Date, timeBasis: String,
-                                      sourcePayloadJSON: Data, allowLostMilliseconds: Bool = false) -> Bool {
-        func hash(_ date: Date) -> String? {
+                                      sourcePayloadJSON: Data, allowLostMilliseconds: Bool = false,
+                                      allowRoundedSourceTimestamp: Bool = false) -> Bool {
+        func hash(_ date: Date, payload: Data) -> String? {
             guard let envelope = try? makeEnvelope(route: route, deviceID: deviceID, observationID: observationID,
                                                    occurredAt: date, timeBasis: timeBasis,
-                                                   sourcePayloadJSON: sourcePayloadJSON) else { return nil }
+                                                   sourcePayloadJSON: payload) else { return nil }
             return SHA256.hash(data: envelope.encodedJSON).map { String(format: "%02x", $0) }.joined()
         }
-        if hash(occurredAt) == storedBodyHash { return true }
+        if hash(occurredAt, payload: sourcePayloadJSON) == storedBodyHash { return true }
         let seconds = occurredAt.timeIntervalSince1970
+        // The old millisecond queue rounded .9995... to the next second, while
+        // the archived payload's whole-second timestamp still named the prior one.
+        // Only that GPS boundary is tried; identity, occurred_at and every other
+        // byte must still reproduce the full stored fingerprint. The caller must
+        // already hold a receipt and opt in only for a legacy "ms" queue row.
+        if allowRoundedSourceTimestamp, route == .gpsDelivery, timeBasis == "timestamp",
+           seconds == seconds.rounded(.down),
+           let object = (try? JSONSerialization.jsonObject(with: sourcePayloadJSON)) as? [String: Any],
+           let timestamp = object["timestamp"] as? String,
+           timestamp == ISO8601DateFormatter().string(from: occurredAt) {
+            let text = String(decoding: sourcePayloadJSON, as: UTF8.self)
+            let token = "\"timestamp\":\"\(timestamp)\""
+            if text.components(separatedBy: token).count == 2 {
+                let previous = ISO8601DateFormatter().string(from: occurredAt.addingTimeInterval(-1))
+                let candidate = Data(text.replacingOccurrences(of: token,
+                    with: "\"timestamp\":\"\(previous)\"").utf8)
+                if hash(occurredAt, payload: candidate) == storedBodyHash { return true }
+            }
+        }
         guard allowLostMilliseconds, seconds == seconds.rounded(.down) else { return false }
         for millisecond in 1..<1000 {
-            if hash(occurredAt.addingTimeInterval(Double(millisecond) / 1000)) == storedBodyHash { return true }
+            if hash(occurredAt.addingTimeInterval(Double(millisecond) / 1000), payload: sourcePayloadJSON) == storedBodyHash { return true }
         }
         return false
     }

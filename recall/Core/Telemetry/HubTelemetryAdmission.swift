@@ -33,7 +33,8 @@ enum HubTelemetryAdmission {
     /// the milliseconds of `occurred_at`), so a re-admission would only measure queue-file drift.
     static func acknowledgedEquivalent<Payload: Encodable>(
         route: HubRecallRoute, observationID: String, occurredAt: Date, payload: Payload,
-        allowLostMilliseconds: Bool = false
+        allowLostMilliseconds: Bool = false,
+        allowRoundedSourceTimestamp: Bool = false
     ) async -> String? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -42,7 +43,8 @@ enum HubTelemetryAdmission {
         return await HubDeliveryService.shared.acknowledgedEquivalent(
             route: route, observationID: observationID, occurredAt: occurredAt,
             timeBasis: defaultTimeBasis(for: route), sourcePayloadJSON: sourcePayloadJSON,
-            allowLostMilliseconds: allowLostMilliseconds)
+            allowLostMilliseconds: allowLostMilliseconds,
+            allowRoundedSourceTimestamp: allowRoundedSourceTimestamp)
     }
 
     static func defaultTimeBasis(for route: HubRecallRoute) -> String {

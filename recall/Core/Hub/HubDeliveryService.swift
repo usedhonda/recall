@@ -96,7 +96,8 @@ final class HubDeliveryService {
     /// sample whose content differs stays a conflict and stays queued.
     func acknowledgedEquivalent(route: HubRecallRoute, observationID: String, occurredAt: Date,
                                 timeBasis: String, sourcePayloadJSON: Data,
-                                allowLostMilliseconds: Bool = false) async -> String? {
+                                allowLostMilliseconds: Bool = false,
+                                allowRoundedSourceTimestamp: Bool = false) async -> String? {
         guard isEnabled(route), let configuration, let outbox,
               let id = try? HubProducerContract.canonicalExternalID(
                 route: route, deviceID: configuration.deviceID, observationID: observationID),
@@ -106,7 +107,8 @@ final class HubDeliveryService {
                 storedBodyHash: stored, route: route, deviceID: configuration.deviceID,
                 observationID: observationID, occurredAt: occurredAt, timeBasis: timeBasis,
                 sourcePayloadJSON: sourcePayloadJSON,
-                allowLostMilliseconds: allowLostMilliseconds) else { return nil }
+                allowLostMilliseconds: allowLostMilliseconds,
+                allowRoundedSourceTimestamp: allowRoundedSourceTimestamp) else { return nil }
         return id
     }
 

@@ -42,6 +42,21 @@ The queue reserves a bounded receipt slot when accepting each pending item.
 Receipt tombstones are not automatically pruned; reaching their explicit limit
 rejects new admissions without preventing ACK of already accepted items.
 
+The GPS source queue preserves Date's original binary64 reference clock in the additive
+`sourceReferenceSeconds` field, marked `timePrecision=reference`. Admission and telemetry use that clock while the
+legacy ISO 8601 `timestamp` remains readable by older builds. Older whole-second
+and millisecond queue files still load. For a previously
+acknowledged GPS row from the millisecond queue only, a rounded whole-second boundary
+may be reconciled against the prior-second `source_payload.timestamp`. The complete
+candidate must reproduce the stored body fingerprint, with identity, `occurred_at`
+and all other bytes unchanged. This is not new admission, a changed receipt, or
+permission to retire an unacknowledged row. New lossless-clock rows never use this
+compatibility check. Already dual-acknowledged source rows release their queue
+reservation individually, without waiting for neighbouring deliveries; the Hub
+identity/receipt ledger remains retained and all lane budgets remain unchanged.
+The new clock uses `timeIntervalSinceReferenceDate` without a Unix-epoch conversion:
+the epoch addition can itself round a Date across a whole-second payload boundary.
+
 ### Request bytes versus Hub read representation
 
 The producer wrapper uses Foundation `JSONSerialization` with sorted keys, while
