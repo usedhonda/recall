@@ -46,3 +46,10 @@ preferences or source defaults. No credential export or new network probe is use
 Device reflection and a new natural GPS receipt followed by consumer acceptance
 remain required. Protect an open recording during deployment and keep one device
 operation owner. Long-term receipt-ledger capacity remains a separate decision.
+
+The final reference-clock candidate passes the focused Simulator regression and
+the device build. Installation has not been performed: the immediate pre-install
+device check required a passcode, so launchability was not established. The old
+process remains running, with no deployment-induced gap. Continue from the existing
+built artifact after a physical unlock and a fresh Listening/finalization check;
+do not repeat unchanged builds or replace the app while it cannot be launched.
