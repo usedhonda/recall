@@ -5,6 +5,7 @@ import UserNotifications
 
 enum HubConnectionIssue: Codable, Equatable {
     case unreachable(Int)
+    case retrying(Int)
     case networkOther(Int)
     case secureConnection
     case rejected(Int)
@@ -14,6 +15,7 @@ enum HubConnectionIssue: Codable, Equatable {
     var title: String {
         switch self {
         case .unreachable: return "HUB UNREACHABLE"
+        case .retrying: return "RETRYING UPLOAD"
         case .networkOther: return "HUB NETWORK ERROR"
         case .secureConnection: return "HUB SECURE CONNECTION FAILED"
         case .rejected(401), .rejected(403): return "HUB ACCESS REJECTED"
@@ -28,6 +30,8 @@ enum HubConnectionIssue: Codable, Equatable {
         case .unreachable(let code):
             let reason = code == URLError.timedOut.rawValue ? "Connection timed out." : "Connection failed."
             return "\(reason) Check that Tailscale is connected. Data is kept for retry."
+        case .retrying:
+            return "One upload is being retried. The Hub responded recently; queued data is retained."
         case .networkOther(let code):
             return "The network request failed (code \(code)). Data is kept for retry."
         case .secureConnection:
@@ -43,6 +47,11 @@ enum HubConnectionIssue: Codable, Equatable {
 
     var isRouteFailure: Bool {
         if case .unreachable = self { return true }
+        return false
+    }
+
+    var isRetrying: Bool {
+        if case .retrying = self { return true }
         return false
     }
 
@@ -69,12 +78,19 @@ enum HubConnectionIssue: Codable, Equatable {
 /// One latch shared by all lanes, persisted across relaunches. Neither a timer,
 /// an interface change nor ordinary Internet reconnection re-arms the alert.
 struct HubConnectionAlertState: Codable {
+    /// One existing transport resource-timeout window of positive path evidence.
+    static let recentResponseWindow: TimeInterval = 60
     var issue: HubConnectionIssue?
     var notificationClaimed = false
     var lastResponseAt: Date?
 
-    mutating func failed(_ issue: HubConnectionIssue, attemptStartedAt: Date) {
+    mutating func failed(_ issue: HubConnectionIssue, attemptStartedAt: Date, at now: Date = Date()) {
         guard lastResponseAt.map({ attemptStartedAt > $0 }) ?? true else { return }
+        if case .unreachable(let code) = issue, let last = lastResponseAt,
+           (0..<Self.recentResponseWindow).contains(now.timeIntervalSince(last)) {
+            self.issue = .retrying(code)
+            return
+        }
         self.issue = issue
     }
 

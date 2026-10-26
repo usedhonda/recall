@@ -316,10 +316,17 @@ final class HubDeliveryService {
         } catch {
             let category = (error as? HubIngressTransport.Failure)?.diagnosticCategory
                 ?? (error is CancellationError ? "cancelled" : "storage_or_receipt")
-            report("Hub lane \(lane): delivery or receipt failure phase=\(phase) category=\(category), retained")
+            let routeIssue: HubConnectionIssue?
             if phase == "transport", let failure = error as? HubIngressTransport.Failure,
-               case .network(let code) = failure,
-               let issue = HubConnectionIssue.networkFailure(code) {
+               case .network(let code) = failure {
+                routeIssue = HubConnectionIssue.networkFailure(code)
+            } else { routeIssue = nil }
+            if routeIssue?.isRouteFailure == true {
+                report("Hub lane \(lane): retry pending phase=\(phase) category=\(category), retained", category: .network)
+            } else {
+                report("Hub lane \(lane): delivery or receipt failure phase=\(phase) category=\(category), retained")
+            }
+            if let issue = routeIssue {
                 await HubConnectionMonitor.shared.recordFailure(issue, attemptStartedAt: attemptStartedAt)
             } else if phase == "receipt" {
                 await HubConnectionMonitor.shared.recordFailure(.receipt, attemptStartedAt: Date())
@@ -350,11 +357,11 @@ final class HubDeliveryService {
         catch { transport = nil; report("Hub transport unavailable") }
     }
 
-    private func report(_ value: String) {
+    private func report(_ value: String, category: ActivityLogger.Entry.Category = .error) {
         lastFailure = value
         guard Date().timeIntervalSince(lastReported[value] ?? .distantPast) > 60 else { return }
         lastReported[value] = Date()
-        ActivityLogger.shared.log(.error, value)
+        ActivityLogger.shared.log(category, value)
     }
 
     private static func databaseURL() throws -> URL {

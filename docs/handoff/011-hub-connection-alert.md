@@ -99,3 +99,25 @@ VPN-on observation while distinguishing switch intent from a working tunnel.
 No VPN/account/profile setting was changed. Mac iPhone Mirroring still requested
 Mac authentication for UI control; only that operation depends on owner Touch ID.
 Do not block code work or diagnostic reads behind that local UI boundary.
+
+## Transient Retry Versus Sustained Outage
+
+After connectivity recovery, the owner observed an error appear and disappear.
+The same log window contains isolated connection-lost/timeout failures and many
+verified receipts. For example, a status request timed out at 15:52:02Z, another
+request returned HTTP 201 at 15:52:03Z, and the status lane verified a receipt at
+15:52:07Z. These are not asserted to be the same request. A post-clear screenshot
+and persisted state show no current global connection issue.
+
+The earlier policy could promote one failed upload into a global red Hub warning
+until another response cleared it. The corrected policy uses an actual HTTP
+response within the existing 60-second resource-timeout window as positive path
+evidence: an isolated route failure then shows amber RETRYING UPLOAD, without an
+outage notification. A failure with no recent response still shows the red outage
+and retains the persisted one-alert claim. Initial no-response outages, TLS,
+authorization, receipt verification, and storage errors keep their prior meaning.
+
+Retryable transport failures are recorded as network retry entries, not terminal
+red error entries. Their codes and retained status remain in diagnostics; past
+error history is not rewritten or deleted. Delivery failures still retain the
+original and return failure to the worker, with no change to retry/ACK behavior.

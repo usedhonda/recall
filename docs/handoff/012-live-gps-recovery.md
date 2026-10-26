@@ -59,7 +59,18 @@ This establishes fresh measurement -> natural delivery -> committed Hub storage
 observations remain queued/draining rather than discarded. No additional test,
 build, installation, or repeated snapshot is needed for this acceptance.
 
-Actual Chi consumer selection of that same event is a separate remaining check.
-The Hub owner is checking existing consumer provenance read-only. A stale Chi
-messaging endpoint is not a failed data receipt or revoked owner approval, and
-must not be bypassed with another identity or duplicate task submission.
+Consumer evidence was then separated into two checks. Existing natural consumer
+provenance selected a fresh recall/location-snapshot mirror at 15:46:55Z, verified
+through a regular scoped exact-event read; that is a different event from the
+direct representative. The direct representative also passed the existing
+ChiHubReader hydration, snapshot parsing, and actual location-check function with
+one explicit process-local binding, returning its payload measurement clock.
+This proves function acceptance, not natural direct-event selection or native
+conversation read. The first harness expectation incorrectly compared the whole-
+second payload measurement clock with the millisecond envelope clock; correcting
+that expectation and checking the affected case once required no product change.
+
+A stale Chi messaging endpoint remains a separate communication issue, not a
+failed receipt or revoked owner approval. It must not be bypassed with another
+identity or duplicate task submission. No further equivalent data-path tests are
+required for the accepted layers above.

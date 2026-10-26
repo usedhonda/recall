@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HubConnectionBanner: View {
     let issue: HubConnectionIssue
+    private var color: Color { issue.isRetrying ? RecallTheme.Colors.neonAmber : RecallTheme.Colors.neonRed }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -11,11 +12,11 @@ struct HubConnectionBanner: View {
                 .font(RecallTheme.Fonts.hudBody)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundStyle(RecallTheme.Colors.neonRed)
+        .foregroundStyle(color)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 4).fill(RecallTheme.Colors.neonRed.opacity(0.1)))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(RecallTheme.Colors.neonRed.opacity(0.3), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(color.opacity(0.3), lineWidth: 1))
         .padding(.horizontal, 12)
     }
 }

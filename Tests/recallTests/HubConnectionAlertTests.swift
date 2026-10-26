@@ -39,7 +39,13 @@ final class HubConnectionAlertTests: XCTestCase {
         XCTAssertFalse(state.claimNotification(networkAvailable: true))
         state.failed(.unreachable(URLError.timedOut.rawValue), attemptStartedAt: start.addingTimeInterval(30))
         XCTAssertEqual(state.issue, .rejected(401), "an old in-flight timeout cannot reopen a recovered outage")
-        state.failed(.unreachable(URLError.timedOut.rawValue), attemptStartedAt: responseAt.addingTimeInterval(1))
+        state.failed(.unreachable(URLError.timedOut.rawValue), attemptStartedAt: responseAt.addingTimeInterval(1),
+                     at: responseAt.addingTimeInterval(2))
+        XCTAssertEqual(state.issue, .retrying(URLError.timedOut.rawValue))
+        XCTAssertTrue(state.issue?.isRetrying == true)
+        XCTAssertFalse(state.claimNotification(networkAvailable: true), "a recent real response prevents transient alert spam")
+        state.failed(.unreachable(URLError.timedOut.rawValue), attemptStartedAt: responseAt.addingTimeInterval(61),
+                     at: responseAt.addingTimeInterval(62))
         XCTAssertTrue(state.claimNotification(networkAvailable: true), "a genuinely new outage gets one alert")
         XCTAssertFalse(state.claimNotification(networkAvailable: true))
     }
