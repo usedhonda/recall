@@ -121,3 +121,16 @@ Retryable transport failures are recorded as network retry entries, not terminal
 red error entries. Their codes and retained status remain in diagnostics; past
 error history is not rewritten or deleted. Delivery failures still retain the
 original and return failure to the worker, with no change to retry/ACK behavior.
+
+This correction is candidate `fb3ba9c`. The actual pure policy source passes its
+native regression for transient retry/no alert, stale failures, sustained outage
+once, persistence/relaunch, authorization distinction, and initial outage. The
+device build and Simulator compile-only test build pass, without a test runner
+or deliberate network disruption.
+
+It was installed once and immediately launched without activation from
+16:05:35.128437Z to 16:05:37.727868Z, preserving the owner's audio-OFF intent.
+Post-launch diagnostics contain HTTP 201 successes with no current global issue
+or claimed notification, and the audio flags remain OFF/user-stop. No transient
+fault was induced merely to obtain a screenshot; the transient display branch is
+verified by the policy regression rather than falsely claimed as observed live.
