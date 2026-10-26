@@ -45,3 +45,17 @@ request exclusion, a subsequent independent outage, and non-VPN error messages.
 The 320-point banner is rendered as a test attachment to check readable wrapping.
 Real notification presentation is not established by policy tests or a build;
 record authorization and OS delivery separately after device reflection.
+
+## Device Reflection
+
+Commit `57290dc` was installed once and immediately launched without activation
+at 12:57:17.631064Z-12:57:20.133091Z, after a fresh unlocked Listening snapshot
+with no open chunk (2.502-second operation window, not a gap-free claim).
+The process remained Listening at 12:58:22Z. Natural GPS transport timed out
+at 12:57:52Z, and the persisted connection state classified it as unreachable
+with code -1001, no HTTP response, and no notification claim.
+
+This proves runtime classification and persistence, not a shown OS notification.
+Notification authorization/presentation remains unverified; the system permission
+and the Config action are separate from recording and retry progress. The natural
+transport failure itself is still unresolved, with no new verified Hub receipt.
