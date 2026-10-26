@@ -299,10 +299,12 @@ final class HubDeliveryService {
         }
         guard canSend else { return false }
         var phase = "lease"
+        let attemptStartedAt = Date()
         do {
             guard let lease = try await outbox.leaseNext(lane: lane, duration: 90) else { return false }
             phase = "transport"
             let (status, body) = try await transport.submitRaw(encodedJSON: lease.encodedJSON)
+            HubConnectionMonitor.shared.recordResponse(status: status)
             guard status == 200 || status == 201 else {
                 report("Hub lane \(lane): HTTP \(status), retained")
                 return false
@@ -315,6 +317,13 @@ final class HubDeliveryService {
             let category = (error as? HubIngressTransport.Failure)?.diagnosticCategory
                 ?? (error is CancellationError ? "cancelled" : "storage_or_receipt")
             report("Hub lane \(lane): delivery or receipt failure phase=\(phase) category=\(category), retained")
+            if phase == "transport", let failure = error as? HubIngressTransport.Failure,
+               case .network(let code) = failure,
+               let issue = HubConnectionIssue.networkFailure(code) {
+                await HubConnectionMonitor.shared.recordFailure(issue, attemptStartedAt: attemptStartedAt)
+            } else if phase == "receipt" {
+                await HubConnectionMonitor.shared.recordFailure(.receipt, attemptStartedAt: Date())
+            }
             return false
         }
     }

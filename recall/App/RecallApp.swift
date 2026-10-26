@@ -44,6 +44,7 @@ struct RecallApp: App {
                     // Data saver gate: foreground sends, background stays silent.
                     ConnectivityMonitor.shared.isAppActive = (phase == .active)
                     guard phase == .active else { return }
+                    Task { await HubConnectionMonitor.shared.foreground() }
                     LaunchContext.markUserForeground()
                     if LaunchContext.foregroundAction(
                         deploymentPreservesOff: LaunchContext.deploymentPreservesOff) == .independentStreamsOnly {

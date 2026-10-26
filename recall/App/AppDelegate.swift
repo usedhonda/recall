@@ -1,5 +1,6 @@
 import UIKit
 import OSLog
+import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -13,6 +14,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         guard !TestLaunchBoundary.isTesting else { return true }
+        UNUserNotificationCenter.current().delegate = self
         // First, before any other line lands: how long was nobody running?
         ActivityLogger.shared.noteProcessStart()
         LaunchContext.recordLaunch(applicationState: application.applicationState)
@@ -48,5 +50,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         } else {
             BackgroundUploadService.shared.setBackgroundCompletionHandler(completionHandler)
         }
+    }
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list])
     }
 }

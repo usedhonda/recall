@@ -49,6 +49,21 @@ struct SettingsView: View {
                     hudPolicyRow(policy: policy)
                 }
 
+                HUDActionButton(
+                    title: HubConnectionMonitor.shared.alertsEnabled ? "Connection Alerts Enabled"
+                        : HubConnectionMonitor.shared.notificationSettingsRequired ? "Open Notification Settings"
+                        : "Enable Connection Alerts",
+                    icon: "bell.badge",
+                    color: RecallTheme.Colors.neonCyan
+                ) {
+                    Task { await HubConnectionMonitor.shared.enableAlerts() }
+                }
+                .disabled(HubConnectionMonitor.shared.alertsEnabled)
+                Text("One alert per Hub connection outage, even across app restarts. Re-armed only after the server responds.")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("HOME WIFI SSID")
                         .font(RecallTheme.Fonts.hudCaption)
@@ -69,6 +84,7 @@ struct SettingsView: View {
             }
             .hudCard()
         }
+        .task { await HubConnectionMonitor.shared.foreground() }
     }
 
     // MARK: - Storage

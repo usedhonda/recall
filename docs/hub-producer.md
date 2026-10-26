@@ -174,6 +174,17 @@ code and the lease/transport/receipt phase, or an HTTP status. URL strings,
 localized descriptions, userInfo, credentials, and response bodies are never
 carried into those diagnostics; an unknown error remains a fixed category.
 
+The in-app Hub connection banner uses these natural outcomes, separately from
+ordinary offline status. A local network path plus a Hub connection failure
+suggests checking Tailscale; it never proves Tailscale is off or the Internet is
+reachable. TLS, HTTP access/rejection, and receipt failures have distinct text.
+With iOS notification permission, all lanes share one local notification claim
+persisted across relaunches. Continued failures and interface changes do not
+repeat it. Only a real HTTP response re-arms the connection-outage notification;
+this is not receipt validation or GPS delivery acceptance. No diagnostic probe,
+credential, or VPN-setting change is added. See
+`handoff/011-hub-connection-alert.md` for authorization and stale-request semantics.
+
 Hub-enabled audio reserves 14 MiB for the source CAF, the 20 MiB maximum
 encoded envelope, and 4096 bytes for its receipt before creating a writer.
 AudioFile write and resize callbacks enforce the 14 MiB physical file limit;

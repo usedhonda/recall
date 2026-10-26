@@ -38,6 +38,9 @@ struct RecordingView: View {
 
                         telemetryStatusBanner
                         uploadHealthBanner
+                        if ConnectivityMonitor.shared.isConnected, let issue = HubConnectionMonitor.shared.issue {
+                            HubConnectionBanner(issue: issue)
+                        }
 
                         if let error = viewModel.errorMessage {
                             HStack(spacing: 4) {
@@ -72,7 +75,10 @@ struct RecordingView: View {
             .ignoresSafeArea()
         }
         .onAppear {
-            if !TestLaunchBoundary.isTesting { MotionActivityMonitor.shared.startLiveSensors() }
+            if !TestLaunchBoundary.isTesting {
+                MotionActivityMonitor.shared.startLiveSensors()
+                Task { await HubConnectionMonitor.shared.foreground() }
+            }
         }
         .onDisappear { MotionActivityMonitor.shared.stopLiveSensors() }
         .onChange(of: viewModel.isActive) { _, active in

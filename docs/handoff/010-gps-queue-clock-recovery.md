@@ -87,8 +87,9 @@ The focused outbox and telemetry-ledger tests pass (27 tests). The new regressio
 reproduces a full lane refusing a 21,650-byte legacy reservation, recycles only
 retired snapshot receipts, then admits that reservation while preserving a live
 source receipt, pending body/lease, later ACK, unknown identity, and the audio lane.
-Runtime installation and natural receipt confirmation for this candidate remain
+At that test-only checkpoint, installation and natural receipt confirmation were
 pending; the earlier 15-row runtime recovery belongs to the previous candidate.
+Live capacity acceptance is recorded below.
 The final claim/transport checkpoint passes its two affected regressions and the
 signed device build; the unchanged 27-test batch was not repeated. The claim
 regression covers candidate selection, a later claim, protected collection, and
@@ -106,3 +107,27 @@ collapsed URL loading errors into a generic unavailable error. The repair retain
 only the fixed URL error code and lease/transport/receipt phase, never the URL,
 description, userInfo, credential, or response body. This diagnostic correction is
 independent of capacity recovery and does not claim the network route is restored.
+
+## Live Capacity Acceptance
+
+Commit `6f47e98` was installed once in a fresh unlocked, Listening window with all
+opened chunks finalized. Installation and immediate non-activating launch spanned
+11:58:43.157840Z to 11:58:45.349856Z (2.192 seconds, not a gap-free claim).
+The process recorded automatic reclamation of 28,384 retired GPS receipts at
+11:58:49Z and returned to Listening, still observed at 12:00:48Z.
+
+Compared with the pre-install snapshot, charged GPS bytes fell from 33,550,565 to
+16,910,671 while new work was admitted; free capacity rose from 3,867 to
+16,643,761 bytes. The ACK ledger count fell by exactly the logged reclamation
+count. All prior 1,170 unacknowledged rows across lanes retained identical
+bodies, hashes, and original lengths. All prior 4,514 source rows remained,
+with three new rows added; GPS Hub pending grew from 747 to 767. Reservation
+keys remained; non-source reservations were unchanged and source reservation
+growth reflected new samples. No post-install capacity rejection was observed
+in that snapshot. This establishes live capacity recovery without pending loss.
+
+Natural Hub delivery is separate: GPS at 12:00:29Z and other lanes at 12:00:31Z
+reported transport `NSURLErrorDomain -1001` (timeout), with no verified receipt.
+The observed VPN-on action is not negated and a timeout alone does not identify
+VPN, DNS, TLS, endpoint, or server as its cause. Follow-on user-visible connection
+diagnostics and once-per-outage alerts are tracked in `011-hub-connection-alert.md`.
