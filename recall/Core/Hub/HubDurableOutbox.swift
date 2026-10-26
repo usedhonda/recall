@@ -38,6 +38,7 @@ actor HubDurableOutbox {
     private let db: OpaquePointer
     private let budgets: [String: LaneBudget]
     private var gpsReceiptClaims: [UUID: UUID] = [:]
+    private var preferFreshGPS = true
 
     init(url: URL, budgets: [String: LaneBudget]) throws {
         guard !budgets.isEmpty, budgets.keys.allSatisfy({ !$0.isEmpty }) else { throw Failure.invalidBudget }
@@ -148,13 +149,20 @@ actor HubDurableOutbox {
         let end = start + duration
         guard start.isFinite, duration.isFinite, duration > 0, end.isFinite else { throw Failure.invalidLease }
         return try transaction {
-            let statement = try prepare("SELECT id FROM hub_outbox_v1 WHERE lane=? AND (state=0 OR (state=1 AND lease_until<=?)) ORDER BY rowid LIMIT 1",
+            let isGPS = lane == self.lane(for: .gpsDelivery)
+            // Alternate live source-time priority with historical FIFO. Recovery
+            // must not put the current fix behind hours of retained history.
+            let order = isGPS && preferFreshGPS
+                ? "julianday(CASE WHEN json_valid(CAST(body AS TEXT)) THEN json_extract(CAST(body AS TEXT),'$.occurred_at') END) DESC, rowid"
+                : "rowid"
+            let statement = try prepare("SELECT id FROM hub_outbox_v1 WHERE lane=? AND (state=0 OR (state=1 AND lease_until<=?)) ORDER BY \(order) LIMIT 1",
                                         [.text(lane), .double(start)])
             defer { sqlite3_finalize(statement) }
             guard try step(statement) == SQLITE_ROW else { return nil }
             let id = try textColumn(statement, 0)
             guard let record = try row(id), let body = record.body else { throw Failure.corruptRecord }
             try execute("UPDATE hub_outbox_v1 SET state=1, lease_until=? WHERE id=?", [.double(end), .text(id)])
+            if isGPS { preferFreshGPS.toggle() }
             return Lease(externalID: id, encodedJSON: body, expectedReceipt: record.expected(id),
                          expiresAt: Date(timeIntervalSince1970: end))
         }

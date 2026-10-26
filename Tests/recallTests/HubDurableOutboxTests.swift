@@ -20,6 +20,39 @@ final class HubDurableOutboxTests: XCTestCase {
         FileManager.default.temporaryDirectory.appendingPathComponent("hub-\(UUID().uuidString).sqlite")
     }
 
+    func testGPSAlternatesFreshSourceClockAndHistoryWithoutChangingOtherLaneFIFO() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let box = try HubDurableOutbox(url: path, budgets: budgets())
+        func sample(_ name: String, _ seconds: Double, route: HubRecallRoute = .gpsDelivery) throws -> HubProducerEnvelope {
+            try HubProducerContract.makeEnvelope(route: route, deviceID: "fixture-device", observationID: name,
+                occurredAt: Date(timeIntervalSince1970: seconds), timeBasis: "timestamp",
+                sourcePayloadJSON: Data("{}".utf8), originalBytes: route == .audioOriginal ? Data("audio".utf8) : nil)
+        }
+        let old = try sample("old", 10), fresh = try sample("fresh", 30), middle = try sample("middle", 20)
+        for item in [old, fresh, middle] { try await box.enqueue(item) }
+        let now = Date(timeIntervalSince1970: 100)
+        let first = try await box.leaseNext(lane: "gps-delivery", now: now, duration: 60)
+        let second = try await box.leaseNext(lane: "gps-delivery", now: now, duration: 60)
+        let third = try await box.leaseNext(lane: "gps-delivery", now: now, duration: 60)
+        XCTAssertEqual(first?.encodedJSON, fresh.encodedJSON, "source time, not insertion order, owns live priority")
+        XCTAssertEqual(second?.encodedJSON, old.encodedJSON, "history keeps draining")
+        XCTAssertEqual(third?.encodedJSON, middle.encodedJSON)
+        let held = try await box.leaseNext(lane: "gps-delivery", now: now, duration: 60)
+        XCTAssertNil(held, "live priority cannot bypass active leases")
+        let bytes = try await box.pendingBytes(lane: "gps-delivery")
+        XCTAssertEqual(bytes, Int64(old.encodedJSON.count + fresh.encodedJSON.count + middle.encodedJSON.count))
+        let reopened = try HubDurableOutbox(url: path, budgets: budgets())
+        let retry = try await reopened.leaseNext(lane: "gps-delivery", now: now.addingTimeInterval(61), duration: 60)
+        XCTAssertEqual(retry?.encodedJSON, fresh.encodedJSON)
+
+        let audioOld = try sample("audio-old", 10, route: .audioOriginal)
+        let audioFresh = try sample("audio-fresh", 30, route: .audioOriginal)
+        try await box.enqueue(audioOld); try await box.enqueue(audioFresh)
+        let audio = try await box.leaseNext(lane: "audio-original", now: now, duration: 60)
+        XCTAssertEqual(audio?.encodedJSON, audioOld.encodedJSON, "other streams retain their FIFO")
+    }
+
     private func response(_ event: HubProducerEnvelope, eventID: String = "00000000-0000-4000-8000-000000000001",
                           overrideLength: Int? = nil, processingState: String = "pending") throws -> Data {
         var response: [String: Any] = ["storage_receipt": [

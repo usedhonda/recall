@@ -39,6 +39,11 @@ bytes after restart. Same-ID/body admission is idempotent; a content change
 conflicts even after ACK, using a retained body fingerprint. ACK expectations
 and previous event bindings come from the durable row, never caller overrides.
 The queue reserves a bounded receipt slot when accepting each pending item.
+GPS leasing alternates the newest `occurred_at` with historical FIFO, beginning
+with the newest source clock after process start. This keeps live location from
+waiting behind a disconnected backlog while historical observations still drain.
+All other lanes keep FIFO. Ordering never changes a payload, source clock, ID,
+receipt expectation, active lease, or retention requirement; nothing is evicted.
 GPS receipt records are automatically reclaimed under capacity pressure once neither
 the source queue nor a pending legacy batch owns the observation (see capacity
 recovery below). Other routes retain their receipt tombstones. Reaching a lane's
