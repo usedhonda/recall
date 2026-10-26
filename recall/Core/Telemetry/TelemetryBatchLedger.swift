@@ -96,6 +96,10 @@ actor TelemetryBatchLedger {
     }
 
     func pending() -> [Batch] { rows.values.filter { $0.state == .pending } }
+    func receiptProtectionIDs() throws -> Set<UUID> {
+        guard healthy else { throw Failure.storageUnreadable }
+        return Set(rows.values.filter { $0.state == .pending }.flatMap(\.sampleIDs))
+    }
     func deliveredHealth() -> [Batch] { rows.values.filter { $0.state == .delivered && $0.healthIncluded && $0.healthDeliveryID != nil } }
     func hasPending(sampleIDs: [UUID], healthIncluded: Bool) -> Bool {
         let wanted = Set(sampleIDs)

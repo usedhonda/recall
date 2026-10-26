@@ -39,8 +39,10 @@ bytes after restart. Same-ID/body admission is idempotent; a content change
 conflicts even after ACK, using a retained body fingerprint. ACK expectations
 and previous event bindings come from the durable row, never caller overrides.
 The queue reserves a bounded receipt slot when accepting each pending item.
-Receipt tombstones are not automatically pruned; reaching their explicit limit
-rejects new admissions without preventing ACK of already accepted items.
+GPS receipt records are automatically reclaimed under capacity pressure once neither
+the source queue nor a pending legacy batch owns the observation (see capacity
+recovery below). Other routes retain their receipt tombstones. Reaching a lane's
+limit rejects new admissions without preventing ACK of already accepted items.
 
 The GPS source queue preserves Date's original binary64 reference clock in the additive
 `sourceReferenceSeconds` field, marked `timePrecision=reference`. Admission and telemetry use that clock while the
@@ -146,9 +148,31 @@ budget records one `usage_ge_80` gap, and one `usage_recovered` below 70%. When 
 be read the state is `unknown`, never healthy. The channel status, and with it this capacity
 diagnostic, is sent at least once an hour even when everything is normal (the first tick sends when no
 acknowledged-level time is stored, otherwise within an hour of the last acknowledged one), so the server can tell a quiet healthy device from one that stopped reporting.
-Tombstones are not silently pruned. Full lanes reject new admissions and retain
-previous unACKed items. These logical limits are not measurements of SQLite
-page/journal overhead or a guarantee against physical disk exhaustion.
+GPS capacity recovery runs before positive producer reservations and in the GPS
+delivery worker, independently of connectivity, transport configuration, or UI
+authentication. At 70% usage it collects the oldest retired GPS receipt records
+until usage is at most 50%, or no eligible records remain; checks are coalesced
+to once per 30 seconds. The collection snapshots acknowledged candidates before
+reading source-queue and pending legacy-batch ownership, then deletes only those
+snapshot candidates in one transaction. A later ACK cannot be collected using an
+older ownership snapshot. Source samples, source delivery markers, pending legacy
+batches, active foreground GPS receipt claims, unacknowledged bodies, and non-GPS
+lanes remain protected. Claims are checked inside the outbox actor's deletion
+transaction, including claims started after candidate selection. Unreadable
+ownership or an unrecognized observation identity defers collection, not delivery.
+The server remains the durable owner of retired observations; this only releases
+local receipt/dedup bookkeeping that has no remaining producer owner. A body-free
+activity entry records the number reclaimed. GPS source rows with all required
+receipts are retired before network gating and before new Hub admissions, so an
+offline policy or a blocked neighbour cannot prevent local capacity recovery.
+Full lanes still reject new admissions and retain all unACKed items. These logical
+limits are not measurements of SQLite page/journal overhead or a guarantee against
+physical disk exhaustion.
+
+Transport failure diagnostics retain only the fixed `NSURLErrorDomain` numeric
+code and the lease/transport/receipt phase, or an HTTP status. URL strings,
+localized descriptions, userInfo, credentials, and response bodies are never
+carried into those diagnostics; an unknown error remains a fixed category.
 
 Hub-enabled audio reserves 14 MiB for the source CAF, the 20 MiB maximum
 encoded envelope, and 4096 bytes for its receipt before creating a writer.

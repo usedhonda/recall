@@ -58,4 +58,51 @@ confirming retirement of the 15 dual-acknowledged observations.
 Natural current-GPS delivery is still unconfirmed. A post-install read showed no
 new GPS receipt, while the Hub owner independently observed the phone's existing
 tailnet peer offline. The remaining transport investigation is separate from the
-verified queue recovery. Do not reinstall again or replay/delete retained data.
+verified queue recovery. Do not reinstall unchanged code or replay/delete pending data.
+
+## Automatic Capacity Recovery
+
+The owner subsequently requested correction of the iPhone software faults, including
+the capacity dead end rather than holding code work behind device UI authentication.
+This extends the earlier no-retention-change scope for safely retired local GPS
+receipt records only; budgets, unacknowledged data, and route cutover remain unchanged.
+
+The GPS lane previously retained acknowledged identity/receipt records forever,
+in the same byte budget needed for new observations and legacy request files.
+It now reclaims acknowledged GPS records with no source-queue, delivery-marker,
+or pending legacy-batch owner at 70% usage, oldest first toward 50%. Candidate
+selection precedes ownership snapshots so a concurrent later ACK stays protected.
+Active foreground GPS calls claim their receipt inside the outbox actor and release
+the claim on return. Claims begun after candidate selection are checked inside the
+deletion transaction. Unknown identities and unreadable ownership are not eligible
+for collection.
+Recovery runs locally before positive reservations and before the worker's network
+gate, at most once per 30 seconds. Other lanes and pending GPS bodies are untouched.
+
+Dual-acknowledged source retirement also moves before the network gate and new
+admissions; a failed neighbour no longer blocks that bookkeeping. Health batch
+reconciliation remains independent of the existence of GPS samples.
+
+The focused outbox and telemetry-ledger tests pass (27 tests). The new regression
+reproduces a full lane refusing a 21,650-byte legacy reservation, recycles only
+retired snapshot receipts, then admits that reservation while preserving a live
+source receipt, pending body/lease, later ACK, unknown identity, and the audio lane.
+Runtime installation and natural receipt confirmation for this candidate remain
+pending; the earlier 15-row runtime recovery belongs to the previous candidate.
+The final claim/transport checkpoint passes its two affected regressions and the
+signed device build; the unchanged 27-test batch was not repeated. The claim
+regression covers candidate selection, a later claim, protected collection, and
+collection after claim release when no other owner exists.
+
+An isolated copy of the earlier device database recovers capacity from 33,544,572
+to 16,777,163 charged bytes by reclaiming 28,372 retired GPS receipt records.
+All 746 pending observations, their bodies, and existing reservations remain
+unchanged; a 21,650-byte legacy request reservation then succeeds. This is a
+copy-only proof, not live-device reclamation or network delivery evidence.
+
+The post-VPN-operation snapshot independently confirms two new reference-clock
+source rows and ongoing recording, but no new Hub ACK. The previous transport
+collapsed URL loading errors into a generic unavailable error. The repair retains
+only the fixed URL error code and lease/transport/receipt phase, never the URL,
+description, userInfo, credential, or response body. This diagnostic correction is
+independent of capacity recovery and does not claim the network route is restored.

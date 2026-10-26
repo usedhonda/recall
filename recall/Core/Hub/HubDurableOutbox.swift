@@ -37,6 +37,7 @@ actor HubDurableOutbox {
 
     private let db: OpaquePointer
     private let budgets: [String: LaneBudget]
+    private var gpsReceiptClaims: [UUID: UUID] = [:]
 
     init(url: URL, budgets: [String: LaneBudget]) throws {
         guard !budgets.isEmpty, budgets.keys.allSatisfy({ !$0.isEmpty }) else { throw Failure.invalidBudget }
@@ -315,6 +316,72 @@ actor HubDurableOutbox {
 
     func retainedBytes(lane: String) throws -> Int64 {
         try scalar("SELECT COALESCE(SUM(\(Self.retainedCostSQL)),0) FROM hub_outbox_v1 WHERE lane=?", [.text(lane)])
+    }
+
+    struct GPSReceiptCandidate: Sendable {
+        let externalID: String
+        let chargedBytes: Int64
+    }
+
+    func claimGPSReceipt(observationID: UUID) -> UUID {
+        let token = UUID()
+        gpsReceiptClaims[token] = observationID
+        return token
+    }
+
+    func releaseGPSReceiptClaim(_ token: UUID) {
+        gpsReceiptClaims.removeValue(forKey: token)
+    }
+
+    /// Snapshot before reading producer ownership: an ACK created after this
+    /// snapshot must not be collected using an older source-queue snapshot.
+    func gpsReceiptReclamationCandidates() throws -> [GPSReceiptCandidate] {
+        let lane = lane(for: .gpsDelivery)
+        guard let budget = budgets[lane] else { throw Failure.invalidBudget }
+        let used = try retainedBytes(lane: lane) + externalReservedBytes(lane: lane)
+        guard used >= budget.maxBytes * 7 / 10 else { return [] }
+        let statement = try prepare("SELECT id, \(Self.retainedCostSQL) FROM hub_outbox_v1 WHERE lane=? AND state=2 AND body IS NULL AND receipt IS NOT NULL ORDER BY rowid", [.text(lane)])
+        defer { sqlite3_finalize(statement) }
+        var result: [GPSReceiptCandidate] = []
+        while try step(statement) == SQLITE_ROW {
+            result.append(.init(externalID: try textColumn(statement, 0),
+                                chargedBytes: sqlite3_column_int64(statement, 1)))
+        }
+        return result
+    }
+
+    /// Only Hub-ACKed GPS receipts with no remaining source or legacy-batch
+    /// owner are recyclable. Pending bodies and other streams are never touched.
+    func reclaimGPSReceipts(_ candidates: [GPSReceiptCandidate],
+                            protecting observationIDs: Set<UUID>) throws -> Int {
+        let lane = lane(for: .gpsDelivery)
+        guard let budget = budgets[lane] else { throw Failure.invalidBudget }
+        return try transaction {
+            var used = try retainedBytes(lane: lane) + externalReservedBytes(lane: lane)
+            let target = budget.maxBytes / 2
+            let protectedIDs = observationIDs.union(gpsReceiptClaims.values)
+            var removed = 0
+            for candidate in candidates where used > target {
+                guard let observationID = Self.gpsObservationID(candidate.externalID),
+                      !protectedIDs.contains(observationID) else { continue }
+                try execute("DELETE FROM hub_outbox_v1 WHERE id=? AND lane=? AND state=2 AND body IS NULL AND receipt IS NOT NULL",
+                            [.text(candidate.externalID), .text(lane)])
+                if sqlite3_changes(db) == 1 {
+                    used -= candidate.chargedBytes
+                    removed += 1
+                }
+            }
+            return removed
+        }
+    }
+
+    private static func gpsObservationID(_ externalID: String) -> UUID? {
+        let parts = externalID.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 4, parts[0] == "v1", parts[1] == HubRecallRoute.gpsDelivery.rawValue else { return nil }
+        var encoded = String(parts[3]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        guard let bytes = Data(base64Encoded: encoded), let value = String(data: bytes, encoding: .utf8) else { return nil }
+        return UUID(uuidString: value)
     }
 
     func contains(externalID: String) throws -> Bool { try row(externalID) != nil }

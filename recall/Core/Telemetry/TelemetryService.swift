@@ -96,6 +96,12 @@ final class TelemetryService {
     // MARK: - Location Send
 
     func sendLocation(_ payload: LocationPayload) async -> LocationSendResult {
+        let receiptClaim = await HubDeliveryService.shared.claimGPSReceipt(observationID: payload.deliveryID)
+        defer {
+            if let receiptClaim {
+                Task { await HubDeliveryService.shared.releaseGPSReceiptClaim(receiptClaim) }
+            }
+        }
         let nowPlayingSnapshot = nowPlayingManager.snapshot
         do {
             let hubExternalID = try await HubTelemetryAdmission.admit(

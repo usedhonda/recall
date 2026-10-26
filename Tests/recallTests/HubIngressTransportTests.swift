@@ -83,11 +83,27 @@ final class HubIngressTransportTests: XCTestCase {
     }
 
     func testNetworkFailureIsBodyFreeAndDoesNotBecomeACK() async throws {
-        StubProtocol.respond = { _ in throw URLError(.timedOut) }
-        do {
-            _ = try await transport().submit(envelope())
-            XCTFail("Ambiguous response loss must remain retryable")
-        } catch { XCTAssertEqual(error as? HubIngressTransport.Failure, .unavailable) }
+        for code in [URLError.Code.timedOut, .cannotFindHost, .cannotConnectToHost,
+                     .notConnectedToInternet, .secureConnectionFailed] {
+            StubProtocol.respond = { _ in
+                throw NSError(domain: NSURLErrorDomain, code: code.rawValue,
+                              userInfo: [NSLocalizedDescriptionKey: "private diagnostic must not escape",
+                                         NSURLErrorFailingURLErrorKey: URL(string: "https://private.example.invalid")!])
+            }
+            do {
+                _ = try await transport().submit(envelope())
+                XCTFail("Ambiguous response loss must remain retryable")
+            } catch {
+                let failure = error as? HubIngressTransport.Failure
+                XCTAssertEqual(failure, .network(code.rawValue))
+                XCTAssertEqual(failure?.diagnosticCategory, "network_\(code.rawValue)")
+                XCTAssertFalse(String(describing: error).contains("private"))
+            }
+        }
+        StubProtocol.respond = { _ in throw NSError(domain: "fixture", code: 7,
+            userInfo: [NSLocalizedDescriptionKey: "private diagnostic must not escape"]) }
+        do { _ = try await transport().submit(envelope()); XCTFail("non-network failure") }
+        catch { XCTAssertEqual(error as? HubIngressTransport.Failure, .unavailable) }
     }
 
     func testRawResponseExposesStatusAndBodyForDurableAckOwner() async throws {

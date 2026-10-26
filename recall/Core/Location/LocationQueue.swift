@@ -150,6 +150,11 @@ actor LocationQueue {
     func count() -> Int { samples.count }
     func legacyDelivered(_ id: UUID) -> Bool { legacyDeliveredIDs.contains(id) }
 
+    func receiptProtectionIDs() throws -> Set<UUID> {
+        guard storageHealthy else { throw CocoaError(.fileReadCorruptFile) }
+        return Set(samples.map(\.id)).union(legacyDeliveredIDs)
+    }
+
     func reconcileHubReservation() async -> Bool {
         guard storageHealthy, !mutationInProgress else { return false }
         mutationInProgress = true

@@ -7,8 +7,19 @@ final class HubIngressTransport: @unchecked Sendable {
     enum Failure: Error, Equatable {
         case invalidConfiguration
         case unavailable
+        case network(Int)
         case rejected(Int)
         case invalidResponse
+
+        var diagnosticCategory: String {
+            switch self {
+            case .invalidConfiguration: return "invalid_configuration"
+            case .unavailable: return "unavailable"
+            case .network(let code): return "network_\(code)"
+            case .rejected(let status): return "http_\(status)"
+            case .invalidResponse: return "invalid_response"
+            }
+        }
     }
 
     private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -89,7 +100,10 @@ final class HubIngressTransport: @unchecked Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            // Do not propagate URL/token-bearing diagnostics into activity logs.
+            // Preserve only the fixed URL loading code, never URL/token-bearing
+            // descriptions, userInfo, underlying errors, or response bodies.
+            let failure = error as NSError
+            if failure.domain == NSURLErrorDomain { throw Failure.network(failure.code) }
             throw Failure.unavailable
         }
         guard let http = response as? HTTPURLResponse else { throw Failure.invalidResponse }

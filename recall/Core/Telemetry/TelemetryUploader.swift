@@ -281,35 +281,48 @@ final class TelemetryUploader: NSObject {
     /// Hybrid: immediate upload first, falls back to background URLSession on failure
     @MainActor
     func triggerUpload() async {
-        guard ConnectivityMonitor.shared.canSendLocation else {
-            TelemetryUploader.log("network policy: triggerUpload skipped before drain")
-            return
-        }
         guard !isTriggerUploadRunning else { return }
         isTriggerUploadRunning = true
         defer { isTriggerUploadRunning = false }
 
         await reconcileBackgroundTasks()
-        await retryPendingHealthBatches()
+        if ConnectivityMonitor.shared.canSendHealth { await retryPendingHealthBatches() }
         var samples = await LocationQueue.shared.peek(max: 50)
         guard !samples.isEmpty else { return }
-        let nowPlayingSnapshot = TelemetryService.shared.nowPlayingManager.snapshot
-
+        let hubEnabled = HubDeliveryService.shared.isEnabled(.gpsDelivery)
+        let legacyAllowed = HubTelemetryAdmission.legacyAllowed(.gpsDelivery)
         var hubIDs: [UUID: String] = [:]
+        var completed: Set<UUID> = []
+        for sample in samples {
+            // Recover a full matching receipt before attempting any new admission.
+            if let acknowledged = await HubTelemetryAdmission.acknowledgedEquivalent(
+                route: .gpsDelivery, observationID: sample.id.uuidString,
+                occurredAt: sample.measurementTimestamp, payload: TelemetrySample(from: sample),
+                allowLostMilliseconds: sample.timePrecision == nil,
+                allowRoundedSourceTimestamp: sample.timePrecision == "ms") {
+                hubIDs[sample.id] = acknowledged
+            }
+            let legacyDelivered = await LocationQueue.shared.legacyDelivered(sample.id)
+            if (!hubEnabled || hubIDs[sample.id] != nil) && (!legacyAllowed || legacyDelivered) {
+                completed.insert(sample.id)
+            }
+        }
+        // Retirement is local bookkeeping, not a network operation or a new
+        // admission. A blocked neighbour or offline policy must not prevent it.
+        if !completed.isEmpty, await LocationQueue.shared.remove(ids: completed) {
+            samples.removeAll { completed.contains($0.id) }
+            for id in completed { hubIDs.removeValue(forKey: id) }
+            TelemetryUploader.log("GPS dual ACK released samples=\(completed.count)")
+            guard !samples.isEmpty else { return }
+        }
+        guard ConnectivityMonitor.shared.canSendLocation else {
+            TelemetryUploader.log("network policy: triggerUpload skipped after local retirement")
+            return
+        }
+        let nowPlayingSnapshot = TelemetryService.shared.nowPlayingManager.snapshot
         var hubAcked = true
         do {
-            for sample in samples {
-                // Already acknowledged under this identity: delivered. Do not re-admit it, or an
-                // encoding that drifted since turns it into a permanent conflict that aborts the
-                // whole batch and strands every sample queued behind it.
-                if let acknowledged = await HubTelemetryAdmission.acknowledgedEquivalent(
-                    route: .gpsDelivery, observationID: sample.id.uuidString,
-                    occurredAt: sample.measurementTimestamp, payload: TelemetrySample(from: sample),
-                    allowLostMilliseconds: sample.timePrecision == nil,
-                    allowRoundedSourceTimestamp: sample.timePrecision == "ms") {
-                    hubIDs[sample.id] = acknowledged
-                    continue
-                }
+            for sample in samples where hubIDs[sample.id] == nil {
                 if let externalID = try await HubTelemetryAdmission.admit(
                     route: .gpsDelivery,
                     observationID: sample.id.uuidString,
@@ -332,26 +345,6 @@ final class TelemetryUploader: NSObject {
         TelemetryUploader.log("triggerUpload samples=\(samples.count) state=\(stateLabel)")
 
         let settings = AppSettings.shared
-        let hubEnabled = await MainActor.run { HubDeliveryService.shared.isEnabled(.gpsDelivery) }
-        let legacyAllowed = HubTelemetryAdmission.legacyAllowed(.gpsDelivery)
-        // A retained neighbour must not keep an already dual-acknowledged row's
-        // source reservation alive. This removes only queue ownership, not the
-        // Hub's immutable identity/receipt ledger or an unacknowledged delivery.
-        var completed: Set<UUID> = []
-        for sample in samples {
-            guard let externalID = hubIDs[sample.id],
-                  (try? await HubDeliveryService.shared.isAcknowledged(externalID: externalID)) == true else { continue }
-            let legacyDelivered = await LocationQueue.shared.legacyDelivered(sample.id)
-            if !legacyAllowed || legacyDelivered {
-                completed.insert(sample.id)
-            }
-        }
-        if !completed.isEmpty, await LocationQueue.shared.remove(ids: completed) {
-            samples.removeAll { completed.contains($0.id) }
-            for id in completed { hubIDs.removeValue(forKey: id) }
-            TelemetryUploader.log("GPS dual ACK released samples=\(completed.count)")
-            guard !samples.isEmpty else { return }
-        }
         if !legacyAllowed {
             guard hubIDs.count == samples.count, hubAcked else { return }
             if hubIDs.isEmpty || hubAcked { await LocationQueue.shared.remove(ids: Set(samples.map(\.id))) }

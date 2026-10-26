@@ -190,6 +190,80 @@ final class HubDurableOutboxTests: XCTestCase {
         XCTAssertEqual(lease?.encodedJSON, waiting.encodedJSON)
     }
 
+    func testGPSPressureReclaimsOnlyRetiredSnapshotReceiptsAndRestoresDrainCapacity() async throws {
+        let path = url()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let limits = try budgets(bytes: 60_000, slots: 1_000)
+        let box = try HubDurableOutbox(url: path, budgets: limits)
+        let sourceID = UUID()
+        let source = try event(sourceID.uuidString)
+        try await box.enqueue(source)
+        try await box.acknowledge(responseData: response(source), externalID: source.externalID)
+        let unknown = try event("legacy-shape")
+        try await box.enqueue(unknown)
+        try await box.acknowledge(responseData: response(unknown), externalID: unknown.externalID)
+        let claimedID = UUID()
+        let claimed = try event(claimedID.uuidString)
+        try await box.enqueue(claimed)
+        try await box.acknowledge(responseData: response(claimed), externalID: claimed.externalID)
+        for _ in 0..<67 {
+            let item = try event(UUID().uuidString)
+            try await box.enqueue(item)
+            try await box.acknowledge(responseData: response(item), externalID: item.externalID)
+        }
+        let waiting = try event(UUID().uuidString)
+        let late = try event(UUID().uuidString)
+        try await box.enqueue(waiting)
+        try await box.enqueue(late)
+        let lease = try await box.leaseNext(lane: "gps-delivery", duration: 60)
+        XCTAssertEqual(lease?.externalID, waiting.externalID)
+        let audio = try event("audio", route: .audioOriginal)
+        try await box.enqueue(audio)
+        try await box.acknowledge(responseData: response(audio), externalID: audio.externalID)
+
+        var retained = try await box.retainedBytes(lane: "gps-delivery")
+        try await box.setExternalReservation(lane: "gps-delivery", key: "source", bytes: 60_000 - retained - 128)
+        do {
+            try await box.setExternalReservation(lane: "gps-delivery", key: "legacy-batch", bytes: 21_650)
+            XCTFail("a full lane must reproduce the blocked background drain")
+        } catch { XCTAssertEqual(error as? HubDurableOutbox.Failure, .laneFull) }
+        let candidates = try await box.gpsReceiptReclamationCandidates()
+        XCTAssertEqual(candidates.count, 70)
+        let claim = await box.claimGPSReceipt(observationID: claimedID)
+
+        // This ACK was not in the snapshot; an older ownership snapshot must
+        // never collect it, even if its source ID is not in the protected set.
+        try await box.acknowledge(responseData: response(late), externalID: late.externalID)
+        retained = try await box.retainedBytes(lane: "gps-delivery")
+        try await box.setExternalReservation(lane: "gps-delivery", key: "source", bytes: 60_000 - retained - 128)
+        let removed = try await box.reclaimGPSReceipts(candidates, protecting: [sourceID])
+        XCTAssertGreaterThan(removed, 0)
+        let kept = try await box.retainedBytes(lane: "gps-delivery")
+        let reserved = try await box.externalReservedBytes(lane: "gps-delivery")
+        let used = kept + reserved
+        XCTAssertLessThanOrEqual(used, 30_000)
+        let lowPressure = try await box.gpsReceiptReclamationCandidates()
+        XCTAssertTrue(lowPressure.isEmpty)
+        try await box.setExternalReservation(lane: "gps-delivery", key: "legacy-batch", bytes: 21_650)
+
+        let reopened = try HubDurableOutbox(url: path, budgets: limits)
+        for protected in [source, unknown, claimed, late, audio] {
+            let receipt = try await reopened.storedReceipt(externalID: protected.externalID)
+            XCTAssertNotNil(receipt)
+        }
+        let bodyBytes = try await reopened.pendingBytes(lane: "gps-delivery")
+        XCTAssertEqual(bodyBytes, Int64(waiting.encodedJSON.count))
+        let retry = try await reopened.leaseNext(lane: "gps-delivery", now: Date().addingTimeInterval(61), duration: 60)
+        XCTAssertEqual(retry?.encodedJSON, waiting.encodedJSON)
+        await box.releaseGPSReceiptClaim(claim)
+        let afterRelease = try await box.gpsReceiptReclamationCandidates()
+        let released = try await box.reclaimGPSReceipts(
+            afterRelease.filter { $0.externalID == claimed.externalID }, protecting: [sourceID])
+        XCTAssertEqual(released, 1)
+        let retiredClaim = try await box.storedReceipt(externalID: claimed.externalID)
+        XCTAssertNil(retiredClaim)
+    }
+
     func testOriginalReservationIsIndependentLaneBudget() async throws {
         let path = url()
         defer { try? FileManager.default.removeItem(at: path) }

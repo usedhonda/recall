@@ -14,6 +14,8 @@ final class HubDeliveryService {
     private var lastReported: [String: Date] = [:]
     private var originalMutations: [HubRecallRoute: UUID] = [:]
     private var audioReservationRecovery: (id: UUID, task: Task<Void, Error>)?
+    private var gpsReclamationInProgress = false
+    private var lastGPSReclamation = Date.distantPast
     private(set) var lastFailure: String?
 
     func start() {
@@ -117,6 +119,16 @@ final class HubDeliveryService {
         return try await outbox.storedReceipt(externalID: externalID) != nil
     }
 
+    func claimGPSReceipt(observationID: String) async -> UUID? {
+        refreshRuntime()
+        guard isEnabled(.gpsDelivery), let outbox, let id = UUID(uuidString: observationID) else { return nil }
+        return await outbox.claimGPSReceipt(observationID: id)
+    }
+
+    func releaseGPSReceiptClaim(_ token: UUID) async {
+        await outbox?.releaseGPSReceiptClaim(token)
+    }
+
     func retainedBytes(route: HubRecallRoute) async throws -> Int64 {
         refreshRuntime()
         guard let outbox else { throw Failure.notConfigured }
@@ -127,7 +139,30 @@ final class HubDeliveryService {
     func reserveQueueBytes(route: HubRecallRoute, key: String, bytes: Int64) async throws {
         refreshRuntime()
         guard let outbox else { throw Failure.notConfigured }
+        if route == .gpsDelivery, bytes > 0 { await reclaimRetiredGPSReceipts() }
         try await outbox.setExternalReservation(lane: HubDurableOutbox.lane(for: route), key: key, bytes: bytes)
+    }
+
+    private func reclaimRetiredGPSReceipts() async {
+        guard let outbox, !gpsReclamationInProgress,
+              Date().timeIntervalSince(lastGPSReclamation) >= 30 else { return }
+        gpsReclamationInProgress = true
+        defer {
+            gpsReclamationInProgress = false
+            lastGPSReclamation = Date()
+        }
+        do {
+            let candidates = try await outbox.gpsReceiptReclamationCandidates()
+            guard !candidates.isEmpty else { return }
+            let sourceIDs = try await LocationQueue.shared.receiptProtectionIDs()
+            let batchIDs = try await TelemetryBatchLedger.shared.receiptProtectionIDs()
+            let removed = try await outbox.reclaimGPSReceipts(candidates, protecting: sourceIDs.union(batchIDs))
+            if removed > 0 {
+                ActivityLogger.shared.log(.upload, "GPS retired receipt records reclaimed count=\(removed)")
+            }
+        } catch {
+            report("GPS receipt recovery deferred: producer ownership or storage unavailable")
+        }
     }
 
     func reserveAudioCapture(token: UUID, bytes: Int64) async throws {
@@ -250,7 +285,10 @@ final class HubDeliveryService {
 
     private func reconcile(lane: String) async -> Bool {
         refreshRuntime()
-        guard let outbox, let transport else { return false }
+        guard let outbox else { return false }
+        // Local capacity recovery does not require connectivity or device UI authentication.
+        if lane == "metadata-gps" { await reclaimRetiredGPSReceipts() }
+        guard let transport else { return false }
         let canSend: Bool
         switch lane {
         case "audio-original", "glasses-original": canSend = ConnectivityMonitor.shared.canUploadAudio
@@ -260,18 +298,23 @@ final class HubDeliveryService {
         default: canSend = true
         }
         guard canSend else { return false }
+        var phase = "lease"
         do {
             guard let lease = try await outbox.leaseNext(lane: lane, duration: 90) else { return false }
+            phase = "transport"
             let (status, body) = try await transport.submitRaw(encodedJSON: lease.encodedJSON)
             guard status == 200 || status == 201 else {
                 report("Hub lane \(lane): HTTP \(status), retained")
                 return false
             }
+            phase = "receipt"
             try await outbox.acknowledge(responseData: body, externalID: lease.externalID)
             ActivityLogger.shared.log(.upload, "Hub committed receipt verified lane=\(lane)")
             return true
         } catch {
-            report("Hub lane \(lane): delivery or receipt failure, retained")
+            let category = (error as? HubIngressTransport.Failure)?.diagnosticCategory
+                ?? (error is CancellationError ? "cancelled" : "storage_or_receipt")
+            report("Hub lane \(lane): delivery or receipt failure phase=\(phase) category=\(category), retained")
             return false
         }
     }

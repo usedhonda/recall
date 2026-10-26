@@ -46,10 +46,14 @@ final class TelemetryBatchLedgerTests: XCTestCase {
         let pending = try XCTUnwrap(pendingValue)
         XCTAssertEqual(pending.id, row.id)
         XCTAssertEqual(pending.state, .pending)
+        let protectedIDs = try await reopened.receiptProtectionIDs()
+        XCTAssertEqual(protectedIDs, [id])
         XCTAssertTrue(FileManager.default.fileExists(atPath: body.path))
         _ = try await reopened.markDelivered(row.id)
         let remaining = await reopened.pending()
         XCTAssertTrue(remaining.isEmpty)
+        let retiredIDs = try await reopened.receiptProtectionIDs()
+        XCTAssertTrue(retiredIDs.isEmpty)
     }
 
     func testMissingTaskClearsIdentityButRetainsSameBatchAndBody() async throws {
@@ -118,6 +122,10 @@ final class TelemetryBatchLedgerTests: XCTestCase {
         let corrupt = Data("not-json".utf8)
         try corrupt.write(to: path)
         let ledger = TelemetryBatchLedger(url: path)
+        do {
+            _ = try await ledger.receiptProtectionIDs()
+            XCTFail("unreadable ownership must not authorize receipt cleanup")
+        } catch {}
         do {
             _ = try await ledger.create(sampleIDs: [UUID()], healthIncluded: false,
                 requestFile: root.appendingPathComponent("request.json"))
