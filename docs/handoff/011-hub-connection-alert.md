@@ -82,3 +82,20 @@ without executing assertions and was interrupted; it is not reported as a test
 pass. The owner explicitly selected Kana for the incident investigation. Acceptance
 therefore uses the normal Kana app's natural requests, not a hosted test runner
 that would take over its recording process.
+
+The diagnostic candidate `686a79b` was reflected on Kana in an unlocked Listening
+window with no open chunk, installing and immediately launching without activation
+at 13:18:45.453711Z-13:18:47.682496Z (2.229 seconds, not gap-free).
+Natural requests persisted real timeout records. Their configured endpoint hashes
+match the existing Hub deployment fingerprint. iOS reported transaction metrics
+without DNS/connect/TLS/request/response timestamps, so the recorded phase is
+`not_reported`; do not reinterpret missing timestamps as a specific network failure.
+
+USB screen capture and official developer application launch were verified on Kana.
+The actual recall warning was observed while its recording remained Listening.
+Opening the already installed Tailscale app showed its switch ON and status
+"Starting..." in the settled screen, not Connected. This preserves the owner's
+VPN-on observation while distinguishing switch intent from a working tunnel.
+No VPN/account/profile setting was changed. Mac iPhone Mirroring still requested
+Mac authentication for UI control; only that operation depends on owner Touch ID.
+Do not block code work or diagnostic reads behind that local UI boundary.
