@@ -48,8 +48,14 @@ remain required. Protect an open recording during deployment and keep one device
 operation owner. Long-term receipt-ledger capacity remains a separate decision.
 
 The final reference-clock candidate passes the focused Simulator regression and
-the device build. Installation has not been performed: the immediate pre-install
-device check required a passcode, so launchability was not established. The old
-process remains running, with no deployment-induced gap. Continue from the existing
-built artifact after a physical unlock and a fresh Listening/finalization check;
-do not repeat unchanged builds or replace the app while it cannot be launched.
+the device build. After the initial locked-device hold, the existing artifact was
+installed and immediately launched without activation. The install-to-launch
+operation lasted about 4.34 seconds; this is not claimed to be gap-free recording.
+The pre-install state was Listening with finalized chunks, and the new process
+returned to Listening. The source queue decreased from 4,527 to 4,512 rows,
+confirming retirement of the 15 dual-acknowledged observations.
+
+Natural current-GPS delivery is still unconfirmed. A post-install read showed no
+new GPS receipt, while the Hub owner independently observed the phone's existing
+tailnet peer offline. The remaining transport investigation is separate from the
+verified queue recovery. Do not reinstall again or replay/delete retained data.
