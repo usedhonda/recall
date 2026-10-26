@@ -64,6 +64,31 @@ struct SettingsView: View {
                     .foregroundStyle(RecallTheme.Colors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                DisclosureGroup("Hub Connection Diagnostics") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Real upload attempts only. No test request is sent. An unreported phase is unknown, not a diagnosis.")
+                            .font(RecallTheme.Fonts.hudCaption)
+                        ForEach(HubConnectionDiagnostics.shared.requests.prefix(5)) { request in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(request.startedAt, style: .time)
+                                Text(request.summary)
+                                Text("Endpoint SHA-256: \(request.endpointSHA256)")
+                                    .textSelection(.enabled)
+                                if let timing = request.timing {
+                                    Text("DNS \(timing.dnsMilliseconds.map(String.init) ?? "?")ms / connect \(timing.connectMilliseconds.map(String.init) ?? "?")ms / TLS \(timing.tlsMilliseconds.map(String.init) ?? "?")ms")
+                                    Text("Reused: \(timing.reusedConnection ? "yes" : "no") / proxy: \(timing.proxyConnection ? "yes" : "no")")
+                                }
+                            }
+                            .font(RecallTheme.Fonts.hudCaption)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(RecallTheme.Fonts.hudBody)
+                .tint(RecallTheme.Colors.neonCyan)
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("HOME WIFI SSID")
                         .font(RecallTheme.Fonts.hudCaption)

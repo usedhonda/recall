@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Store-only transport. Callers persist the envelope before invoking this client,
 /// and persist the matching receipt before retiring any original or queue item.
@@ -31,9 +32,49 @@ final class HubIngressTransport: @unchecked Sendable {
         }
     }
 
+    private final class AttemptMetrics: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        let id: UUID
+        init(id: UUID) { self.id = id }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        didFinishCollecting metrics: URLSessionTaskMetrics) {
+            guard let last = metrics.transactionMetrics.last else { return }
+            let timing = HubRequestTiming(
+                dnsStart: last.domainLookupStartDate, dnsEnd: last.domainLookupEndDate,
+                connectStart: last.connectStartDate, connectEnd: last.connectEndDate,
+                tlsStart: last.secureConnectionStartDate, tlsEnd: last.secureConnectionEndDate,
+                requestStart: last.requestStartDate, requestEnd: last.requestEndDate,
+                responseStart: last.responseStartDate, reusedConnection: last.isReusedConnection,
+                proxyConnection: last.isProxyConnection)
+            let id = self.id
+            Task { @MainActor in HubConnectionDiagnostics.shared.collected(id: id, timing: timing) }
+        }
+    }
+
     private let endpoint: URL
     private let bearerToken: String
     private let session: URLSession
+    private let endpointSHA256: String
+
+    static func endpointFingerprint(_ url: URL) throws -> String {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == "https", parts.host?.isEmpty == false,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.path.isEmpty || parts.path == "/" else {
+            throw Failure.invalidConfiguration
+        }
+        // Match the Hub operator's existing fingerprint: exact configured URL,
+        // with only its optional trailing root slash removed. No token is read.
+        let identity = url.absoluteString.hasSuffix("/") ? String(url.absoluteString.dropLast()) : url.absoluteString
+        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     /// The deployment owner must establish tailnet-only reachability and provision
     /// Recall's source-bound credential separately. No implicit endpoint or token.
@@ -48,6 +89,7 @@ final class HubIngressTransport: @unchecked Sendable {
               !bearerToken.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) })
         else { throw Failure.invalidConfiguration }
         self.endpoint = baseURL.appendingPathComponent("v1/events")
+        self.endpointSHA256 = try Self.endpointFingerprint(baseURL)
         self.bearerToken = bearerToken
         let config = configuration.copy() as! URLSessionConfiguration
         config.httpCookieStorage = nil
@@ -95,17 +137,23 @@ final class HubIngressTransport: @unchecked Sendable {
         request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         let data: Data
         let response: URLResponse
+        let diagnosticID = UUID()
+        await HubConnectionDiagnostics.shared.started(id: diagnosticID, endpointSHA256: endpointSHA256)
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request, delegate: AttemptMetrics(id: diagnosticID))
         } catch is CancellationError {
+            await HubConnectionDiagnostics.shared.completed(id: diagnosticID, urlError: URLError.cancelled.rawValue)
             throw CancellationError()
         } catch {
             // Preserve only the fixed URL loading code, never URL/token-bearing
             // descriptions, userInfo, underlying errors, or response bodies.
             let failure = error as NSError
+            await HubConnectionDiagnostics.shared.completed(id: diagnosticID,
+                urlError: failure.domain == NSURLErrorDomain ? failure.code : nil)
             if failure.domain == NSURLErrorDomain { throw Failure.network(failure.code) }
             throw Failure.unavailable
         }
+        await HubConnectionDiagnostics.shared.completed(id: diagnosticID, status: (response as? HTTPURLResponse)?.statusCode)
         guard let http = response as? HTTPURLResponse else { throw Failure.invalidResponse }
         return (http.statusCode, data)
     }

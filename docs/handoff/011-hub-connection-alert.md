@@ -59,3 +59,26 @@ This proves runtime classification and persistence, not a shown OS notification.
 Notification authorization/presentation remains unverified; the system permission
 and the Config action are separate from recording and retry progress. The natural
 transport failure itself is still unresolved, with no new verified Hub receipt.
+
+## On-Device Request Diagnostics
+
+Following the owner's report that notification authorization did not resolve the
+error, the app records the last 20 natural Hub requests and displays the latest
+five under Config / Network / Hub Connection Diagnostics. Each record contains
+request time, HTTP status or fixed URL loading code, last reported URLSession
+transaction phase, DNS/connect/TLS durations when provided, and reuse/proxy flags.
+Missing metrics stay unknown; a phase timestamp is evidence of progress, not proof
+that a later phase failed. Request metrics and completion merge by a local ID
+regardless of callback order, and the bounded records survive relaunch.
+
+The endpoint is represented only by SHA-256 of the configured HTTPS URL with its
+optional trailing root slash removed, matching the deployment operator's existing
+comparison method. No URL, address, credential, request/response body, or header
+is recorded. No probe, manual POST, retry, VPN change, or new listener is added.
+The per-task delegate preserves the existing redirect prohibition.
+
+The device build passes. The Simulator test launch entered simulator diagnostics
+without executing assertions and was interrupted; it is not reported as a test
+pass. The owner explicitly selected Kana for the incident investigation. Acceptance
+therefore uses the normal Kana app's natural requests, not a hosted test runner
+that would take over its recording process.
