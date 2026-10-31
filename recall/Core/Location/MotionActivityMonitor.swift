@@ -88,6 +88,14 @@ final class MotionActivityMonitor {
         lastStepCount = 0
         pedometer.startUpdates(from: Date()) { [weak self] data, _ in
             guard let data else { return }
+            let update = RawStepUpdate(
+                start: data.startDate, end: data.endDate, steps: data.numberOfSteps.intValue,
+                distanceMeters: data.distance?.doubleValue,
+                cadencePerSecond: data.currentCadence?.doubleValue,
+                floorsAscended: data.floorsAscended?.intValue,
+                floorsDescended: data.floorsDescended?.intValue
+            )
+            Task { await HubRawStream.shared.append(update, route: .motionActivity) }
             let steps = data.numberOfSteps.intValue
             let cadence = data.currentCadence?.doubleValue
             Task { @MainActor [weak self] in
@@ -110,7 +118,10 @@ final class MotionActivityMonitor {
     private func startStepEvents() {
         guard CMPedometer.isPedometerEventTrackingAvailable() else { return }
         pedometer.startEventUpdates { [weak self] event, _ in
-            guard let event, event.type == .resume else { return }
+            guard let event else { return }
+            let raw = RawStepEvent(at: event.date, type: event.type == .resume ? "resume" : "pause")
+            Task { await HubRawStream.shared.append(raw, route: .motionActivity) }
+            guard event.type == .resume else { return }
             Task { @MainActor [weak self] in
                 self?.noteMovement(source: "step event")
             }
@@ -173,6 +184,12 @@ final class MotionActivityMonitor {
     }
 
     private func apply(_ activity: CMMotionActivity) {
+        let raw = RawMotionActivity(
+            at: activity.startDate, stationary: activity.stationary, walking: activity.walking,
+            running: activity.running, cycling: activity.cycling, automotive: activity.automotive,
+            unknown: activity.unknown, confidence: activity.confidence.rawValue
+        )
+        Task { await HubRawStream.shared.append(raw, route: .motionActivity) }
         let moving = activity.walking || activity.running || activity.cycling || activity.automotive
         let label = Self.label(for: activity)
         // The stream alternates between a real reading and "unknown" every couple of

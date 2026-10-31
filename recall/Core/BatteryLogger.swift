@@ -29,6 +29,8 @@ enum BatteryLogger {
         lastState = state
 
         ActivityLogger.shared.log(.state, "Battery: \(level)% \(name(of: state))")
+        let reading = RawBatteryLevel(at: Date(), percent: level, state: name(of: state))
+        Task { await HubRawStream.shared.append(reading, route: .batteryLevel) }
     }
 
     private static func name(of state: UIDevice.BatteryState) -> String {

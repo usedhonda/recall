@@ -13,6 +13,18 @@ use source `recall` and external ID
 case folding, or Unicode normalization. The complete ID is limited to 512 ASCII
 characters. An observation's original bytes, source payload, and full encoded
 envelope are fixed before its first attempt and reused unchanged on retries.
+Owner ruling (2026-10-31): recall sends everything it reads, without thinning, and Hub is the only
+path consumers read. Readings go in batch events of up to 2000 items, on their own lane
+(`metadata-raw`), each `{deleted: [], items: []}`:
+`recall.gps-track.v1` (domain gps, every fix past the accuracy filter),
+`recall.health-samples.v1` (domain health, each HealthKit sample; `deleted` lists removed uuids),
+`recall.motion-activity.v1` (domain health, activity readings, step updates and step events),
+`recall.battery-level.v1` (domain status). They follow the provisioned route of their stream.
+Health samples measured before the first run minus 14 days are held back until the owner decides Hub
+retention (Hub keeps health 30 days from receipt). Rewrites arrive as new uuids and a resent
+batch may repeat: readers dedupe by `uuid` and apply `deleted`. Items waiting for a flush (up to 60 s) are
+in memory and die with the process. The live GPS, Health snapshot and status routes are unchanged.
+
 Fix identity and GPS delivery identity are different. Health snapshots do not
 imply collection of all raw HealthKit samples. Each snapshot may carry two optional
 fields, always the whole last 14 days, so entries repeat across snapshots and may change:
@@ -134,8 +146,8 @@ are accepted. Invalid capture timestamps retain the committed image/sidecar pair
 and record `invalid_capture_clock`; they are not replaced by import/current time.
 Such pairs are explicitly unadmitted, not proof of complete glasses coverage.
 
-Approved independent limits are GPS 32 MiB, Health aggregate snapshots 64 MiB,
-status 32 MiB, glasses 512 MiB and control 16 MiB. Audio retains the existing
+Approved independent limits are GPS 128 MiB, Health aggregate snapshots 64 MiB,
+raw batches 512 MiB, status 32 MiB, glasses 512 MiB and control 16 MiB. Audio retains the existing
 `storageCapMB` setting. Outbox bodies use their actual encoded byte length;
 a row that is not yet acknowledged reserves its body plus 4096 bytes, so its ACK never needs an unreserved
 slot; once acknowledged, only the identity/receipt ledger remains and it is counted at its real byte size plus

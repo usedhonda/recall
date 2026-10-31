@@ -20,7 +20,7 @@ final class HubDeliveryService {
 
     func start() {
         refreshRuntime()
-        for lane in ["metadata-gps", "metadata-health", "metadata-status", "audio-original", "glasses-original"] {
+        for lane in ["metadata-gps", "metadata-health", "metadata-status", "metadata-raw", "audio-original", "glasses-original"] {
             guard workers[lane] == nil else { continue }
             workers[lane] = Task { [weak self] in
                 while !Task.isCancelled {
@@ -32,7 +32,7 @@ final class HubDeliveryService {
     }
 
     var isConfigured: Bool { configuration != nil && outbox != nil && transport != nil }
-    func isEnabled(_ route: HubRecallRoute) -> Bool { HubProvisioning.shared.enabledRoutes.contains(route.rawValue) }
+    func isEnabled(_ route: HubRecallRoute) -> Bool { HubProvisioning.shared.enabledRoutes.contains(route.enablingRoute.rawValue) }
     func legacyDisabled(_ route: HubRecallRoute) -> Bool { HubProvisioning.shared.legacyDisabledRoutes.contains(route.rawValue) }
 
     /// Held across source-file creation or source-size snapshot + outbox commit.
@@ -293,7 +293,7 @@ final class HubDeliveryService {
         switch lane {
         case "audio-original", "glasses-original": canSend = ConnectivityMonitor.shared.canUploadAudio
         case "metadata-gps": canSend = ConnectivityMonitor.shared.canSendLocation
-        case "metadata-health": canSend = ConnectivityMonitor.shared.canSendHealth
+        case "metadata-health", "metadata-raw": canSend = ConnectivityMonitor.shared.canSendHealth
         case "metadata-status": canSend = ConnectivityMonitor.shared.canSendLocation
         default: canSend = true
         }
@@ -378,7 +378,7 @@ final class HubDeliveryService {
     private static func makeBudgets() throws -> [String: HubDurableOutbox.LaneBudget] {
         let mib: Int64 = 1024 * 1024
         let audio = Int64(AppSettings.shared.storageCapMB) * mib
-        return try ["metadata-gps": 32 * mib, "metadata-health": 64 * mib,
+        return try ["metadata-gps": 128 * mib, "metadata-health": 64 * mib, "metadata-raw": 512 * mib,
                     "metadata-status": 32 * mib, "glasses-original": 512 * mib,
                     "audio-original": audio, "control": 16 * mib].mapValues {
             try .init(maxBytes: $0, maxItems: .max, maxTombstones: .max)

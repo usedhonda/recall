@@ -55,6 +55,7 @@ enum HubTelemetryAdmission {
         case .channelReport: return "sent_at"
         case .audioOriginal: return "chunk_start_utc"
         case .glassesOriginal: return "captured_at"
+        case .gpsTrack, .healthSamples, .motionActivity, .batteryLevel: return "batched_at"
         }
     }
 

@@ -77,6 +77,7 @@ final class HealthKitManager {
     /// How far back sleep sessions and daily heart rate are rebuilt. Observed ring batches
     /// came about a week apart (docs/healthkit.md); this leaves room for one missed batch.
     nonisolated static let historyDays = 14
+    private var isSyncingRawSamples = false
     private var lastPostedFingerprint: String?
     private var lastPostedAt: Date?
     private var acknowledgedBackgroundHealthIDs = Set<String>()
@@ -428,6 +429,8 @@ final class HealthKitManager {
             return
         }
         isSkippingForLock = false
+
+        await syncRawSamples()
 
         totalQueries += 1
         lastQueryAt = Date()
@@ -1111,6 +1114,120 @@ final class HealthKitManager {
             }
             healthStore.execute(query)
         }
+    }
+
+    // MARK: - Raw samples
+
+    /// Sends every sample written since the last pass, in the order HealthKit saved them,
+    /// including late batches and deletions (docs/healthkit.md). A type's anchor moves only
+    /// after the outbox holds the batch. Samples measured before `rawSamplesFloor` wait
+    /// for the owner's Hub retention decision.
+    private func syncRawSamples() async {
+        guard !isSyncingRawSamples, HubDeliveryService.shared.isEnabled(.healthSamples) else { return }
+        isSyncingRawSamples = true
+        defer { isSyncingRawSamples = false }
+        let defaults = UserDefaults.standard
+        let floorKey = "hub.healthSamples.floor.v1"
+        let floor: Date
+        if let stored = defaults.object(forKey: floorKey) as? Date {
+            floor = stored
+        } else {
+            floor = Date().addingTimeInterval(-TimeInterval(Self.historyDays) * 86400)
+            defaults.set(floor, forKey: floorKey)
+        }
+        var sent = 0
+        for type in readTypes.compactMap({ $0 as? HKSampleType }).sorted(by: { $0.identifier < $1.identifier }) {
+            let key = "hub.healthSamples.anchor.v1.\(type.identifier)"
+            var anchor = defaults.data(forKey: key).flatMap {
+                try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0)
+            }
+            while true {
+                guard let page = await queryRawPage(type: type, floor: floor, anchor: anchor) else { break }
+                if !page.items.isEmpty || !page.deleted.isEmpty {
+                    do {
+                        try await HubRawEvent.admit(route: .healthSamples, items: page.items,
+                                                    deleted: page.deleted, occurredAt: Date())
+                    } catch {
+                        Self.logHK("rawSamples \(type.identifier.shortHK): admission refused")
+                        return
+                    }
+                }
+                anchor = page.anchor
+                if let anchor, let data = try? NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true) {
+                    defaults.set(data, forKey: key)
+                }
+                sent += page.items.count
+                if page.count < HubRawStream.maxItemsPerEvent { break }
+            }
+        }
+        if sent > 0 { Self.logHK("rawSamples: admitted \(sent)") }
+    }
+
+    private struct RawPage {
+        let items: [Data]
+        let deleted: [String]
+        let anchor: HKQueryAnchor?
+        let count: Int
+    }
+
+    private func queryRawPage(type: HKSampleType, floor: Date, anchor: HKQueryAnchor?) async -> RawPage? {
+        let predicate = HKQuery.predicateForSamples(withStart: floor, end: nil, options: [])
+        return await withCheckedContinuation { continuation in
+            let query = HKAnchoredObjectQuery(
+                type: type, predicate: predicate, anchor: anchor,
+                limit: HubRawStream.maxItemsPerEvent
+            ) { _, samples, deleted, newAnchor, error in
+                if let error {
+                    Self.logHK("rawSamples \(type.identifier.shortHK): err(\(error.localizedDescription))")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let items = (samples ?? []).compactMap { sample in
+                    try? HubRawEvent.encoder.encode(Self.rawSample(sample))
+                }
+                continuation.resume(returning: RawPage(
+                    items: items,
+                    deleted: (deleted ?? []).map(\.uuid.uuidString),
+                    anchor: newAnchor,
+                    count: (samples?.count ?? 0) + (deleted?.count ?? 0)
+                ))
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    private nonisolated static func rawSample(_ sample: HKSample) -> RawHealthSample {
+        var value: Double?
+        var unit: String?
+        var text: String?
+        var duration: Double?
+        if let quantity = sample as? HKQuantitySample, let hkUnit = rawUnit(quantity.quantityType) {
+            value = quantity.quantity.doubleValue(for: hkUnit)
+            unit = hkUnit.unitString
+        } else if let category = sample as? HKCategorySample {
+            value = Double(category.value)
+            text = sleepStageName(category.value)
+        } else if let workout = sample as? HKWorkout {
+            text = workoutActivityName(workout.workoutActivityType)
+            duration = workout.duration
+        }
+        return RawHealthSample(
+            uuid: sample.uuid.uuidString, type: sample.sampleType.identifier,
+            start: sample.startDate, end: sample.endDate,
+            value: value, unit: unit, valueText: text,
+            source: sample.sourceRevision.source.name,
+            sourceBundleId: sample.sourceRevision.source.bundleIdentifier,
+            sourceVersion: sample.sourceRevision.version,
+            deviceModel: sample.device?.model,
+            durationSeconds: duration
+        )
+    }
+
+    private nonisolated static func rawUnit(_ type: HKQuantityType) -> HKUnit? {
+        let perMinute = HKUnit.count().unitDivided(by: .minute())
+        let candidates: [HKUnit] = [.count(), perMinute, .secondUnit(with: .milli), .kilocalorie(),
+                                    .meter(), .percent(), .gramUnit(with: .kilo), .degreeCelsius()]
+        return candidates.first { type.is(compatibleWith: $0) }
     }
 
     private func querySleepSessions(from start: Date, to end: Date) async -> [SleepSession] {

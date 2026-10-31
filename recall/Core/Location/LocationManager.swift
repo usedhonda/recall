@@ -320,6 +320,7 @@ final class LocationManager: NSObject {
         updateCadence(for: location, isInForeground: isInForeground)
         lastGoodLocation = location
         noteGoodFix(location)
+        await HubRawStream.shared.append(LocationSample(from: location, fixId: lastGoodFixId), route: .gpsTrack)
 
         guard shouldSendLocation(location) else { return }
         // A departure reservation must not outlive this attempt: a send that never

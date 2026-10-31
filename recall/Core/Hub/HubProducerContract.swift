@@ -12,13 +12,27 @@ enum HubRecallRoute: String, CaseIterable, Sendable {
     case channelReport = "channel-report"
     case nowPlaying = "now-playing"
     case glassesOriginal = "glasses-original"
+    case gpsTrack = "gps-track"
+    case healthSamples = "health-samples"
+    case motionActivity = "motion-activity"
+    case batteryLevel = "battery-level"
+
+    /// Batch routes follow the provisioned route of the stream they belong to.
+    var enablingRoute: HubRecallRoute {
+        switch self {
+        case .gpsTrack: return .gpsDelivery
+        case .healthSamples, .motionActivity: return .healthSnapshot
+        case .batteryLevel: return .channelReport
+        default: return self
+        }
+    }
 
     var domain: String {
         switch self {
         case .audioOriginal: return "audio"
-        case .gpsDelivery: return "gps"
-        case .healthSnapshot: return "health"
-        case .geofence, .wifi, .channelReport, .nowPlaying: return "status"
+        case .gpsDelivery, .gpsTrack: return "gps"
+        case .healthSnapshot, .healthSamples, .motionActivity: return "health"
+        case .geofence, .wifi, .channelReport, .nowPlaying, .batteryLevel: return "status"
         case .glassesOriginal: return "glasses"
         }
     }

@@ -133,6 +133,7 @@ actor HubDurableOutbox {
         case .geofence, .wifi, .channelReport, .nowPlaying: return "metadata-status"
         case .audioOriginal: return "audio-original"
         case .glassesOriginal: return "glasses-original"
+        case .gpsTrack, .healthSamples, .motionActivity, .batteryLevel: return "metadata-raw"
         }
     }
 

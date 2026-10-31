@@ -64,6 +64,10 @@ them. Marked **Apple** (official docs), **Community** (forum reports, not offici
 - A snapshot goes out only when its fingerprint changes (or at the keepalive), so history alone
   does not cause extra sends.
 
+- Every sample also goes out one by one as `recall.health-samples.v1`, through a per-type anchor that
+  moves only after the outbox holds the batch (docs/hub-producer.md). This is what "written late" and
+  "rewritten" need: anchors follow saves, not sample dates.
+
 ## Checking by hand
 
 Compare in this order: the Health app (category, then Show More Sleep Data), then
