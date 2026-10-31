@@ -33,6 +33,9 @@ Stopping one stream must never stop, gate, defer, or degrade another. Concretely
 - An OFF from Control Center / App Intents saves `userStopIntent` in the same step
   (`RecordingStateManager.applyExternalToggle`), and an OFF that arrives while the engine is idle
   still invalidates a start waiting in its retry back-off.
+- Opening the app does not turn recording on over a stored stop (owner ruling 2026-10-31): the stop
+  lasts until an explicit ON from the Audio toggle, Control Center or App Intents. With no stored
+  stop, recording still starts on launch.
 - A deployment launch with `RECALL_PRESERVE_OFF=1` and a stored stop stays silent for that process,
   including after the scene becomes active; the independent streams still start.
 

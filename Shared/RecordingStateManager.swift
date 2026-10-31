@@ -35,9 +35,10 @@ final class RecordingStateManager {
 
     /// Control Center / App Intents switch. An OFF is saved as the durable stop intent in the
     /// same step, because the app process may not exist yet to apply it: a later launch,
-    /// retry or pending start must still find the owner's stop.
+    /// retry or pending start must still find the owner's stop. An ON clears it the same way,
+    /// because opening the app no longer does.
     func applyExternalToggle(_ on: Bool) {
-        if !on { userStopIntent = true }
+        userStopIntent = !on
         isRecording = on
     }
 

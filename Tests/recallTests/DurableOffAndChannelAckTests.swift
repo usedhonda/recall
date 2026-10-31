@@ -35,10 +35,19 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         LaunchContext.deploymentPreservesOff = false
         LaunchContext.userDidForeground = true
         LaunchContext.launchedInBackground = false
+        RecordingStateManager.shared.userStopIntent = false
         XCTAssertFalse(LaunchContext.shouldStaySilent, "an ordinary foreground launch is unchanged")
 
-        XCTAssertEqual(LaunchContext.foregroundAction(deploymentPreservesOff: true), .independentStreamsOnly)
-        XCTAssertEqual(LaunchContext.foregroundAction(deploymentPreservesOff: false), .normalStartup)
+        XCTAssertEqual(LaunchContext.foregroundAction(deploymentPreservesOff: true, ownerStopped: false), .independentStreamsOnly)
+        XCTAssertEqual(LaunchContext.foregroundAction(deploymentPreservesOff: false, ownerStopped: false), .normalStartup)
+
+        // Opening the app is not an ON: a stored stop outlives the foreground.
+        XCTAssertEqual(LaunchContext.foregroundAction(deploymentPreservesOff: false, ownerStopped: true), .independentStreamsOnly)
+        let state = RecordingStateManager.shared
+        let savedStop = state.userStopIntent
+        defer { state.userStopIntent = savedStop }
+        state.userStopIntent = true
+        XCTAssertTrue(LaunchContext.shouldStaySilent, "a foreground launch must not start over the owner's stop")
     }
 
     func testAnOffReachesTheDurableStopAndTheIdlePendingStartBeforeAnExplicitOnResumes() async {
@@ -72,8 +81,8 @@ final class DurableOffAndChannelAckTests: XCTestCase {
         // A later explicit ON is not refused by the stop that was kept.
         state.applyExternalToggle(true)
         XCTAssertTrue(state.isRecording)
+        XCTAssertFalse(state.userStopIntent, "an ON saved while the app is not running must survive until it launches")
         model.recordingOperationGeneration.invalidate()
-        state.userStopIntent = false   // what start() does first
         XCTAssertTrue(model.acceptsRecordingOperation(model.recordingOperationGeneration.token))
     }
 

@@ -11,10 +11,11 @@ enum LaunchContext {
 
     enum ForegroundAction { case normalStartup, independentStreamsOnly }
 
-    /// What the scene-becomes-active callback may do. A deployment-preserved stop must not be
-    /// cleared by an activation that the deployment itself may have caused.
-    nonisolated static func foregroundAction(deploymentPreservesOff: Bool) -> ForegroundAction {
-        deploymentPreservesOff ? .independentStreamsOnly : .normalStartup
+    /// What the scene-becomes-active callback may do. Opening the app is not an ON: a stored
+    /// stop lasts until the owner turns recording on, and neither an activation nor a
+    /// deployment clears it.
+    nonisolated static func foregroundAction(deploymentPreservesOff: Bool, ownerStopped: Bool) -> ForegroundAction {
+        deploymentPreservesOff || ownerStopped ? .independentStreamsOnly : .normalStartup
     }
 
     /// Set only by a deployment that must not turn recording on (`devicectl ... launch
@@ -49,9 +50,10 @@ enum LaunchContext {
     }
 
     static var shouldStaySilent: Bool {
-        // A deployment-preserved stop wins over any ordering of the scene-active callback and
-        // the startup task: markUserForeground() alone cannot turn recording on for that process.
+        // A stored stop wins over any ordering of the scene-active callback and the startup
+        // task: markUserForeground() alone cannot turn recording on.
         deploymentPreservesOff
-            || (!userDidForeground && (launchedInBackground || RecordingStateManager.shared.userStopIntent))
+            || RecordingStateManager.shared.userStopIntent
+            || (!userDidForeground && launchedInBackground)
     }
 }
