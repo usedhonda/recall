@@ -230,6 +230,14 @@ Gap counters are bounded local control records. Failed admission or physical
 writes do not produce a receipt. If recording the gap also fails, logs explicitly
 say that the gap was not persisted. No lane borrows another lane's capacity.
 
+### Adding an outbox lane
+
+The channel report lists every lane by name in sorted order, and the telemetry
+receiver and its Doctor require that exact list. An unannounced new lane makes them
+report the capacity diagnostic as `unknown` although the app sent it correctly
+(2026-10-31, `metadata-raw`). Tell the receiver's owner before deploying a build
+that adds a lane.
+
 ## Runtime and provisioning
 
 `HubProvisioning` imports a private device-bound configuration into a dedicated
