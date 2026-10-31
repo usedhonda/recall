@@ -24,6 +24,101 @@ struct SleepSegment: Codable {
     let deviceModel: String?
 }
 
+/// One sleep period from one source. Rebuilt from HealthKit on every snapshot, so a
+/// night the source wrote days late still arrives. Identity for a reader: `start` +
+/// `sourceBundleId`; a later snapshot supersedes an earlier one.
+struct SleepSession: Codable, Equatable {
+    let start: Date
+    let end: Date
+    /// Time asleep, with overlapping samples counted once.
+    let totalMinutes: Double
+    let remMinutes: Double
+    let deepMinutes: Double
+    let coreMinutes: Double
+    let awakeMinutes: Double
+    let source: String?
+    let sourceBundleId: String?
+    let sampleCount: Int
+}
+
+/// Heart rate for one local calendar day.
+struct HeartRateDay: Codable, Equatable {
+    /// yyyy-MM-dd in `timeZone`.
+    let day: String
+    let timeZone: String
+    let avg: Double
+    let min: Double
+    let max: Double
+}
+
+/// One sleepAnalysis sample, reduced to what session grouping needs.
+struct SleepSampleInput: Equatable {
+    let start: Date
+    let end: Date
+    /// Same names as `SleepSegment.stage`.
+    let stage: String
+    let source: String?
+    let sourceBundleId: String?
+}
+
+enum SleepSessionBuilder {
+    /// A gap this long separates two sleep periods.
+    static let sessionGap: TimeInterval = 3 * 3600
+
+    /// HealthKit returns every sample from every source and never merges them, so each
+    /// source is grouped apart and overlaps are counted once. `inBed` is not sleep and
+    /// does not extend a session.
+    static func sessions(from samples: [SleepSampleInput]) -> [SleepSession] {
+        let used = samples.filter { $0.stage != "inBed" && $0.end > $0.start }
+        let bySource = Dictionary(grouping: used) { $0.sourceBundleId ?? $0.source ?? "" }
+        var result: [SleepSession] = []
+        for sourceSamples in bySource.values {
+            var current: [SleepSampleInput] = []
+            var currentEnd = Date.distantPast
+            for sample in sourceSamples.sorted(by: { $0.start < $1.start }) {
+                if !current.isEmpty, sample.start.timeIntervalSince(currentEnd) >= sessionGap {
+                    result.append(session(current))
+                    current = []
+                    currentEnd = .distantPast
+                }
+                current.append(sample)
+                currentEnd = max(currentEnd, sample.end)
+            }
+            if !current.isEmpty { result.append(session(current)) }
+        }
+        return result.sorted { $0.start < $1.start }
+    }
+
+    private static let asleepStages: Set<String> = ["asleepREM", "asleepDeep", "asleepCore", "asleepUnspecified"]
+
+    private static func session(_ samples: [SleepSampleInput]) -> SleepSession {
+        func minutes(_ stages: Set<String>) -> Double {
+            var total: TimeInterval = 0
+            var coveredUntil = Date.distantPast
+            for sample in samples where stages.contains(sample.stage) {
+                let start = max(sample.start, coveredUntil)
+                if sample.end > start {
+                    total += sample.end.timeIntervalSince(start)
+                    coveredUntil = sample.end
+                }
+            }
+            return total / 60
+        }
+        return SleepSession(
+            start: samples[0].start,
+            end: samples.map(\.end).max() ?? samples[0].end,
+            totalMinutes: minutes(asleepStages),
+            remMinutes: minutes(["asleepREM"]),
+            deepMinutes: minutes(["asleepDeep"]),
+            coreMinutes: minutes(["asleepCore"]),
+            awakeMinutes: minutes(["awake"]),
+            source: samples[0].source,
+            sourceBundleId: samples[0].sourceBundleId,
+            sampleCount: samples.count
+        )
+    }
+}
+
 /// Individual workout summary
 struct WorkoutSummary: Codable {
     let activityType: String
@@ -106,8 +201,14 @@ struct HealthPayload: Codable {
     /// Workouts with start/end already preserved.
     let workouts: [WorkoutSummary]?
 
+    /// Sleep periods from the last `HealthKitManager.historyDays` days.
+    var sleepSessions: [SleepSession]? = nil
+
+    /// Heart rate per local day for the same period.
+    var heartRateDays: [HeartRateDay]? = nil
+
     enum CodingKeys: String, CodingKey {
-        case collectedAt, records, sleep, workouts
+        case collectedAt, records, sleep, workouts, sleepSessions, heartRateDays
     }
 }
 

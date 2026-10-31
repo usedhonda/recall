@@ -14,7 +14,12 @@ case folding, or Unicode normalization. The complete ID is limited to 512 ASCII
 characters. An observation's original bytes, source payload, and full encoded
 envelope are fixed before its first attempt and reused unchanged on retries.
 Fix identity and GPS delivery identity are different. Health snapshots do not
-imply collection of all raw HealthKit samples. Reaction settings are commands,
+imply collection of all raw HealthKit samples. Each snapshot may carry two optional
+fields, always the whole last 14 days, so entries repeat across snapshots and may change:
+`sleepSessions[]` = `{start, end, totalMinutes, remMinutes, deepMinutes, coreMinutes, awakeMinutes,
+source, sourceBundleId, sampleCount}` (identity: `start` + `sourceBundleId`; the newer snapshot wins)
+and `heartRateDays[]` = `{day, timeZone, avg, min, max}` (identity: `day` + `timeZone`). See
+[healthkit.md](healthkit.md). Reaction settings are commands,
 not archival observation fields.
 
 The complete UTF-8 JSON request, including base64 originals, must fit 20,971,520

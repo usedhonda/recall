@@ -74,6 +74,9 @@ final class HealthKitManager {
     /// keepalive). 40 min + the 15 min poll => effective ~45 min, under the PCE
     /// viewer's 60 min received-at freshness window (oc-general, 2026-09-11).
     private static let unchangedKeepaliveInterval: TimeInterval = 2400
+    /// How far back sleep sessions and daily heart rate are rebuilt. Observed ring batches
+    /// came about a week apart (docs/healthkit.md); this leaves room for one missed batch.
+    nonisolated static let historyDays = 14
     private var lastPostedFingerprint: String?
     private var lastPostedAt: Date?
     private var acknowledgedBackgroundHealthIDs = Set<String>()
@@ -438,6 +441,8 @@ final class HealthKitManager {
         let hasAnyData = !payload.records.isEmpty
             || payload.sleep != nil
             || (payload.workouts?.isEmpty == false)
+            || payload.sleepSessions != nil
+            || payload.heartRateDays != nil
         if !hasAnyData {
             ActivityLogger.shared.log(.health, "Skipped: auth=\(isAuthorized) records=0")
             lastSendResult = .error("all metrics nil")
@@ -575,6 +580,12 @@ final class HealthKitManager {
         for w in payload.workouts ?? [] {
             parts.append("workout|\(w.activityType)|\(w.start.timeIntervalSince1970)|\(w.end.timeIntervalSince1970)")
         }
+        for session in payload.sleepSessions ?? [] {
+            parts.append("session|\(session.start.timeIntervalSince1970)|\(session.end.timeIntervalSince1970)|\(session.totalMinutes)|\(session.sourceBundleId ?? "")")
+        }
+        for day in payload.heartRateDays ?? [] {
+            parts.append("hrday|\(day.day)|\(day.avg)|\(day.min)|\(day.max)")
+        }
         return parts.joined(separator: "\n")
     }
 
@@ -617,6 +628,11 @@ final class HealthKitManager {
         let sleepLookback = twentyFourHoursAgo
         async let sleepResult = querySleep(from: sleepLookback, to: end)
         async let workoutsResult = queryWorkouts(from: todayStart, to: end)
+        // History — a source may write days after measuring (docs/healthkit.md), so these
+        // are rebuilt from the store each time rather than read from a recent window.
+        let historyStart = calendar.date(byAdding: .day, value: -Self.historyDays, to: todayStart) ?? todayStart
+        async let sleepSessionsResult = querySleepSessions(from: historyStart, to: end)
+        async let heartRateDaysResult = queryHeartRateDays(from: historyStart, to: end, calendar: calendar)
 
         // Resolve all query results once.
         let steps = await stepsResult
@@ -637,6 +653,8 @@ final class HealthKitManager {
         let wristTemp = await wristTempResult
         let sleep = await sleepResult
         let workouts = await workoutsResult
+        let sleepSessions = await sleepSessionsResult
+        let heartRateDays = await heartRateDaysResult
 
         // --- Build self-describing HealthPayload ---
         var records: [HealthRecord] = []
@@ -737,7 +755,9 @@ final class HealthKitManager {
             collectedAt: end,
             records: records,
             sleep: sleep,
-            workouts: workouts
+            workouts: workouts,
+            sleepSessions: sleepSessions.isEmpty ? nil : sleepSessions,
+            heartRateDays: heartRateDays.isEmpty ? nil : heartRateDays
         )
     }
 
@@ -1088,6 +1108,93 @@ final class HealthKitManager {
                 summary.segments = segments.isEmpty ? nil : segments
                 Self.logHK("sleep: total=\(String(format: "%.0f", totalMinutes))m deep=\(Int(summary.deep ?? 0)) rem=\(Int(summary.rem ?? 0)) core=\(Int(summary.core ?? 0)) awake=\(Int(summary.awake ?? 0)) segments=\(segments.count) n=\(samples.count)")
                 continuation.resume(returning: summary)
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    private func querySleepSessions(from start: Date, to end: Date) async -> [SleepSession] {
+        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: sleepType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error {
+                    Self.logHK("sleepSessions: err(\(error.localizedDescription))")
+                }
+                let inputs: [SleepSampleInput] = (samples as? [HKCategorySample] ?? []).compactMap { sample in
+                    guard let stage = Self.sleepStageName(sample.value) else { return nil }
+                    return SleepSampleInput(
+                        start: sample.startDate,
+                        end: sample.endDate,
+                        stage: stage,
+                        source: sample.sourceRevision.source.name,
+                        sourceBundleId: sample.sourceRevision.source.bundleIdentifier
+                    )
+                }
+                let sessions = SleepSessionBuilder.sessions(from: inputs)
+                if let last = sessions.last {
+                    Self.logHK("sleepSessions: n=\(sessions.count) samples=\(inputs.count) lastEnd=\(last.end.ISO8601Format()) lastTotal=\(Int(last.totalMinutes))m")
+                }
+                continuation.resume(returning: sessions)
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    private nonisolated static func sleepStageName(_ value: Int) -> String? {
+        switch value {
+        case HKCategoryValueSleepAnalysis.asleepREM.rawValue: return "asleepREM"
+        case HKCategoryValueSleepAnalysis.asleepDeep.rawValue: return "asleepDeep"
+        case HKCategoryValueSleepAnalysis.asleepCore.rawValue: return "asleepCore"
+        case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue: return "asleepUnspecified"
+        case HKCategoryValueSleepAnalysis.awake.rawValue: return "awake"
+        case HKCategoryValueSleepAnalysis.inBed.rawValue: return "inBed"
+        default: return nil
+        }
+    }
+
+    private func queryHeartRateDays(from start: Date, to end: Date, calendar: Calendar) async -> [HeartRateDay] {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        let timeZone = calendar.timeZone
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: type,
+                quantitySamplePredicate: predicate,
+                options: [.discreteAverage, .discreteMin, .discreteMax],
+                anchorDate: start,
+                intervalComponents: DateComponents(day: 1)
+            )
+            query.initialResultsHandler = { _, collection, error in
+                if let error {
+                    Self.logHK("heartRateDays: err(\(error.localizedDescription))")
+                }
+                var days: [HeartRateDay] = []
+                collection?.enumerateStatistics(from: start, to: end) { stats, _ in
+                    guard let avg = stats.averageQuantity()?.doubleValue(for: unit),
+                          let low = stats.minimumQuantity()?.doubleValue(for: unit),
+                          let high = stats.maximumQuantity()?.doubleValue(for: unit) else { return }
+                    days.append(HeartRateDay(
+                        day: formatter.string(from: stats.startDate),
+                        timeZone: timeZone.identifier,
+                        avg: avg, min: low, max: high
+                    ))
+                }
+                if let last = days.last {
+                    Self.logHK("heartRateDays: n=\(days.count) last=\(last.day)")
+                }
+                continuation.resume(returning: days)
             }
             healthStore.execute(query)
         }

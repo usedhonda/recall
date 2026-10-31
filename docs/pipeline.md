@@ -131,6 +131,9 @@ Foreground and background Health share the durable binding registration; initial
 Hub receipt delay remains pending, not an error. Foreground Health ticks also
 reconcile prior receipts when no background upload or Location stream is active.
 
+Health snapshots also carry `sleepSessions` and `heartRateDays`, rebuilt from the last 14 days
+because a source may write days after measuring ([healthkit.md](healthkit.md)).
+
 Structured `health2` is stored independently from legacy flat `health`; records,
 measurement clocks, units, aggregation and provenance are not flattened into the
 legacy metric shape. Health success requires an explicit `healthReceived: true`
