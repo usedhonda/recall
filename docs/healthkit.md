@@ -44,8 +44,9 @@ them. Marked **Apple** (official docs), **Community** (forum reports, not offici
 
 - Locked phone: queries fail with "Protected health data is inaccessible". Recall skips, then
   catches up on unlock.
-- Read permission: **Apple's** privacy design does not reveal a denied read; expect it to look
-  like "no data". An empty result therefore means no data **or** no permission.
+- Read permission: **Unverified:** a denied read is understood to look like "no data", but the
+  Apple pages read for this note do not state it. Check "Protecting user privacy" before relying
+  on it. Until then, treat an empty result as no data **or** no permission.
 
 ## What recall does
 
