@@ -9,7 +9,7 @@ actor HubRawStream {
     static let shared = HubRawStream()
 
     static let maxItemsPerEvent = 2000
-    static let flushDelay: Duration = .seconds(60)
+    static let flushDelay: Duration = .seconds(2)
 
     private struct Pending {
         var items: [Data] = []
