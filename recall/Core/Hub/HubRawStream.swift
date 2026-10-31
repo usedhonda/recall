@@ -119,6 +119,13 @@ struct RawMotionActivity: Encodable {
     let at: Date
     let stationary, walking, running, cycling, automotive, unknown: Bool
     let confidence: Int
+
+    func sameReading(as other: RawMotionActivity?) -> Bool {
+        guard let other else { return false }
+        return stationary == other.stationary && walking == other.walking && running == other.running
+            && cycling == other.cycling && automotive == other.automotive && unknown == other.unknown
+            && confidence == other.confidence
+    }
 }
 
 struct RawStepUpdate: Encodable {

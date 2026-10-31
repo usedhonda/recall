@@ -1135,36 +1135,50 @@ final class HealthKitManager {
             floor = Date().addingTimeInterval(-TimeInterval(Self.historyDays) * 86400)
             defaults.set(floor, forKey: floorKey)
         }
+        let ledgerURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("health-sample-ledger.json")
+        var ledger = (try? Data(contentsOf: ledgerURL)).flatMap { try? JSONDecoder().decode(HealthSampleLedger.self, from: $0) }
+            ?? HealthSampleLedger()
+        ledger.prune(before: Date().addingTimeInterval(-40 * 86400))
         var sent = 0
+        var withheld = 0
         for type in readTypes.compactMap({ $0 as? HKSampleType }).sorted(by: { $0.identifier < $1.identifier }) {
-            let key = "hub.healthSamples.anchor.v1.\(type.identifier)"
+            let key = "hub.healthSamples.anchor.v2.\(type.identifier)"
             var anchor = defaults.data(forKey: key).flatMap {
                 try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0)
             }
             while true {
                 guard let page = await queryRawPage(type: type, floor: floor, anchor: anchor) else { break }
-                if !page.items.isEmpty || !page.deleted.isEmpty {
+                var next = ledger
+                let news = next.news(items: page.items, deleted: page.deleted)
+                let encoded = news.items.compactMap { try? HubRawEvent.encoder.encode($0) }
+                if !encoded.isEmpty || !news.deleted.isEmpty {
                     do {
-                        try await HubRawEvent.admit(route: .healthSamples, items: page.items,
-                                                    deleted: page.deleted, occurredAt: Date())
+                        try await HubRawEvent.admit(route: .healthSamples, items: encoded,
+                                                    deleted: news.deleted, occurredAt: Date())
                     } catch {
                         Self.logHK("rawSamples \(type.identifier.shortHK): admission refused")
                         return
                     }
                 }
+                ledger = next
+                if page.count > 0, let data = try? JSONEncoder().encode(ledger) {
+                    try? data.write(to: ledgerURL, options: .atomic)
+                }
                 anchor = page.anchor
                 if let anchor, let data = try? NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true) {
                     defaults.set(data, forKey: key)
                 }
-                sent += page.items.count
+                sent += news.items.count + news.deleted.count
+                withheld += page.count - news.items.count - news.deleted.count
                 if page.count < HubRawStream.maxItemsPerEvent { break }
             }
         }
-        if sent > 0 { Self.logHK("rawSamples: admitted \(sent)") }
+        if sent + withheld > 0 { Self.logHK("rawSamples: admitted \(sent), no news \(withheld)") }
     }
 
     private struct RawPage {
-        let items: [Data]
+        let items: [RawHealthSample]
         let deleted: [String]
         let anchor: HKQueryAnchor?
         let count: Int
@@ -1182,11 +1196,8 @@ final class HealthKitManager {
                     continuation.resume(returning: nil)
                     return
                 }
-                let items = (samples ?? []).compactMap { sample in
-                    try? HubRawEvent.encoder.encode(Self.rawSample(sample))
-                }
                 continuation.resume(returning: RawPage(
-                    items: items,
+                    items: (samples ?? []).map(Self.rawSample),
                     deleted: (deleted ?? []).map(\.uuid.uuidString),
                     anchor: newAnchor,
                     count: (samples?.count ?? 0) + (deleted?.count ?? 0)

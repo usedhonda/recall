@@ -21,8 +21,9 @@ path consumers read. Readings go in batch events of up to 2000 items, on their o
 `recall.motion-activity.v1` (domain health, activity readings, step updates and step events),
 `recall.battery-level.v1` (domain status). They follow the provisioned route of their stream.
 Health samples measured before the first run minus 14 days are held back until the owner decides Hub
-retention (Hub keeps health 30 days from receipt). Rewrites arrive as new uuids and a resent
-batch may repeat: readers dedupe by `uuid` and apply `deleted`. Items waiting for a flush (up to 2 s) are
+retention (Hub keeps health 30 days from receipt). Owner ruling (same day): data that adds nothing is not sent. A rewrite with the same content is withheld,
+`deleted` lists only samples Hub received with no copy left, and an unchanged motion reading is
+skipped (`HealthSampleLedger`). A resent batch may repeat: readers dedupe by `uuid` and apply `deleted`. Items waiting for a flush (up to 2 s) are
 in memory and die with the process. The live GPS, Health snapshot and status routes are unchanged.
 
 Fix identity and GPS delivery identity are different. Health snapshots do not

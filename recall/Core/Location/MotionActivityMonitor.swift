@@ -32,6 +32,7 @@ final class MotionActivityMonitor {
     /// classifier needs several seconds of gait before it says walking, while steps
     /// show up within a couple of them. Same coprocessor, no extra sensors powered.
     private let pedometer = CMPedometer()
+    private var lastRawActivity: RawMotionActivity?
     private var lastStepCount = 0
     private var isRunning = false
 
@@ -189,7 +190,10 @@ final class MotionActivityMonitor {
             running: activity.running, cycling: activity.cycling, automotive: activity.automotive,
             unknown: activity.unknown, confidence: activity.confidence.rawValue
         )
-        Task { await HubRawStream.shared.append(raw, route: .motionActivity) }
+        if !raw.sameReading(as: lastRawActivity) {
+            lastRawActivity = raw
+            Task { await HubRawStream.shared.append(raw, route: .motionActivity) }
+        }
         let moving = activity.walking || activity.running || activity.cycling || activity.automotive
         let label = Self.label(for: activity)
         // The stream alternates between a real reading and "unknown" every couple of

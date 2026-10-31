@@ -68,6 +68,9 @@ them. Marked **Apple** (official docs), **Community** (forum reports, not offici
   moves only after the outbox holds the batch (docs/hub-producer.md). This is what "written late" and
   "rewritten" need: anchors follow saves, not sample dates.
 
+- Observed: a first anchored pass returned about 369,000 deletions, almost none for samples recall
+  had sent. They carry only ids. Recall now forwards only deletions of what Hub received.
+
 ## Checking by hand
 
 Compare in this order: the Health app (category, then Show More Sleep Data), then
