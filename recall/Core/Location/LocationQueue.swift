@@ -100,6 +100,7 @@ actor LocationQueue {
     private var legacyDeliveredIDs: Set<UUID> = []
     private var storageHealthy = true
     private var mutationInProgress = false
+    private var mutationWaiters: [CheckedContinuation<Void, Never>] = []
     private let fileURL: URL
     private let legacyDeliveredURL: URL
 
@@ -119,13 +120,25 @@ actor LocationQueue {
 
     // MARK: - Queue Operations
 
-    // Every mutator owns this gate across the external reservation await.
-    // Contention refuses new admission; it never evicts an existing sample.
+    // Every mutator owns this gate across the external reservation await. Contention waits its
+    // turn: refusing it dropped fixes that arrived while a send drained the queue (2026-11-03).
+    private func acquireMutation() async {
+        while mutationInProgress {
+            await withCheckedContinuation { mutationWaiters.append($0) }
+        }
+        mutationInProgress = true
+    }
+
+    private func releaseMutation() {
+        mutationInProgress = false
+        if !mutationWaiters.isEmpty { mutationWaiters.removeFirst().resume() }
+    }
+
     @discardableResult
     func enqueue(_ sample: LocationSample) async -> Bool {
-        guard storageHealthy, !mutationInProgress else { return false }
-        mutationInProgress = true
-        defer { mutationInProgress = false }
+        await acquireMutation()
+        defer { releaseMutation() }
+        guard storageHealthy else { return false }
         let previous = samples
         var proposed = samples; proposed.append(sample)
         do {
@@ -156,9 +169,9 @@ actor LocationQueue {
     }
 
     func reconcileHubReservation() async -> Bool {
-        guard storageHealthy, !mutationInProgress else { return false }
-        mutationInProgress = true
-        defer { mutationInProgress = false }
+        await acquireMutation()
+        defer { releaseMutation() }
+        guard storageHealthy else { return false }
         do {
             try await reserve(samples: samples, delivered: legacyDeliveredIDs)
             return true
@@ -170,9 +183,9 @@ actor LocationQueue {
 
     @discardableResult
     func remove(ids: Set<UUID>) async -> Bool {
-        guard storageHealthy, !mutationInProgress else { return false }
-        mutationInProgress = true
-        defer { mutationInProgress = false }
+        await acquireMutation()
+        defer { releaseMutation() }
+        guard storageHealthy else { return false }
         let previous = samples
         samples.removeAll { ids.contains($0.id) }
         guard saveToDisk() else {
@@ -196,9 +209,9 @@ actor LocationQueue {
 
     @discardableResult
     func markLegacyDelivered(_ ids: Set<UUID>) async -> Bool {
-        guard storageHealthy, !mutationInProgress else { return false }
-        mutationInProgress = true
-        defer { mutationInProgress = false }
+        await acquireMutation()
+        defer { releaseMutation() }
+        guard storageHealthy else { return false }
         let previous = legacyDeliveredIDs
         let proposed = previous.union(ids)
         do { try await reserve(samples: samples, delivered: proposed) }
