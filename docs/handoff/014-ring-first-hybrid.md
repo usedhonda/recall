@@ -12,6 +12,22 @@ the implementation through `81b9cac` is on origin/main.
 
 ## Implemented checkpoint
 
+Latest SDK checkpoint: `1bd8e7a` adopts pinned0.7.0; `860dafb` preserves failures
+before raw capture. Foreground prioritizes spot HR/HRV and persists each category;
+background prioritizes those two before one rotating backfill. Supported resume
+hints use overlapping persisted records, not arbitrary cutoffs. Native fatigue
+is explicitly separate from vendor stress. Optional experimental estimation is
+OFF by default, with explicit method selection and actual availability evidence.
+No ring sampling configuration is changed. See docs/smart-ring.md for the contract.
+
+Actual0.7 run grew the archive from341 to3757 records with pending local admission0;
+temperature/oxygen/daily activity/dynamic-HR records were newly admitted. Spot HR
+timed out with partial bytes preserved, so all-category success remains unproved.
+Research estimation was not enabled. Simulator/device builds and affected checks
+passed; device UI automation failed twice before test execution while enabling
+automation mode. Do not equate that infrastructure failure with predictor failure
+or claim a successful0.7 UI observation. Private logs contain deployment details.
+
 Recall commit `d8ee9cd` implements:
 
 - SDK 0.4.0 all-history foreground capture, original per-history progress/context,
