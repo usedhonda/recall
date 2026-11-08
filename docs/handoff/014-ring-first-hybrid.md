@@ -50,10 +50,12 @@ private evidence paths stay in ignored local reports.
 Existing data-hub task 2124c96b supplies selected sleep, separate light/core/coverage,
 canonical sensors and unknown raw display in existing health views, with old coarse
 rollup fields explicitly whitelisted. Final packet initially named `3741518`.
-Parent reviewed its integrated diff and representative synthetic rendering. A
-concrete follow-up remains: later HK steps must clear stale ring day provenance.
-Do not accept that packet until the focused correction is reviewed. Receiver
-synthetic fixture acceptance is not real ring receipt/display acceptance.
+Parent reviewed its integrated diff and representative synthetic rendering.
+Follow-up `a41e019` clears stale ring day provenance when later HK steps replace
+the selected total. Parent confirmed that source diff; the worker reports its
+single affected regression passed. Runtime reflection of this correction is still
+pending, so receiver acceptance is not closed. Synthetic fixture acceptance is
+not real ring receipt/display acceptance.
 
 ## Resume
 
@@ -61,5 +63,6 @@ synthetic fixture acceptance is not real ring receipt/display acceptance.
    phone control is available; preserve every other stream's setting.
 2. Capture real foreground history, then observe an actual background opportunity.
 3. Match a real observation across producer and ordinary authorized Hub read/display.
-4. Review the receiver's provenance correction and verify/report its existing task.
+4. Confirm runtime reflection of the reviewed receiver correction, then verify/report
+   its existing task without repeating unchanged suites.
 5. Keep public push separate; none was performed for this implementation.
