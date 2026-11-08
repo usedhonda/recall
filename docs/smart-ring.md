@@ -5,7 +5,7 @@
 | Source | Control | Data and meaning |
 | --- | --- | --- |
 | Apple Health | Existing top-screen Health toggle | Existing HealthKit samples, summaries, sleep and workout reads; unchanged |
-| Direct ring | Settings → Smart Ring → Direct ring sync | SmartRingKit HRV-history records: device-labelled HRV/stress, heart rate and original bytes |
+| Direct ring | Settings → Smart Ring → Direct ring sync | SmartRingKit histories: profile-qualified sensors/sleep, device-labelled raw values and original bytes |
 
 The ring switch defaults OFF and does not require HealthKit authorization. It
 does not change the Health toggle, Audio, Location, Glasses or Media. The existing
@@ -18,15 +18,15 @@ observed on one issin Smart Recovery Ring with firmware 0.7.5.0. Support for
 other rings/firmware, concurrent vendor-app reads, and live measurement is not
 established.
 
-The ring-first hybrid implementation is in progress. Acquisition now uses the
+The ring-first hybrid implementation uses the
 SDK all-history reader and preserves each per-history capture locally in protected,
 backup-excluded storage before the next history is attempted. Partial histories
 remain evidence, not accepted measurements. The existing HRV projection continues
 to use completed HRV history. Capture files and HRV identities share the existing
 10,000-entry admission ceiling; no automatic eviction is introduced.
-General sensor/sleep projection, interval-level HealthKit sleep supplementation,
-restorable BLE transport and background scheduling are not implemented yet.
-This acquisition checkpoint has not been deployed to the phone.
+Sensor/sleep projection, interval-level HealthKit supplementation and best-effort
+background acquisition are implemented below. Installation alone does not prove
+ring setup, BLE capture or Hub receipt.
 
 ## Capture and settings
 
@@ -39,9 +39,10 @@ This acquisition checkpoint has not been deployed to the phone.
 4. Sync now. After setup, sync also runs on foreground entry and every 15 minutes
    while the scene is active. Each pass releases its BLE connection on completion.
 
-Inactive/background scenes cancel only ring work and its timer. No new background
-mode, continuous radio connection, automatic pairing reset or firmware change is
-introduced. This cadence is an opportunity to read existing history, not a request
+Inactive/background scenes stop the active timer and schedule bounded ring-only
+work. Known-peripheral restoration and BGProcessing provide best-effort wake
+opportunities; neither guarantees a fifteen-minute schedule. No automatic pairing
+reset or firmware change is introduced. This cadence reads existing history, not a request
 for the ring to measure more frequently. The initial history had mostly hourly
 gaps. Historical travel, clock resets and ambiguous daylight-saving times cannot
 be reconstructed from a timestamp with no zone; the original clock fields remain
@@ -83,10 +84,12 @@ records separately within pending records. The boundary persists across restarts
 The receiver-facing metric, source and interpretation contract is in
 [smart-ring-hub-contract.md](smart-ring-hub-contract.md).
 
-Each item has `uuid`, `type: "smart_ring.hrv_history"`, `start`, `end`,
-`source: "SmartRingKit"`, `sourceVersion: "0.1.0"`, `deviceModel: "FFF0 ring"`,
+HRV items have `uuid`, `type: "smart_ring.hrv_history"`, `start`, `end`,
+`source: "SmartRingKit"`, `sourceVersion`, `deviceModel: "FFF0 ring"`,
 and a `ring` object containing `deviceID`, `firmware`, `clockTimeZone`,
 `deviceTime`, `hrvRaw`, `heartRateBPM`, `stressRaw` and `rawBytes`.
+New items use source version 0.4.0; frozen historical batches keep their original
+body/version. Sensor and sleep variants are defined in the hybrid wire contract.
 The envelope uses `time_basis: "ring_captured_at"`; `occurred_at` is the first
 record's capture time in the frozen batch. Item `start`/`end` use the selected
 interpretation of the device clock.
@@ -108,9 +111,10 @@ interval; its `aggregation`, measurement time and source describe that distincti
 
 `sourceRecords` retains both original candidates when ring data is available;
 it is provenance, not another list to sum or average. Direct records include the
-original pseudonymous source device and observation identifiers. Sleep, daily
-heart-rate aggregates, steps and other unsupported ring quantities still come
-from HealthKit. Raw HRV and stress use `smart_ring.hrv_raw` and
+original pseudonymous source device and observation identifiers. Daily heart-rate
+aggregates and unsupported ring quantities remain HealthKit-derived. Supported
+spot pulse, oxygen, comparable daily steps and sleep follow the profile-qualified
+selection described below. Raw HRV and stress use `smart_ring.hrv_raw` and
 `smart_ring.stress_raw` with unit `raw`, never an SDNN identifier or unit `ms`.
 
 HealthKit collection publishes this integrated payload. A foreground ring sync
@@ -127,22 +131,21 @@ does not authorize deleting either source. Standard health dashboards continue
 using HealthKit data. Ring raw-data readers must select the `smart_ring.*` type
 and deduplicate by `uuid`; they must not sum or average it into HealthKit metrics
 automatically. Unified `records` supplies the preferred view without deleting
-either raw source. Hub readers need to recognize this new item variant. Local
-contract acceptance is tested; receiver/reader acceptance is not established.
+either raw source. Receiver projections have synthetic encoder-fixture acceptance;
+that is separate from real ring receipt and display.
 
 ## Verification boundary
 
 Synthetic tests cover raw-value provenance, retry identity, persistence, repeated
 downloads, capacity and retention holds. Simulator build and contract checks
 verify integration. They do not prove Bluetooth behavior, simultaneous vendor
-connections, background collection or end-to-end Hub delivery. This change is
-was originally submitted as PR 12 only. On owner-directed adoption, the combined
-health projection passed the integrated 12-test batch; the retention projection
-case then passed alone after that boundary was extended. The signed build was
-installed once and immediately launched without activation, preserving audio OFF.
-Natural Health/GPS/raw receipts were verified afterward, with direct ring still
-OFF pending explicit clock-zone selection. This is not real ring BLE or ring
-receipt/reader acceptance.
+connections, background collection or end-to-end Hub delivery. The completed
+hybrid implementation passed its focused integration batch and affected boundary
+checks. Its signed build was installed once and immediately launched without
+activation, preserving audio OFF. Natural Health/GPS/raw receipts were observed;
+direct ring remained unconfigured. Real ring foreground/background capture and
+same-observation Hub receipt/read/display remain unverified. See the current
+[handoff](handoff/014-ring-first-hybrid.md) for the implementation checkpoint.
 
 ## Ring-first hybrid implementation
 

@@ -2,39 +2,64 @@
 
 ## Binding owner plan
 
-Owner approved implementing the full proposed hybrid plan, including interval-level
-HealthKit supplementation of missing ring sleep and background BLE synchronization.
-Ring is preferred for supported meaningful metrics; preserve all source provenance.
-No public push, raw-retention expansion, forced recording, guessed time zone,
+Owner approved the whole hybrid plan, including interval-level HealthKit filling
+of missing ring sleep and background BLE synchronization. Ring is preferred for
+supported meaningful metrics; preserve source provenance and independent toggles.
+No public push, retention expansion, forced recording, guessed clock zone,
 clinical stress scale or raw HRV-to-SDNN conversion.
 
-## Current acquisition checkpoint
+## Implemented checkpoint
 
-- Dependency pinned 0.4.0; SDK all-history capture replaces HRV-only radio requests.
-- Per-history original capture persisted locally with protection/exclusion from backup.
-- Capture files and HRV identity records share 10,000-entry ceiling; retries of
-  identical raw capture do not overwrite the first stored capture.
-- Completed HRV is still projected through the existing integration/outbox.
-- Initial six SmartRing tests passed. Final changes compile on Simulator; exact
-  final build result is in ignored ring-integration logs.
-- No phone install, ring activation, Hub schema change or library edits in this checkpoint.
+Recall commit `d8ee9cd` implements:
 
-## Remaining approved work (not optional and not completed)
+- SDK 0.4.0 all-history foreground capture, original per-history progress/context,
+  shared 10,000-entry ceiling, historical IDs/frozen batches/retention floor.
+- Exact model/firmware-qualified spot pulse, oxygen and comparable daily steps;
+  other values retain original names/units without invented medical meaning.
+- Ring-first disjoint sleep intervals; only missing/uncovered intervals use HK.
+  Unknown/conflicting ring stages stay unknown; ring light and HK core stay separate.
+- Selected sessions, correction windows and provenance in existing health snapshots;
+  source candidates are never added again. Existing 14-day HK query supplies segments.
+- Recall-owned restoration/wake Central with SDK-owned history commands; independent
+  BGProcessing and resumable single-category background work, without schedule guarantees.
+- Explicit model/clock-zone settings; no ring reset, firmware or clock writes.
 
-1. Preserve full snapshot device/firmware/clock metadata alongside per-history progress;
-   migrate structured archive without losing old IDs, frozen pending batches or retention floor.
-2. Normalize spot pulse, automatic oxygen, comparable daily steps and raw-only unknown units.
-3. Device-profile-qualified sleep timeline; fill only missing intervals with HealthKit.
-   Keep unknown/conflicting stages visible, light separate from HealthKit core,
-   and use existing three-hour session-gap rule without double counting.
-4. Latest point window24h, same-period ring preference; do not re-date unknown-spacing
-   series or combine incompatible date-only daily totals.
-5. SDK optional restoration ID/shared Central client, AppDelegate BLE restoration,
-   bluetooth-central/BGProcessingTask and bounded resumable single-flight work.
-6. Coordinate new source shapes and integrated sleep/health view with existing Hub peer.
-7. Focused regression, signed build, safe phone install/launch preserving audio intent,
-   foreground/locked background capture and same-observation Hub/read/display evidence.
+The integrated focused batch passed 14 cases. Two affected boundary cases passed
+after correction-window/shared-capacity changes, and the sensor case passed after
+wire-fixture/revision-tie updates. Simulator build, signed device build and contract
+check passed. Do not rerun unchanged tests to reconstruct evidence.
 
-Explicit ring clock time zone is still unanswered; do not infer it from phone time.
-The approved plan itself remains authoritative; this checkpoint does not replace
-it with acquisition-only scope or claim completion.
+## Runtime reflection and unfinished acceptance
+
+The signed build was installed once and immediately launched without activation,
+preserving the stored audio OFF intent. Subsequent phone logs confirm silent launch
+and ordinary Health/status/GPS/raw activity. This does not establish ring delivery.
+
+Direct ring is not configured yet. Foreground BLE capture, background capture and
+same-observation Hub receipt/read/display remain unverified. Phone Mirroring reported
+that the phone was in use and required a physical lock; the owner was asked for that
+single physical action. Do not repeat installation or toggle audio to clear this.
+
+The library's ignored original sleep-analysis proof records an explicit clock zone;
+use that evidence rather than guessing from current phone location. Establish the
+selected physical ring's identity before applying it. Device-specific details and
+private evidence paths stay in ignored local reports.
+
+## Receiver coordination
+
+Existing data-hub task 2124c96b supplies selected sleep, separate light/core/coverage,
+canonical sensors and unknown raw display in existing health views, with old coarse
+rollup fields explicitly whitelisted. Final packet initially named `3741518`.
+Parent reviewed its integrated diff and representative synthetic rendering. A
+concrete follow-up remains: later HK steps must clear stale ring day provenance.
+Do not accept that packet until the focused correction is reviewed. Receiver
+synthetic fixture acceptance is not real ring receipt/display acceptance.
+
+## Resume
+
+1. Configure the known ring/model/explicit clock zone through the existing UI once
+   phone control is available; preserve every other stream's setting.
+2. Capture real foreground history, then observe an actual background opportunity.
+3. Match a real observation across producer and ordinary authorized Hub read/display.
+4. Review the receiver's provenance correction and verify/report its existing task.
+5. Keep public push separate; none was performed for this implementation.
