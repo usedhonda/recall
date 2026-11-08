@@ -191,8 +191,12 @@ ring_day precision; captured-at only breaks same-measurement revision ties.
 ## SDK 0.7 incremental reads and experimental analysis
 
 Foreground acquisition reads the same ten categories, placing spot pulse/HRV first
-and dynamic heart rate last. Completed categories are merged immediately; a
-conflicting command response still stops the pass. Foreground uses full history
+and dynamic heart rate last. Completed categories are merged immediately; any
+interrupted category ends the pass rather than issuing a different command into
+an uncertain shared transfer. Saved records still enter the outbox. Device info
+and the optional device clock are read once on a separate metadata client; history
+reads never immediately reconnect that same client after a clock failure.
+Foreground uses full history
 for broader backfill. Background spot pulse, HRV and ordinary temperature can
 resume from the second-newest persisted, same-device/firmware/zone record timestamp.
 Hints overlap and are not date filters: full-history fallback and older responses

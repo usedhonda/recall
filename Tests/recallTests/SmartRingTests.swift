@@ -6,6 +6,19 @@ import XCTest
 final class SmartRingTests: XCTestCase {
     private let peripheral = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
+    @MainActor
+    func testInterruptedPassNeverRequestsNextCategory() async throws {
+        var attempted: [RingReadCommand] = []
+        do {
+            try await SmartRingManager.readCategories([.hrvHistory, .sleepHistory, .temperatureHistory]) { command in
+                attempted.append(command)
+                if command == .sleepHistory { throw RingError.disconnected }
+            }
+            XCTFail("Expected the interrupted transfer to end this pass")
+        } catch RingError.disconnected {}
+        XCTAssertEqual(attempted, [.hrvHistory, .sleepHistory])
+    }
+
     func testResumeUsesPersistedOverlapAndAvailabilityDoesNotRewriteFrozenBodies() async throws {
         enum Refused: Error { case full }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

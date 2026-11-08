@@ -120,19 +120,41 @@ final class SmartRingManager {
         let commands: [RingReadCommand] = [.spotHeartRateHistory, .hrvHistory, .sleepHistory,
             .temperatureHistory, .oxygenHistory, .dailyActivityHistory, .activityHistory,
             .manualOxygenHistory, .exerciseHistory, .heartRateHistory]
-        var failure: Error?
+        let context = try await readContext(id: id)
+        try await Self.readCategories(commands) { command in
+            try await self.captureCategory(command, id: id, timeZone: timeZone, store: store,
+                                           incremental: false, context: context)
+        }
+        lastSyncAt = Date()
+    }
+
+    static func readCategories(_ commands: [RingReadCommand],
+                               read: @MainActor (RingReadCommand) async throws -> Void) async throws {
         for command in commands {
             try Task.checkCancellation()
-            do { try await captureCategory(command, id: id, timeZone: timeZone, store: store, incremental: false) }
-            catch {
-                if Task.isCancelled { throw error }
-                if !(error is RingError) { throw error }
-                if failure == nil { failure = error }
-                if let ringError = error as? RingError, case .conflictingHistoryResponse = ringError { break }
-            }
+            // A local disconnect does not prove that firmware stopped the old transfer.
+            try await read(command)
         }
-        if let failure { throw failure }
-        lastSyncAt = Date()
+    }
+
+    private struct ReadContext {
+        let info: RingInfo
+        let deviceClock: RingTimestamp?
+        let clockFailure: String?
+    }
+
+    private func readContext(id: UUID) async throws -> ReadContext {
+        let client = RingClient(); self.client = client
+        defer { client.disconnect(); self.client = nil }
+        _ = try await client.discover(duration: 1)
+        try await client.connect(to: id)
+        let info = try await client.readInfo()
+        firmware = info.firmware
+        do { return ReadContext(info: info, deviceClock: try await client.readDeviceClock(), clockFailure: nil) }
+        catch {
+            try Task.checkCancellation()
+            return ReadContext(info: info, deviceClock: nil, clockFailure: error.localizedDescription)
+        }
     }
 
     private func mergeDecoded(_ histories: [(RingReadCommand, RingDecodedHistory)], id: UUID,
@@ -165,10 +187,11 @@ final class SmartRingManager {
         let backfill: [RingReadCommand] = [.sleepHistory, .oxygenHistory, .temperatureHistory,
             .dailyActivityHistory, .activityHistory, .manualOxygenHistory, .exerciseHistory, .heartRateHistory]
         let position = UserDefaults.standard.integer(forKey: "smartRing.backgroundBackfillIndex") % backfill.count
+        let context = try await readContext(id: id)
         // Persist each category before moving on; OS expiry can cancel between any two reads.
-        for command in [RingReadCommand.spotHeartRateHistory, .hrvHistory, backfill[position]] {
-            try Task.checkCancellation()
-            try await captureCategory(command, id: id, timeZone: timeZone, store: store, incremental: true)
+        try await Self.readCategories([.spotHeartRateHistory, .hrvHistory, backfill[position]]) { command in
+            try await self.captureCategory(command, id: id, timeZone: timeZone, store: store,
+                                           incremental: true, context: context)
             if command == backfill[position] {
                 UserDefaults.standard.set((position + 1) % backfill.count, forKey: "smartRing.backgroundBackfillIndex")
             }
@@ -177,10 +200,10 @@ final class SmartRingManager {
     }
 
     private func captureCategory(_ command: RingReadCommand, id: UUID, timeZone: TimeZone,
-                                 store: SmartRingStore, incremental: Bool) async throws {
+                                 store: SmartRingStore, incremental: Bool, context: ReadContext) async throws {
         let startedAt = Date()
         do {
-            try await readCategory(command, id: id, timeZone: timeZone, store: store, incremental: incremental)
+            try await readCategory(command, id: id, timeZone: timeZone, store: store, incremental: incremental, context: context)
         } catch {
             ActivityLogger.shared.log(.health, "Ring category \(command.rawValue) failed: \(error.localizedDescription)")
             try captureArchive.saveFailure(command: command.rawValue, peripheralID: id, timeZone: timeZone,
@@ -190,21 +213,12 @@ final class SmartRingManager {
     }
 
     private func readCategory(_ command: RingReadCommand, id: UUID, timeZone: TimeZone,
-                              store: SmartRingStore, incremental: Bool) async throws {
+                              store: SmartRingStore, incremental: Bool, context: ReadContext) async throws {
         let client = RingClient(); self.client = client
         defer { client.disconnect(); self.client = nil }
         _ = try await client.discover(duration: 1)
         try await client.connect(to: id)
-        let info = try await client.readInfo()
-        firmware = info.firmware
-        var deviceClock: RingTimestamp?
-        var clockFailure: String?
-        do { deviceClock = try await client.readDeviceClock() }
-        catch {
-            clockFailure = error.localizedDescription
-            try Task.checkCancellation()
-            try await client.connect(to: id)
-        }
+        let info = context.info
         let device = SmartRingSample.hash(Data(id.uuidString.lowercased().utf8))
         let hint = incremental ? await store.resumeHint(command: command.rawValue, deviceID: device,
             firmware: info.firmware, timeZone: timeZone.identifier) : nil
@@ -243,8 +257,8 @@ final class SmartRingManager {
         let raw = RingRawHistory(command: command.rawValue, notifications: packets)
         try captureArchive.saveBackground(raw: raw, info: info, peripheralID: id, complete: complete,
             capturedAt: capturedAt, timeZone: timeZone, existingObservationCount: await store.counts().stored,
-            unexpected: unexpected, resumeHint: hint, deviceClock: deviceClock,
-            clockFailure: clockFailure, failure: failure?.localizedDescription, startedAt: startedAt,
+            unexpected: unexpected, resumeHint: hint, deviceClock: context.deviceClock,
+            clockFailure: context.clockFailure, failure: failure?.localizedDescription, startedAt: startedAt,
             acquisitionMode: incremental ? "background" : "foreground")
         if let failure { throw failure }
         try Task.checkCancellation()
