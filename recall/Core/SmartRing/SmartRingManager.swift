@@ -20,6 +20,7 @@ final class SmartRingManager {
     private(set) var clockTimeZone = AppSettings.shared.smartRingClockTimeZone
     private var client: RingClient?
     private var store: SmartRingStore?
+    private let captureArchive = SmartRingCaptureArchive()
     private var operation: Task<Void, Never>?
     private var timer: Timer?
     private var isForeground = false
@@ -93,19 +94,22 @@ final class SmartRingManager {
     }
 
     private func capture(id: UUID, timeZone: TimeZone, store: SmartRingStore) async throws {
-        let client = RingClient()
-        self.client = client
-        defer { client.disconnect(); self.client = nil }
-        _ = try await client.discover(duration: 2)
-        try await client.connect(to: id)
-        let info = try await client.readInfo()
-        let records = try await client.readHRVHistory()
-        try Task.checkCancellation()
-        let samples = try records.map {
-            try SmartRingSample(record: $0, peripheralID: id, firmware: info.firmware, timeZone: timeZone)
+        let capturedAt = Date()
+        let existingCount = await store.counts().stored
+        let snapshot = try await RingHistoryReader.readAll(from: id) { capture in
+            try self.captureArchive.save(capture, capturedAt: capturedAt, timeZone: timeZone,
+                                         existingObservationCount: existingCount)
         }
-        try await store.merge(samples, capturedAt: Date())
-        lastSyncAt = Date()
+        try Task.checkCancellation()
+        let records = snapshot.histories.filter { $0.transferComplete }.flatMap { $0.decoded.hrv }
+        let samples = try records.map {
+            try SmartRingSample(record: $0, peripheralID: id, firmware: snapshot.info.firmware, timeZone: timeZone)
+        }
+        try await store.merge(samples, capturedAt: capturedAt, reservedSlots: captureArchive.count())
+        if snapshot.histories.allSatisfy({ $0.transferComplete }) { lastSyncAt = Date() }
+        if snapshot.histories.contains(where: { !$0.transferComplete }) {
+            throw RingError.invalidPacket("Some histories were incomplete; captured data was preserved.")
+        }
     }
 
     private func archive() throws -> SmartRingStore {

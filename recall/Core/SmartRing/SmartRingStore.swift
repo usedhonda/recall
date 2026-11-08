@@ -56,13 +56,13 @@ actor SmartRingStore {
     }
 
     @discardableResult
-    func merge(_ samples: [SmartRingSample], capturedAt: Date) throws -> Int {
+    func merge(_ samples: [SmartRingSample], capturedAt: Date, reservedSlots: Int = 0) throws -> Int {
         var known = Set(entries.map { $0.sample.uuid })
         let fresh = samples.filter { known.insert($0.uuid).inserted }
         guard !fresh.isEmpty else { return 0 }
         var next = entries
         // Keep admitted identities too: a full ring download must not re-send old data.
-        guard next.count + fresh.count <= capacity else { throw Failure.archiveFull }
+        guard next.count + fresh.count + reservedSlots <= capacity else { throw Failure.archiveFull }
         next += fresh.map { Entry(sample: $0, capturedAt: capturedAt, queued: false) }
         try save(next, batch: frozenBatch)
         entries = next

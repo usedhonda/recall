@@ -39,7 +39,7 @@ struct SmartRingSample: Codable, Equatable {
         start = date
         end = date
         source = "SmartRingKit"
-        sourceVersion = "0.1.0"
+        sourceVersion = "0.4.0"
         deviceModel = "FFF0 ring"
         ring = Payload(deviceID: device, firmware: firmware, clockTimeZone: timeZone.identifier,
                        deviceTime: record.timestamp, hrvRaw: record.hrvRaw,

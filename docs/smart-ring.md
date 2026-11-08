@@ -12,11 +12,21 @@ does not change the Health toggle, Audio, Location, Glasses or Media. The existi
 Health channel-status heartbeat still describes HealthKit, not the ring. No
 HealthKit writes or vendor-source exclusions are introduced.
 
-The dependency is [SmartRingKit 0.1.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.1.0),
+The dependency is [SmartRingKit 0.4.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.4.0),
 pinned exactly. This is an experimental FFF0 driver whose read protocol was
 observed on one issin Smart Recovery Ring with firmware 0.7.5.0. Support for
 other rings/firmware, concurrent vendor-app reads, and live measurement is not
 established.
+
+The ring-first hybrid implementation is in progress. Acquisition now uses the
+SDK all-history reader and preserves each per-history capture locally in protected,
+backup-excluded storage before the next history is attempted. Partial histories
+remain evidence, not accepted measurements. The existing HRV projection continues
+to use completed HRV history. Capture files and HRV identities share the existing
+10,000-entry admission ceiling; no automatic eviction is introduced.
+General sensor/sleep projection, interval-level HealthKit sleep supplementation,
+restorable BLE transport and background scheduling are not implemented yet.
+This acquisition checkpoint has not been deployed to the phone.
 
 ## Capture and settings
 
