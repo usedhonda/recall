@@ -65,5 +65,17 @@ was denied. No synthetic data was posted to production. This confirms the wire,
 storage and scoped-read shape, not the still-separate health dashboard projection
 or real ring receipt.
 
+Hub implementation `bdbf8ac` subsequently added `ring_readings`, a separate latest
+projection for these two metrics ordered by `measuredAt`, and the corresponding
+raw-value health tiles/preview. This projection is outside the daily/monthly
+rollup inputs, so it does not extend raw retention. Four affected receiver checks
+passed, including old-arrival ordering, repeated observations, zero preservation
+and excluding source candidates/rollups. Parent review inspected the integrated
+diff and the actual health-view synthetic rendering, not another suite run.
+The existing dashboard process was reloaded onto the committed implementation;
+unauthenticated viewer access remained denied. Real ring capture/receipt/display
+is still unverified while direct capture is OFF. No synthetic production upload,
+new API or reader permission was introduced, and neither repository was pushed.
+
 The ring remains OFF until device selection and explicit clock-zone setup are
 complete. The history-retention floor applies to both raw and selected data.
