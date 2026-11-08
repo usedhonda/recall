@@ -9,6 +9,7 @@ code-verified; update this doc in the same change that alters them.
 Recall audio -> VoiceLog /ingest -> processing -> recordings / originals
                                   -> Gateway /api/voice-transcript -> consumers
 Recall telemetry -> Gateway /api/telemetry -> materialized state -> consumers
+Direct ring (opt-in, foreground) -> protected ring archive -> Hub health-samples outbox
 VoiceLog recordings / originals --5-minute mirror--> Personal Data Hub
 Gateway materialized state      --60-second mirror--> Personal Data Hub
 Personal Data Hub -> scoped, read-only MCP readers
@@ -277,6 +278,7 @@ steady-state cost low. Values verified in code (2026-09-11):
 | Stream | Cadence | Where |
 |---|---|---|
 | Health queries | HKObserverQuery wake (60 s debounce) + 15 min supplementary poll; skipped while the device is locked, one catch-up run on unlock | `HealthKitManager` |
+| Direct ring | Opt-in; foreground entry, manual sync and 15 min while active; separate raw-data source, no HealthKit writes | `SmartRingManager`; [source contract](smart-ring.md) |
 | Health POST | Only when snapshot content changes; an unchanged snapshot is re-sent after 40 min (effective ~45 min with the poll) | `HealthKitManager` |
 | Location POST | Immediately on >= 20 m displacement from the last sent fix; stationary every 300 s (payload carries the fix's own timestamp) | `LocationManager` |
 | Location capture accuracy | Best while moving/probing; HundredMeters while parked with a valid fix. Acceptance filter stays FG 100 m / BG 200 m | `LocationManager` |

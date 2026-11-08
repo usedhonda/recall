@@ -16,6 +16,7 @@ struct SettingsView: View {
                     networkSection
                     storageSection
                     healthSection
+                    SmartRingSettingsView()
                     locationSection
                     deviceSection
 #if DEBUG

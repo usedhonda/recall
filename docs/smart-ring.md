@@ -1,0 +1,100 @@
+# Direct smart-ring capture
+
+## Source ownership
+
+| Source | Control | Data and meaning |
+| --- | --- | --- |
+| Apple Health | Existing top-screen Health toggle | Existing HealthKit samples, summaries, sleep and workout reads; unchanged |
+| Direct ring | Settings → Smart Ring → Direct ring sync | SmartRingKit HRV-history records: device-labelled HRV/stress, heart rate and original bytes |
+
+The ring switch defaults OFF and does not require HealthKit authorization. It
+does not change the Health toggle, Audio, Location, Glasses or Media. The existing
+Health channel-status heartbeat still describes HealthKit, not the ring. No
+HealthKit writes or vendor-source exclusions are introduced.
+
+The dependency is [SmartRingKit 0.1.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.1.0),
+pinned exactly. This is an experimental FFF0 driver whose read protocol was
+observed on one issin Smart Recovery Ring with firmware 0.7.5.0. Support for
+other rings/firmware, concurrent vendor-app reads, and live measurement is not
+established.
+
+## Capture and settings
+
+1. Enable Direct ring sync in Settings. Bluetooth permission belongs to Recall.
+2. Find rings and select the device you own. An SRR name or FFF0 service is only
+   a discovery candidate, not proof of protocol compatibility.
+3. Explicitly choose the time zone used by the ring's clock. It is not inferred
+   from the phone's current zone. Changing the interpretation affects newly
+   imported identities; previously saved records retain their original zone.
+4. Sync now. After setup, sync also runs on foreground entry and every 15 minutes
+   while the scene is active. Each pass releases its BLE connection on completion.
+
+Inactive/background scenes cancel only ring work and its timer. No new background
+mode, continuous radio connection, automatic pairing reset or firmware change is
+introduced. This cadence is an opportunity to read existing history, not a request
+for the ring to measure more frequently. The initial history had mostly hourly
+gaps. Historical travel, clock resets and ambiguous daylight-saving times cannot
+be reconstructed from a timestamp with no zone; the original clock fields remain
+available for later interpretation.
+
+## Storage, identity and upload
+
+The separate `smart-ring-history.json` archive in Application Support is written
+atomically with iOS protection until first user authentication and excluded from
+device backup. It holds up to 10,000 records, including queued identities. At
+capacity it refuses new data visibly instead of evicting records or forgetting
+deduplication history. The archive is not part of the audio-storage cap.
+
+An observation UUID is `ring-<SHA256>` over the hashed CoreBluetooth peripheral
+identifier, explicit clock time zone and record bytes 3–14. Download sequence
+bytes 1–2 do not make a new observation. A repeated download keeps the first
+saved body/metadata. Changed values or a changed clock interpretation get a
+different identity. Device names and raw CoreBluetooth UUIDs are not uploaded;
+the per-device hash is a pseudonymous identifier, not anonymization.
+
+New records reach the archive before Hub admission. Ring radio errors do not
+prevent saved records entering the outbox, and unavailable/full upload queues
+do not prevent local capture. A failed admission remains pending. Batch membership
+is persisted before admission so a crash plus new capture cannot change a retry's
+body, observation ID or captured-at time. Queued means **local durable outbox
+admission**, not remote receipt or reader acceptance. Existing receipt validation,
+network policy and retries remain the delivery authority.
+
+The existing `recall.health-samples.v1` route and `metadata-raw` lane carry ring
+items; no new Hub route/provisioning is introduced. A provisioned health-samples
+route is still required for upload, independently of the HealthKit toggle. With
+no route/configuration, records remain local. Like the existing raw-health policy,
+records older than the first ring archive creation minus 14 days are retained
+locally and held from admission pending a retention decision. The UI counts held
+records separately within pending records. The boundary persists across restarts.
+
+## Item shape and overlap with HealthKit
+
+Each item has `uuid`, `type: "smart_ring.hrv_history"`, `start`, `end`,
+`source: "SmartRingKit"`, `sourceVersion: "0.1.0"`, `deviceModel: "FFF0 ring"`,
+and a `ring` object containing `deviceID`, `firmware`, `clockTimeZone`,
+`deviceTime`, `hrvRaw`, `heartRateBPM`, `stressRaw` and `rawBytes`.
+The envelope uses `time_basis: "ring_captured_at"`; `occurred_at` is the first
+record's capture time in the frozen batch. Item `start`/`end` use the selected
+interpretation of the device clock.
+
+There is no scalar `value`/`unit` claiming a standard HealthKit quantity. HRV
+algorithm/unit and stress scale are unknown. In particular, `hrvRaw` must not
+be treated as HealthKit SDNN. Zero values remain raw, without an inferred validity
+judgment. Full bytes preserve uninterpreted fields for later research.
+
+HealthKit may later receive overlapping readings from a companion app. Both
+provenance paths are retained; a timestamp match does not prove equivalence and
+does not authorize deleting either source. Standard health dashboards continue
+using HealthKit data. Ring raw-data readers must select the `smart_ring.*` type
+and deduplicate by `uuid`; they must not sum or average it into HealthKit metrics
+automatically. Hub readers need to recognize this new item variant. Local
+contract acceptance is tested; receiver/reader acceptance is not established.
+
+## PR verification boundary
+
+Synthetic tests cover raw-value provenance, retry identity, persistence, repeated
+downloads, capacity and retention holds. Simulator build and contract checks
+verify integration. They do not prove Bluetooth behavior, simultaneous vendor
+connections, background collection or end-to-end Hub delivery. This change is
+submitted as a PR only; it does not install or restart the device application.
