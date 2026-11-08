@@ -12,7 +12,7 @@ does not change the Health toggle, Audio, Location, Glasses or Media. The existi
 Health channel-status heartbeat still describes HealthKit, not the ring. No
 HealthKit writes or vendor-source exclusions are introduced.
 
-The dependency is [SmartRingKit 0.4.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.4.0),
+The dependency is [SmartRingKit 0.4.1](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.4.1),
 pinned exactly. This is an experimental FFF0 driver whose read protocol was
 observed on one issin Smart Recovery Ring with firmware 0.7.5.0. Support for
 other rings/firmware, concurrent vendor-app reads, and live measurement is not
@@ -88,7 +88,7 @@ HRV items have `uuid`, `type: "smart_ring.hrv_history"`, `start`, `end`,
 `source: "SmartRingKit"`, `sourceVersion`, `deviceModel: "FFF0 ring"`,
 and a `ring` object containing `deviceID`, `firmware`, `clockTimeZone`,
 `deviceTime`, `hrvRaw`, `heartRateBPM`, `stressRaw` and `rawBytes`.
-New items use source version 0.4.0; frozen historical batches keep their original
+New items use source version 0.4.1; frozen historical batches keep their original
 body/version. Sensor and sleep variants are defined in the hybrid wire contract.
 The envelope uses `time_basis: "ring_captured_at"`; `occurred_at` is the first
 record's capture time in the frozen batch. Item `start`/`end` use the selected
