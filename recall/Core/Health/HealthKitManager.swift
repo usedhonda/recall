@@ -23,6 +23,7 @@ final class HealthKitManager {
     private(set) var totalSendErrors = 0
     private(set) var totalAuthorizationFailures = 0
     private(set) var lastQueryAt: Date?
+    private(set) var latestHealthKitPayload: HealthPayload?
     private(set) var lastErrorAt: Date?
     private(set) var lastErrorMessage: String?
 
@@ -574,6 +575,8 @@ final class HealthKitManager {
                 r.valueMax.map { "\($0)" } ?? "",
                 measuredAt,
                 r.sourceBundleId ?? "",
+                r.sourceObservationID ?? "",
+                r.sourceDeviceID ?? "",
             ].joined(separator: "|")
         }
         if let sleep = payload.sleep {
@@ -754,7 +757,7 @@ final class HealthKitManager {
         appendLatest(.bodyTemperature, bodyTemp, unit: "degC")
         appendLatest(.appleSleepingWristTemperature, wristTemp, unit: "degC")
 
-        return HealthPayload(
+        let healthKit = HealthPayload(
             collectedAt: end,
             records: records,
             sleep: sleep,
@@ -762,6 +765,10 @@ final class HealthKitManager {
             sleepSessions: sleepSessions.isEmpty ? nil : sleepSessions,
             heartRateDays: heartRateDays.isEmpty ? nil : heartRateDays
         )
+        latestHealthKitPayload = healthKit
+        return HealthDataIntegrator.combine(healthKit: healthKit,
+            ring: SmartRingManager.shared.isEnabled ? SmartRingManager.shared.healthSamples : [],
+            collectedAt: end)
     }
 
     // MARK: - Query Helpers

@@ -9,6 +9,9 @@ options:
   xcodeVersion: "15.0"
 
 packages:
+  SmartRingKit:
+    url: https://github.com/usedhonda/smart-ring-kit.git
+    exactVersion: "0.1.0"
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     exactVersion: "0.12.6"
@@ -64,6 +67,8 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: recall/recall-Bridging-Header.h
         CLANG_ENABLE_OBJC_ARC: "YES"
     dependencies:
+      - package: SmartRingKit
+        product: SmartRingKit
       - package: FluidAudio
         product: FluidAudio
       - package: MetaWearablesDAT
@@ -96,7 +101,7 @@ targets:
         NSHealthShareUsageDescription: "recall reads health data (steps, heart rate, sleep, workouts) for lifelogging telemetry."
         NSHealthUpdateUsageDescription: "recall does not write any health data."
         NSPhotoLibraryUsageDescription: "recall imports photos and videos taken with your Ray-Ban Meta smart glasses to your lifelog. Other photos are not uploaded."
-        NSBluetoothAlwaysUsageDescription: "recall connects to Meta AI glasses for local wearable experiments."
+        NSBluetoothAlwaysUsageDescription: "recall connects to your selected smart ring and Meta AI glasses."
         MWDAT:
           DAMEnabled: true
           Analytics:

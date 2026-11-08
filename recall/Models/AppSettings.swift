@@ -171,6 +171,28 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "telemetryHealthEnabled") }
     }
 
+    // Direct ring capture is independent of the HealthKit switch and defaults off.
+    var smartRingEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "smartRing.enabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "smartRing.enabled") }
+    }
+
+    var smartRingPeripheralID: UUID? {
+        get { UserDefaults.standard.string(forKey: "smartRing.peripheralID").flatMap(UUID.init(uuidString:)) }
+        set { UserDefaults.standard.set(newValue?.uuidString, forKey: "smartRing.peripheralID") }
+    }
+
+    var smartRingName: String {
+        get { UserDefaults.standard.string(forKey: "smartRing.name") ?? "No ring selected" }
+        set { UserDefaults.standard.set(newValue, forKey: "smartRing.name") }
+    }
+
+    /// Device history has no zone. The user must select its clock interpretation.
+    var smartRingClockTimeZone: String {
+        get { UserDefaults.standard.string(forKey: "smartRing.clockTimeZone") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "smartRing.clockTimeZone") }
+    }
+
     var locationEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "telemetryLocationEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "telemetryLocationEnabled") }

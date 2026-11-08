@@ -22,6 +22,7 @@ struct SleepSegment: Codable {
     let source: String?
     let sourceBundleId: String?
     let deviceModel: String?
+
 }
 
 /// One sleep period from one source. Rebuilt from HealthKit on every snapshot, so a
@@ -180,6 +181,10 @@ struct HealthRecord: Codable {
 
     /// HKDevice.model (e.g. "Watch", "iPhone", nil for manual or unknown).
     let deviceModel: String?
+
+    /// Direct-source identity, when available; not a HealthKit sample identifier.
+    var sourceObservationID: String? = nil
+    var sourceDeviceID: String? = nil
 }
 
 /// Self-describing health payload sent to server. Server interprets each
@@ -193,7 +198,10 @@ struct HealthPayload: Codable {
     let collectedAt: Date
 
     /// One record per metric (latest value with measurement time).
-    let records: [HealthRecord]
+    var records: [HealthRecord]
+
+    /// Original candidates before ring preference; never sum these with `records`.
+    var sourceRecords: [HealthRecord]? = nil
 
     /// Sleep summary with per-segment detail (when available).
     let sleep: SleepSummary?
@@ -208,7 +216,7 @@ struct HealthPayload: Codable {
     var heartRateDays: [HeartRateDay]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case collectedAt, records, sleep, workouts, sleepSessions, heartRateDays
+        case collectedAt, records, sourceRecords, sleep, workouts, sleepSessions, heartRateDays
     }
 }
 

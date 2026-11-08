@@ -17,7 +17,7 @@ Owner ruling (2026-10-31): recall sends everything it reads, without thinning, a
 path consumers read. Readings go in batch events of up to 2000 items, on their own lane
 (`metadata-raw`), each `{deleted: [], items: []}`:
 `recall.gps-track.v1` (domain gps, every fix past the accuracy filter),
-`recall.health-samples.v1` (domain health, each HealthKit sample; `deleted` lists removed uuids),
+`recall.health-samples.v1` (domain health, HealthKit samples and opt-in direct-ring records; `deleted` lists removed HealthKit uuids),
 `recall.motion-activity.v1` (domain health, activity readings, step updates and step events),
 `recall.battery-level.v1` (domain status). They follow the provisioned route of their stream.
 Health samples measured before the first run minus 14 days are held back until the owner decides Hub
@@ -25,6 +25,15 @@ retention (Hub keeps health 30 days from receipt). Owner ruling (same day): data
 `deleted` lists only samples Hub received with no copy left, and an unchanged motion reading is
 skipped (`HealthSampleLedger`). A resent batch may repeat: readers dedupe by `uuid` and apply `deleted`. Items waiting for a flush (up to 2 s) are
 in memory and die with the process. The live GPS, Health snapshot and status routes are unchanged.
+
+Direct-ring records use a separate protected archive and the discriminated item
+type `smart_ring.hrv_history`, with SDK-labelled raw values under `ring` instead
+of a standard quantity `value`/`unit`. They do not modify HealthKit samples or
+summaries. Their frozen batches use `time_basis: ring_captured_at`, retain stable
+bodies/identities across restarts, and remain pending until durable outbox admission.
+The existing health-samples provisioning and metadata-raw lane are reused; reader
+acceptance of the new item variant must be verified before enabling it on a device.
+See [smart-ring.md](smart-ring.md) for source separation, retention holds and limitations.
 
 Fix identity and GPS delivery identity are different. Health snapshots do not
 imply collection of all raw HealthKit samples. Each snapshot may carry two optional
@@ -239,6 +248,15 @@ report the capacity diagnostic as `unknown` although the app sent it correctly
 that adds a lane.
 
 ## Runtime and provisioning
+
+Health snapshots may include direct-ring measurements in `records`. Direct heart
+rate can replace an overlapping HealthKit aggregate as the representative, with
+its point-measurement aggregation and original time intact. Optional
+`sourceRecords` retains original candidates and must not be added to `records`.
+Raw HRV/stress remain namespaced quantities, not HealthKit SDNN. Direct candidates
+carry `sourceObservationID` and pseudonymous `sourceDeviceID`. Ring-originated
+snapshots use the existing health-snapshot route even with HealthKit OFF, without
+including cached HealthKit data. See [smart-ring.md](smart-ring.md).
 
 `HubProvisioning` imports a private device-bound configuration into a dedicated
 Keychain item in AppDelegate, before background producer observers start. The configuration contains only Recall's

@@ -1,5 +1,5 @@
 {
-  "originHash" : "4c19d693d3c70755360bda32eaddbe4faf8169bec811af58bdbf15dd62c67daf",
+  "originHash" : "f7e97fcd77c89842193e2ede1b6477a4231864828f549b415f6c0e69b1e9d320",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -26,6 +26,15 @@
       "state" : {
         "revision" : "c40db3978a76b97504b85ed9f082be5549c5a486",
         "version" : "0.7.0"
+      }
+    },
+    {
+      "identity" : "smart-ring-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/usedhonda/smart-ring-kit.git",
+      "state" : {
+        "revision" : "81dfb16b56ec13965dbabe3d9797e3534b343d9c",
+        "version" : "0.1.0"
       }
     },
     {

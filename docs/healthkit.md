@@ -1,5 +1,12 @@
 # How HealthKit holds data, and how recall reads it
 
+The opt-in [direct smart-ring stream](smart-ring.md) is separate from these
+HealthKit queries. It preserves SDK-labelled raw values with explicit provenance,
+does not write into HealthKit, and does not suppress companion-app samples.
+Both feed one health snapshot: eligible direct ring heart rate is preferred,
+unsupported quantities still use HealthKit, and original candidates are retained
+in `sourceRecords` instead of being double-counted. Raw HRV is never SDNN.
+
 Written after a ring's sleep and heart rate went missing from Hub while the Health app showed
 them. Marked **Apple** (official docs), **Community** (forum reports, not official) or
 **Observed** (this device's logs and screens). Unmarked lines are design decisions.

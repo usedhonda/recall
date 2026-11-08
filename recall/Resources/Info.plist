@@ -52,7 +52,7 @@
 		</dict>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>recall connects to Meta AI glasses for local wearable experiments.</string>
+	<string>recall connects to your selected smart ring and Meta AI glasses.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>recall uses the camera to scan QR codes for server configuration.</string>
 	<key>NSHealthShareUsageDescription</key>

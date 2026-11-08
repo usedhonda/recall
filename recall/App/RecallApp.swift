@@ -25,6 +25,7 @@ struct RecallApp: App {
                 .environment(recordingViewModel)
                 .task {
                     guard !TestLaunchBoundary.isTesting else { return }
+                    SmartRingManager.shared.setForeground(scenePhase == .active)
                     recordingViewModel.setModelContainer(sharedModelContainer)
                     if !LaunchContext.launchedInBackground {
                         LaunchContext.markUserForeground()
@@ -43,6 +44,7 @@ struct RecallApp: App {
                     guard !TestLaunchBoundary.isTesting else { return }
                     // Data saver gate: foreground sends, background stays silent.
                     ConnectivityMonitor.shared.isAppActive = (phase == .active)
+                    SmartRingManager.shared.setForeground(phase == .active)
                     guard phase == .active else { return }
                     Task { await HubConnectionMonitor.shared.foreground() }
                     LaunchContext.markUserForeground()
