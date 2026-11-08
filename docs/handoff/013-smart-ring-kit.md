@@ -1,5 +1,7 @@
 # Handoff: SmartRingKit integration PR
 
+## Original PR scope (superseded by owner-directed adoption below)
+
 - Goal: Add an opt-in direct-ring reader using SmartRingKit, with clear separation from HealthKit.
 - Scope: Pinned package, independent settings/foreground lifecycle, protected ring archive, raw-health admission and documentation.
 - Explicitly out: Merge, deployment/app restart, changes to existing HealthKit reads or other streams, background BLE/firmware modification.
@@ -34,3 +36,11 @@ environment without changing Git hooks. Contract and whitespace checks passed.
 
 Ring clock time zone is awaiting the owner's answer. Ring defaults OFF; no BLE
 capture, receiver acceptance or ring delivery is claimed by these checks.
+
+`f3d5a66` was installed once and launched immediately without activation between
+04:34:22Z and 04:34:25Z on 2026-11-08 (operation window, not a gap-free claim).
+Fresh preflight confirmed unlocked and saved audio OFF, with stopped:user logs.
+Post-launch App Group retained userStopIntent=true / isRecording=false. Natural
+metadata-health receipt at 04:34:32Z and GPS/raw receipts confirm continued
+independent-stream delivery, not ring capture. Direct ring remains OFF with no
+selected device or time zone. No public push was performed.

@@ -87,8 +87,8 @@ judgment. Full bytes preserve uninterpreted fields for later research.
 
 The app combines both inputs in the existing health-snapshot payload. `records`
 contains the selected representative for each metric. A positive direct-ring
-heart-rate reading is preferred when it falls within the HealthKit aggregate's
-interval (or is at least as new as an existing point measurement). Otherwise
+heart-rate reading is preferred when it is at or after the HealthKit aggregate's
+interval start (or is at least as new as an existing point measurement). Otherwise
 HealthKit remains the representative. Future-dated ring observations are not
 selected. A ring reading is a point measurement, not an average of the HealthKit
 interval; its `aggregation`, measurement time and source describe that distinction.
@@ -117,10 +117,16 @@ automatically. Unified `records` supplies the preferred view without deleting
 either raw source. Hub readers need to recognize this new item variant. Local
 contract acceptance is tested; receiver/reader acceptance is not established.
 
-## PR verification boundary
+## Verification boundary
 
 Synthetic tests cover raw-value provenance, retry identity, persistence, repeated
 downloads, capacity and retention holds. Simulator build and contract checks
 verify integration. They do not prove Bluetooth behavior, simultaneous vendor
 connections, background collection or end-to-end Hub delivery. This change is
-submitted as a PR only; it does not install or restart the device application.
+was originally submitted as PR 12 only. On owner-directed adoption, the combined
+health projection passed the integrated 12-test batch; the retention projection
+case then passed alone after that boundary was extended. The signed build was
+installed once and immediately launched without activation, preserving audio OFF.
+Natural Health/GPS/raw receipts were verified afterward, with direct ring still
+OFF pending explicit clock-zone selection. This is not real ring BLE or ring
+receipt/reader acceptance.
