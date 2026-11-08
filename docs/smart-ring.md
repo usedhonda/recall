@@ -70,6 +70,9 @@ records separately within pending records. The boundary persists across restarts
 
 ## Item shape and overlap with HealthKit
 
+The receiver-facing metric, source and interpretation contract is in
+[smart-ring-hub-contract.md](smart-ring-hub-contract.md).
+
 Each item has `uuid`, `type: "smart_ring.hrv_history"`, `start`, `end`,
 `source: "SmartRingKit"`, `sourceVersion: "0.1.0"`, `deviceModel: "FFF0 ring"`,
 and a `ring` object containing `deviceID`, `firmware`, `clockTimeZone`,

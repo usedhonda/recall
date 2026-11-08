@@ -135,5 +135,25 @@ final class SmartRingTests: XCTestCase {
             source: "HealthKit fixture", sourceBundleId: "fixture.health", deviceModel: nil)]
         XCTAssertEqual(HealthDataIntegrator.combine(healthKit: newerHealth, ring: [ring],
             collectedAt: now).records.first?.value, 90)
+
+        let rawPayload = HubRawEvent.sourcePayload(items: [try HubRawEvent.encoder.encode(ring)], deleted: [])
+        let rawObject = try JSONSerialization.jsonObject(with: rawPayload)
+        let snapshotObject = try JSONSerialization.jsonObject(with: HubRawEvent.encoder.encode(combined))
+        let object = try XCTUnwrap(snapshotObject as? [String: Any])
+        let wireRecords = try XCTUnwrap(object["records"] as? [[String: Any]])
+        let stress = try XCTUnwrap(wireRecords.first { $0["metricId"] as? String == "smart_ring.stress_raw" })
+        XCTAssertEqual(stress["unit"] as? String, "raw")
+        XCTAssertEqual(stress["value"] as? Int, 30)
+        XCTAssertEqual(stress["sourceObservationID"] as? String, ring.uuid)
+        XCTAssertEqual((object["sourceRecords"] as? [[String: Any]])?.count, 4)
+        let wireExample = try JSONSerialization.data(withJSONObject: [
+            "synthetic": true,
+            "raw": ["kind": "recall.health-samples.v1", "time_basis": "ring_captured_at", "source_payload": rawObject],
+            "snapshot": ["kind": "recall.health-snapshot.v1", "source_payload": snapshotObject]
+        ], options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: wireExample, uniformTypeIdentifier: "public.json")
+        attachment.name = "synthetic-ring-health-wire-contract"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

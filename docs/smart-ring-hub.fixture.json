@@ -1,0 +1,155 @@
+{
+  "raw" : {
+    "kind" : "recall.health-samples.v1",
+    "source_payload" : {
+      "deleted" : [
+
+      ],
+      "items" : [
+        {
+          "deviceModel" : "FFF0 ring",
+          "end" : "2024-02-29T12:34:56.000Z",
+          "ring" : {
+            "clockTimeZone" : "GMT",
+            "deviceID" : "7ac1b8d7010bb6cd3a3e84e7f90136b880bbc899e428ece49333372911ab9052",
+            "deviceTime" : {
+              "day" : 29,
+              "hour" : 12,
+              "minute" : 34,
+              "month" : 2,
+              "second" : 56,
+              "year" : 2024
+            },
+            "firmware" : "0.7.5.0",
+            "heartRateBPM" : 65,
+            "hrvRaw" : 42,
+            "rawBytes" : [
+              86,
+              0,
+              0,
+              36,
+              2,
+              41,
+              18,
+              52,
+              86,
+              42,
+              0,
+              65,
+              30,
+              0,
+              0
+            ],
+            "stressRaw" : 30
+          },
+          "source" : "SmartRingKit",
+          "sourceVersion" : "0.1.0",
+          "start" : "2024-02-29T12:34:56.000Z",
+          "type" : "smart_ring.hrv_history",
+          "uuid" : "ring-3c12ffd534cea1019f3353b6105d679fa95b6a171f18fb081de51e4225350df2"
+        }
+      ]
+    },
+    "time_basis" : "ring_captured_at"
+  },
+  "snapshot" : {
+    "kind" : "recall.health-snapshot.v1",
+    "source_payload" : {
+      "collectedAt" : "2024-02-29T12:35:56.000Z",
+      "records" : [
+        {
+          "aggregation" : "latest",
+          "deviceModel" : "FFF0 ring",
+          "measuredAt" : "2024-02-29T12:34:56.000Z",
+          "metricId" : "HKQuantityTypeIdentifierHeartRate",
+          "sampleCount" : 1,
+          "source" : "SmartRingKit",
+          "sourceDeviceID" : "7ac1b8d7010bb6cd3a3e84e7f90136b880bbc899e428ece49333372911ab9052",
+          "sourceObservationID" : "ring-3c12ffd534cea1019f3353b6105d679fa95b6a171f18fb081de51e4225350df2",
+          "unit" : "count\/min",
+          "value" : 65
+        },
+        {
+          "aggregation" : "latest",
+          "deviceModel" : "FFF0 ring",
+          "measuredAt" : "2024-02-29T12:34:56.000Z",
+          "metricId" : "smart_ring.hrv_raw",
+          "sampleCount" : 1,
+          "source" : "SmartRingKit",
+          "sourceDeviceID" : "7ac1b8d7010bb6cd3a3e84e7f90136b880bbc899e428ece49333372911ab9052",
+          "sourceObservationID" : "ring-3c12ffd534cea1019f3353b6105d679fa95b6a171f18fb081de51e4225350df2",
+          "unit" : "raw",
+          "value" : 42
+        },
+        {
+          "aggregation" : "latest",
+          "deviceModel" : "FFF0 ring",
+          "measuredAt" : "2024-02-29T12:34:56.000Z",
+          "metricId" : "smart_ring.stress_raw",
+          "sampleCount" : 1,
+          "source" : "SmartRingKit",
+          "sourceDeviceID" : "7ac1b8d7010bb6cd3a3e84e7f90136b880bbc899e428ece49333372911ab9052",
+          "sourceObservationID" : "ring-3c12ffd534cea1019f3353b6105d679fa95b6a171f18fb081de51e4225350df2",
+          "unit" : "raw",
+          "value" : 30
+        }
+      ],
+      "sleep" : {
+        "total" : 400
+      },
+      "sourceRecords" : [
+        {
+          "aggregation" : "discreteStats",
+          "intervalEnd" : "2024-02-29T12:35:56.000Z",
+          "intervalStart" : "2024-02-29T12:33:56.000Z",
+          "measuredAt" : "2024-02-29T12:35:56.000Z",
+          "metricId" : "HKQuantityTypeIdentifierHeartRate",
+          "sampleCount" : 10,
+          "source" : "HealthKit fixture",
+          "sourceBundleId" : "fixture.health",
+          "unit" : "count\/min",
+          "value" : 80,
+          "valueMax" : 100,
+          "valueMin" : 60
+        },
+        {
+          "aggregation" : "latest",
+          "deviceModel" : "FFF0 ring",
+          "measuredAt" : "2024-02-29T12:34:56.000Z",
+          "metricId" : "smart_ring.hrv_raw",
+          "sampleCount" : 1,
+          "source" : "SmartRingKit",
+          "sourceDeviceID" : "7ac1b8d7010bb6cd3a3e84e7f90136b880bbc899e428ece49333372911ab9052",
+          "sourceObservationID" : "ring-3c12ffd534cea1019f3353b6105d679fa95b6a171f18fb081de51e4225350df2",
+          "unit" : "raw",
+          "value" : 42
+        },
+        {
+          "aggregation" : "latest",
+          "deviceModel" : "FFF0 ring",
+          "measuredAt" : "2024-02-29T12:34:56.000Z",
+          "metricId" : "smart_ring.stress_raw",
+          "sampleCount" : 1,
+          "source" : "SmartRingKit",
+          "sourceDeviceID" : "7ac1b8d7010bb6cd3a3e84e7f90136b880bbc899e428ece49333372911ab9052",
+          "sourceObservationID" : "ring-3c12ffd534cea1019f3353b6105d679fa95b6a171f18fb081de51e4225350df2",
+          "unit" : "raw",
+          "value" : 30
+        },
+        {
+          "aggregation" : "latest",
+          "deviceModel" : "FFF0 ring",
+          "measuredAt" : "2024-02-29T12:34:56.000Z",
+          "metricId" : "HKQuantityTypeIdentifierHeartRate",
+          "sampleCount" : 1,
+          "source" : "SmartRingKit",
+          "sourceDeviceID" : "7ac1b8d7010bb6cd3a3e84e7f90136b880bbc899e428ece49333372911ab9052",
+          "sourceObservationID" : "ring-3c12ffd534cea1019f3353b6105d679fa95b6a171f18fb081de51e4225350df2",
+          "unit" : "count\/min",
+          "value" : 65
+        }
+      ]
+    }
+  },
+  "synthetic" : true
+}
