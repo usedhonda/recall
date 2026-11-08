@@ -13,6 +13,29 @@ final class SmartRingCaptureArchive {
 
     func count() throws -> Int { try FileManager.default.contentsOfDirectory(atPath: root.path).count }
 
+    func saveFailure(command: UInt8, peripheralID: UUID, timeZone: TimeZone,
+                     startedAt: Date, error: Error, existingObservationCount: Int) throws {
+        struct FailedAttempt: Encodable {
+            let command: UInt8
+            let peripheralID: UUID
+            let clockTimeZone: String
+            let startedAt: Date
+            let failedAt: Date
+            let failure: String
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let reason = error.localizedDescription
+        let identity = "\(command)|\(peripheralID)|\(timeZone.identifier)|\(reason)"
+        var file = root.appendingPathComponent("failure-" + SmartRingSample.hash(Data(identity.utf8)) + ".json")
+        guard !FileManager.default.fileExists(atPath: file.path) else { return }
+        guard try count() + existingObservationCount < 10_000 else { throw SmartRingStore.Failure.archiveFull }
+        try JSONEncoder().encode(FailedAttempt(command: command, peripheralID: peripheralID,
+            clockTimeZone: timeZone.identifier, startedAt: startedAt, failedAt: Date(), failure: reason))
+            .write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        var flags = URLResourceValues(); flags.isExcludedFromBackup = true
+        try file.setResourceValues(flags)
+    }
+
     func saveContext(_ snapshot: RingHistorySnapshot, timeZone: TimeZone, existingObservationCount: Int) throws {
         struct Context: Encodable {
             let info: RingInfo

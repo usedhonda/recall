@@ -126,6 +126,7 @@ final class SmartRingManager {
             do { try await captureCategory(command, id: id, timeZone: timeZone, store: store, incremental: false) }
             catch {
                 if Task.isCancelled { throw error }
+                if !(error is RingError) { throw error }
                 if failure == nil { failure = error }
                 if let ringError = error as? RingError, case .conflictingHistoryResponse = ringError { break }
             }
@@ -177,6 +178,19 @@ final class SmartRingManager {
 
     private func captureCategory(_ command: RingReadCommand, id: UUID, timeZone: TimeZone,
                                  store: SmartRingStore, incremental: Bool) async throws {
+        let startedAt = Date()
+        do {
+            try await readCategory(command, id: id, timeZone: timeZone, store: store, incremental: incremental)
+        } catch {
+            ActivityLogger.shared.log(.health, "Ring category \(command.rawValue) failed: \(error.localizedDescription)")
+            try captureArchive.saveFailure(command: command.rawValue, peripheralID: id, timeZone: timeZone,
+                startedAt: startedAt, error: error, existingObservationCount: await store.counts().stored)
+            throw error
+        }
+    }
+
+    private func readCategory(_ command: RingReadCommand, id: UUID, timeZone: TimeZone,
+                              store: SmartRingStore, incremental: Bool) async throws {
         let client = RingClient(); self.client = client
         defer { client.disconnect(); self.client = nil }
         _ = try await client.discover(duration: 1)
