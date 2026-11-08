@@ -177,6 +177,11 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "smartRing.enabled") }
     }
 
+    var smartRingDeviceModelID: String {
+        get { UserDefaults.standard.string(forKey: "smartRing.deviceModelID") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "smartRing.deviceModelID") }
+    }
+
     var smartRingPeripheralID: UUID? {
         get { UserDefaults.standard.string(forKey: "smartRing.peripheralID").flatMap(UUID.init(uuidString:)) }
         set { UserDefaults.standard.set(newValue?.uuidString, forKey: "smartRing.peripheralID") }

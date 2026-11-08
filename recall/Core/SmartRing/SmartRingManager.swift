@@ -30,7 +30,7 @@ final class SmartRingManager {
     func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
         AppSettings.shared.smartRingEnabled = enabled
-        if enabled { resume() }
+        if enabled { RingBackgroundCoordinator.shared.start(); resume() }
         else {
             pause()
             status = "Direct ring sync is off."
@@ -39,7 +39,11 @@ final class SmartRingManager {
 
     func setForeground(_ active: Bool) {
         isForeground = active
-        if active { resume() } else { pause() }
+        if active { RingBackgroundCoordinator.shared.start() }
+        if active { resume() } else {
+            timer?.invalidate(); timer = nil
+            RingBackgroundCoordinator.shared.schedule()
+        }
     }
 
     func select(_ device: RingPeripheral) {
@@ -48,6 +52,7 @@ final class SmartRingManager {
         selectedName = device.name ?? "Selected ring"
         AppSettings.shared.smartRingPeripheralID = device.id
         AppSettings.shared.smartRingName = selectedName
+        RingBackgroundCoordinator.shared.start()
         status = "Ring selected. Confirm its clock time zone, then sync."
     }
 
@@ -68,13 +73,16 @@ final class SmartRingManager {
         }
     }
 
-    func sync() {
-        guard isEnabled, isForeground, !isBusy, let id = selectedID,
+    func sync(background: Bool = false) {
+        guard isEnabled, (isForeground || background), !isBusy, let id = selectedID,
               let timeZone = TimeZone(identifier: clockTimeZone) else { return }
         run {
             let store = try self.archive()
             var failure: Error?
-            do { try await self.capture(id: id, timeZone: timeZone, store: store) }
+            do {
+                if background { try await self.captureBackground(id: id, timeZone: timeZone, store: store) }
+                else { try await self.capture(id: id, timeZone: timeZone, store: store) }
+            }
             catch { failure = error }
             try Task.checkCancellation()
             // Admission failures do not prevent capture. A failed radio read also does
@@ -101,15 +109,76 @@ final class SmartRingManager {
                                          existingObservationCount: existingCount)
         }
         try Task.checkCancellation()
-        let records = snapshot.histories.filter { $0.transferComplete }.flatMap { $0.decoded.hrv }
-        let samples = try records.map {
-            try SmartRingSample(record: $0, peripheralID: id, firmware: snapshot.info.firmware, timeZone: timeZone)
-        }
-        try await store.merge(samples, capturedAt: capturedAt, reservedSlots: captureArchive.count())
+        try captureArchive.saveContext(snapshot, timeZone: timeZone, existingObservationCount: existingCount)
+        let completed = snapshot.histories.filter { $0.transferComplete }
+        try await mergeDecoded(completed.map { ($0.command, $0.decoded) }, id: id,
+            firmware: snapshot.info.firmware, timeZone: timeZone, capturedAt: capturedAt, store: store)
         if snapshot.histories.allSatisfy({ $0.transferComplete }) { lastSyncAt = Date() }
         if snapshot.histories.contains(where: { !$0.transferComplete }) {
             throw RingError.invalidPacket("Some histories were incomplete; captured data was preserved.")
         }
+    }
+
+    private func mergeDecoded(_ histories: [(RingReadCommand, RingDecodedHistory)], id: UUID,
+                              firmware: String, timeZone: TimeZone, capturedAt: Date,
+                              store: SmartRingStore) async throws {
+        let records = histories.flatMap { $0.1.hrv }
+        var samples = try records.map {
+            try SmartRingSample(record: $0, peripheralID: id, firmware: firmware, timeZone: timeZone)
+        }
+        for (command, decoded) in histories {
+            let hasGap = decoded.integrity.map {
+                $0.missingSequenceValues > 0 || $0.outOfOrderTransitions > 0
+            } ?? false
+            if !hasGap {
+                samples += try decoded.sensors.map {
+                    try SmartRingSample(sensor: $0, command: command, peripheralID: id,
+                                        firmware: firmware, timeZone: timeZone)
+                }
+            }
+            samples += try decoded.sleep.map {
+                try SmartRingSample(sleep: $0, peripheralID: id, firmware: firmware, timeZone: timeZone)
+            }
+        }
+        // Full old history remains in protected captures, not new upload identities.
+        let eligible = await store.inRetentionWindow(samples)
+        try await store.merge(eligible, capturedAt: capturedAt, reservedSlots: captureArchive.count())
+    }
+
+    private func captureBackground(id: UUID, timeZone: TimeZone, store: SmartRingStore) async throws {
+        let commands = RingReadCommand.historyCommands
+        let position = UserDefaults.standard.integer(forKey: "smartRing.backgroundHistoryIndex") % commands.count
+        let command = commands[position]
+        let client = RingClient(); self.client = client
+        defer { client.disconnect(); self.client = nil }
+        _ = try await client.discover(duration: 1)
+        try await client.connect(to: id)
+        let info = try await client.readInfo()
+        let capturedAt = Date()
+        var packets: [[UInt8]] = []
+        var unexpected: [[UInt8]] = []
+        var unexpectedBytes = 0
+        var complete = false
+        var failure: Error?
+        do {
+            _ = try await client.readRawHistory(command, timeout: 120,
+                onNotification: { packets.append([UInt8]($0)) }, onUnexpectedNotification: {
+                    guard $0.count <= 2_000_000 - unexpectedBytes else { client.disconnect(); return }
+                    unexpected.append([UInt8]($0)); unexpectedBytes += $0.count
+                })
+            complete = true
+        } catch { failure = error }
+        let raw = RingRawHistory(command: command.rawValue, notifications: packets)
+        try captureArchive.saveBackground(raw: raw, info: info, peripheralID: id, complete: complete,
+            capturedAt: capturedAt, timeZone: timeZone, existingObservationCount: await store.counts().stored,
+            unexpected: unexpected)
+        if let failure { throw failure }
+        try Task.checkCancellation()
+        try await mergeDecoded([(command, RingHistoryCodec.decode(raw))], id: id, firmware: info.firmware,
+            timeZone: timeZone, capturedAt: capturedAt, store: store)
+        UserDefaults.standard.set((position + 1) % commands.count, forKey: "smartRing.backgroundHistoryIndex")
+        lastSyncAt = Date()
+        ActivityLogger.shared.log(.health, "Ring background history completed; next category saved")
     }
 
     private func archive() throws -> SmartRingStore {
@@ -147,7 +216,7 @@ final class SmartRingManager {
         let health = TelemetryService.shared.healthManager
         let payload = HealthDataIntegrator.combine(
             healthKit: health.isEnabled ? health.latestHealthKitPayload : nil,
-            ring: healthSamples, collectedAt: Date())
+            ring: healthSamples, collectedAt: Date(), deviceModelID: AppSettings.shared.smartRingDeviceModelID)
         _ = try await HubTelemetryAdmission.admit(route: .healthSnapshot,
             observationID: payload.deliveryID.uuidString, occurredAt: payload.collectedAt, payload: payload)
     }
@@ -157,7 +226,18 @@ final class SmartRingManager {
         timer = nil
         operation?.cancel()
         client?.disconnect()
+        RingBackgroundCoordinator.shared.stop()
     }
+
+    func backgroundSync() async -> Bool {
+        guard isEnabled, !isBusy, selectedID != nil, !clockTimeZone.isEmpty else { return false }
+        let before = lastSyncAt
+        sync(background: true)
+        await operation?.value
+        return lastSyncAt != nil && lastSyncAt != before
+    }
+
+    func cancelSync() { operation?.cancel(); client?.disconnect() }
 
     private func run(_ action: @escaping @MainActor () async throws -> Void) {
         isBusy = true
@@ -166,7 +246,7 @@ final class SmartRingManager {
             defer { self.isBusy = false; self.operation = nil }
             do { try await action() }
             catch {
-                if !Task.isCancelled { self.status = error.localizedDescription }
+                self.status = Task.isCancelled ? "Sync interrupted; saved progress retained." : error.localizedDescription
                 ActivityLogger.shared.log(.health, "Ring sync did not complete; saved records remain pending")
             }
         }

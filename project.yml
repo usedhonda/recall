@@ -109,6 +109,10 @@ targets:
         UIBackgroundModes:
           - audio
           - location
+          - bluetooth-central
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.example.recall.ring-sync
         NSCameraUsageDescription: "recall uses the camera to scan QR codes for server configuration."
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:

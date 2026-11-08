@@ -293,3 +293,15 @@ Server-side limits (oc-general, 2026-09-11) — do not lengthen past these:
   stationary cadence must stay <= 5 min.
 - Health: the PCE viewer marks health stale when the last received POST is > 60 min old, so
   the unchanged-snapshot keepalive must stay under 60 min.
+
+### Ring-first hybrid health and background acquisition
+
+SmartRingKit 0.4 supplies complete/partial history captures, sensor records and
+profile-qualified sleep stages. Direct comparable readings take preference in the
+selected health snapshot; source candidates and unknown-unit observations remain
+separate. Missing ring sleep intervals use original HealthKit segments, without
+turning unknown ring stages into HealthKit guesses. Background BLE restoration and
+BGProcessing schedule bounded category acquisition independently of the recording
+lane. Neither process survival nor a scheduled request proves actual background
+capture; verify capture clocks, phone receipts and Hub selected-health output.
+See [hybrid contract](smart-ring-hybrid-contract.md).

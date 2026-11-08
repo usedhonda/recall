@@ -14,15 +14,18 @@ struct SmartRingSample: Codable, Equatable {
     let sourceVersion: String
     let deviceModel: String
     let ring: Payload
+    var sensor: RingSensorRecord? = nil
+    var sleep: RingSleepRecord? = nil
+    var capturedAt: Date? = nil
 
     struct Payload: Codable, Equatable {
         let deviceID: String
         let firmware: String
         let clockTimeZone: String
         let deviceTime: RingTimestamp
-        let hrvRaw: UInt8
-        let heartRateBPM: UInt8
-        let stressRaw: UInt8
+        let hrvRaw: UInt8?
+        let heartRateBPM: UInt8?
+        let stressRaw: UInt8?
         let rawBytes: [UInt8]
     }
 
@@ -49,5 +52,24 @@ struct SmartRingSample: Codable, Equatable {
 
     static func hash(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    init(kind: String, timestamp: RingTimestamp, bytes: [UInt8], peripheralID: UUID,
+         firmware: String, timeZone: TimeZone, sensor: RingSensorRecord?, sleep: RingSleepRecord?) throws {
+        guard let date = timestamp.date(in: timeZone) else { throw RingError.invalidPacket("invalid ring clock") }
+        let device = Self.hash(Data(peripheralID.uuidString.lowercased().utf8))
+        var identity = Data("ring-v2|\(device)|\(timeZone.identifier)|\(kind)|".utf8)
+        identity.append(contentsOf: bytes.dropFirst(sensor?.dateOnly == true ? 2 : 3))
+        uuid = "ring-" + Self.hash(identity)
+        type = kind
+        start = date
+        end = sleep.map { date.addingTimeInterval(Double($0.categoryValues.count * $0.sampleIntervalMinutes) * 60) } ?? date
+        source = "SmartRingKit"
+        sourceVersion = "0.4.0"
+        deviceModel = "FFF0 ring"
+        ring = Payload(deviceID: device, firmware: firmware, clockTimeZone: timeZone.identifier,
+                       deviceTime: timestamp, hrvRaw: nil, heartRateBPM: nil, stressRaw: nil, rawBytes: bytes)
+        self.sensor = sensor
+        self.sleep = sleep
     }
 }

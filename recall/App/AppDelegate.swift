@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         do { try HubProvisioning.shared.loadAndImport() }
         catch { ActivityLogger.shared.log(.error, "Hub private configuration unavailable; active routes remain protected") }
         HubDeliveryService.shared.start()
+        RingBackgroundCoordinator.shared.register()
         ConnectivityMonitor.shared.start()
 
         // Set up HealthKit background delivery — must be in didFinishLaunchingWithOptions

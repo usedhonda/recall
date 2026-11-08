@@ -17,6 +17,13 @@ struct SmartRingSettingsView: View {
                     .foregroundStyle(RecallTheme.Colors.textSecondary)
 
                 if manager.isEnabled {
+                    Picker("Ring model", selection: Binding(
+                        get: { AppSettings.shared.smartRingDeviceModelID },
+                        set: { AppSettings.shared.smartRingDeviceModelID = $0 }
+                    )) {
+                        Text("Unconfirmed model (raw only)").tag("")
+                        Text("issin Smart Recovery Ring").tag("issin-smart-recovery-ring")
+                    }.disabled(manager.isBusy)
                     Text(manager.selectedName).font(RecallTheme.Fonts.hudBody)
                     Button("Find rings") { manager.scan() }.disabled(manager.isBusy)
                     ForEach(manager.devices) { device in
@@ -39,7 +46,7 @@ struct SmartRingSettingsView: View {
                         .foregroundStyle(RecallTheme.Colors.textSecondary)
                     Button("Sync ring now") { manager.sync() }
                         .disabled(manager.isBusy || manager.selectedID == nil || manager.clockTimeZone.isEmpty)
-                    Text("Syncs on foreground entry and every 15 minutes while open. Continuous background sync and simultaneous vendor-app reads are unverified.")
+                    Text("Syncs on entry, while open, and at iOS background opportunities. Background timing is not guaranteed. Avoid simultaneous vendor-app sync.")
                         .font(RecallTheme.Fonts.hudCaption)
                         .foregroundStyle(RecallTheme.Colors.textSecondary)
                 }

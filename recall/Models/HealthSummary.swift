@@ -2,6 +2,9 @@ import Foundation
 
 /// Sleep stage breakdown in minutes
 struct SleepSummary: Codable {
+    var light: Double? = nil
+    var unknown: Double? = nil
+    var missing: Double? = nil
     var total: Double?
     var rem: Double?
     var deep: Double?
@@ -29,6 +32,14 @@ struct SleepSegment: Codable {
 /// night the source wrote days late still arrives. Identity for a reader: `start` +
 /// `sourceBundleId`; a later snapshot supersedes an earlier one.
 struct SleepSession: Codable, Equatable {
+    var sessionID: String? = nil
+    var sourceDeviceID: String? = nil
+    var clockTimeZone: String? = nil
+    var day: String? = nil
+    var conflicting: Bool? = nil
+    var lightMinutes: Double? = nil
+    var unknownMinutes: Double? = nil
+    var missingMinutes: Double? = nil
     let start: Date
     let end: Date
     /// Time asleep, with overlapping samples counted once.
@@ -185,11 +196,20 @@ struct HealthRecord: Codable {
     /// Direct-source identity, when available; not a HealthKit sample identifier.
     var sourceObservationID: String? = nil
     var sourceDeviceID: String? = nil
+    var measurementTimeBasis: String? = nil
+    var sourceCapturedAt: Date? = nil
+    var day: String? = nil
+    var timeZone: String? = nil
 }
 
 /// Self-describing health payload sent to server. Server interprets each
 /// record by `metricId` + `unit` + `aggregation` rather than relying on
 /// field names.
+struct HealthTimeWindow: Codable {
+    let start: Date
+    let end: Date
+}
+
 struct HealthPayload: Codable {
     /// Identity of this logical aggregate delivery. Retries reuse the value;
     /// a new aggregate instance receives a new UUID. Kept out of legacy JSON.
@@ -204,7 +224,12 @@ struct HealthPayload: Codable {
     var sourceRecords: [HealthRecord]? = nil
 
     /// Sleep summary with per-segment detail (when available).
-    let sleep: SleepSummary?
+    var sleep: SleepSummary?
+    var sleepTimeline: [HybridSleepInterval]? = nil
+    var sourceSleep: SleepSummary? = nil
+    var sourceSleepSessions: [SleepSession]? = nil
+    var healthKitSleepTimeline: [SleepSegment]? = nil
+    var sleepReplacementWindow: HealthTimeWindow? = nil
 
     /// Workouts with start/end already preserved.
     let workouts: [WorkoutSummary]?
@@ -216,7 +241,7 @@ struct HealthPayload: Codable {
     var heartRateDays: [HeartRateDay]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case collectedAt, records, sourceRecords, sleep, workouts, sleepSessions, heartRateDays
+        case collectedAt, records, sourceRecords, sleep, sleepTimeline, sourceSleep, sourceSleepSessions, healthKitSleepTimeline, sleepReplacementWindow, workouts, sleepSessions, heartRateDays
     }
 }
 

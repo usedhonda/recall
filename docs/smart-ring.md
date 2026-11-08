@@ -143,3 +143,37 @@ installed once and immediately launched without activation, preserving audio OFF
 Natural Health/GPS/raw receipts were verified afterward, with direct ring still
 OFF pending explicit clock-zone selection. This is not real ring BLE or ring
 receipt/reader acceptance.
+
+## Ring-first hybrid implementation
+
+SDK 0.4 acquisition now captures all ten histories; selected decoded sensor and
+sleep records share the existing durable archive, IDs, frozen batches and history
+floor. Old HRV entries decode unchanged. Raw unknown/partial transfers and snapshot
+firmware/clock context remain in protected local capture storage. Unsupported
+units are never promoted to HealthKit quantities. Structured identities are only
+admitted inside the existing retention floor, without discarding full local captures.
+
+The matching issin 0.7.5.0 profile enables spot pulse, automatic oxygen and
+same-day comparable step totals. Unconfirmed models/firmware retain raw sensor
+measurements without normalized interpretations. Ring sleep uses its exact profile,
+keeps light separate from HealthKit core and preserves unknown/conflicting samples.
+Only missing/uncovered time intervals fall back to HealthKit. Existing fourteen-day
+HealthKit sleep queries now also return their original segments without a second
+query. `sleepSessions` is the selected aggregate; `sleepTimeline` records source and
+quality. Source candidates are never added again. See
+[the hybrid wire contract](smart-ring-hybrid-contract.md).
+
+A Recall-owned restoration Central observes only connection/wake state; the SDK
+alone issues history commands. This avoids changing the released SDK or duplicating
+its decoder. AppDelegate registers it independently of audio and HealthKit. The
+background modes are bluetooth-central and processing. BGProcessing and restored
+known-peripheral connection events request a single-flight, bounded category read.
+The next category is saved durably on successful capture/admission; canceled or
+failed categories remain pending for a later opportunity. No unfiltered background
+ring discovery or exact fifteen-minute wake promise is made. Foreground still
+supports full-history capture, manual sync and the existing active timer.
+
+The raw capture and aggregate selection count shared archive slots and never evict
+pending data. Sleep correction windows explicitly replace overlapping selections
+when later data corrects session boundaries. Day-only steps carry day/timeZone and
+ring_day precision; captured-at only breaks same-measurement revision ties.

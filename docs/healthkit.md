@@ -92,3 +92,13 @@ Compare in this order: the Health app (category, then Show More Sleep Data), the
 - https://developer.apple.com/forums/thread/109473
 - https://developer.apple.com/forums/thread/842919
 - https://sahha.ai/blog/deduplicating-health-data-across-wearables/
+
+## Ring-first hybrid sleep
+
+The existing fourteen-day sleep query also returns original segments for interval
+supplementation; it does not issue another historical query. Selected ring sleep
+retains light/deep/rem/awake/unknown/missing, with HealthKit filling only uncovered
+intervals. `sourceSleep`, `sourceSleepSessions` and `healthKitSleepTimeline` preserve
+the original candidates. The selected `sleepSessions` and explanatory
+`sleepTimeline` must never both be added to totals. See the
+[hybrid contract](smart-ring-hybrid-contract.md).

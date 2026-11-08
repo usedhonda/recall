@@ -52,7 +52,15 @@ actor SmartRingStore {
     }
 
     func samplesForHealthSnapshot() -> [SmartRingSample] {
-        entries.filter { $0.sample.end >= uploadFloor }.map(\.sample)
+        entries.filter { $0.sample.end >= uploadFloor }.map {
+            var sample = $0.sample
+            sample.capturedAt = $0.capturedAt
+            return sample
+        }
+    }
+
+    func inRetentionWindow(_ samples: [SmartRingSample]) -> [SmartRingSample] {
+        samples.filter { $0.end >= uploadFloor }
     }
 
     @discardableResult

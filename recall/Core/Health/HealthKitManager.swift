@@ -583,6 +583,9 @@ final class HealthKitManager {
             let lastEnd = sleep.segments?.last?.end.timeIntervalSince1970 ?? 0
             parts.append("sleep|\(sleep.total ?? -1)|\(sleep.segments?.count ?? 0)|\(lastEnd)")
         }
+        for interval in payload.sleepTimeline ?? [] {
+            parts.append("sleepInterval|\(interval.start.timeIntervalSince1970)|\(interval.end.timeIntervalSince1970)|\(interval.stage)|\(interval.source)|\(interval.sourceDeviceID ?? "")|\(interval.conflicting)")
+        }
         for w in payload.workouts ?? [] {
             parts.append("workout|\(w.activityType)|\(w.start.timeIntervalSince1970)|\(w.end.timeIntervalSince1970)")
         }
@@ -659,7 +662,8 @@ final class HealthKitManager {
         let wristTemp = await wristTempResult
         let sleep = await sleepResult
         let workouts = await workoutsResult
-        let sleepSessions = await sleepSessionsResult
+        let historySleep = await sleepSessionsResult
+        let sleepSessions = historySleep.sessions
         let heartRateDays = await heartRateDaysResult
 
         // --- Build self-describing HealthPayload ---
@@ -766,9 +770,10 @@ final class HealthKitManager {
             heartRateDays: heartRateDays.isEmpty ? nil : heartRateDays
         )
         latestHealthKitPayload = healthKit
-        return HealthDataIntegrator.combine(healthKit: healthKit,
+        latestHealthKitPayload?.healthKitSleepTimeline = historySleep.segments
+        return HealthDataIntegrator.combine(healthKit: latestHealthKitPayload,
             ring: SmartRingManager.shared.isEnabled ? SmartRingManager.shared.healthSamples : [],
-            collectedAt: end)
+            collectedAt: end, deviceModelID: AppSettings.shared.smartRingDeviceModelID)
     }
 
     // MARK: - Query Helpers
@@ -1248,8 +1253,8 @@ final class HealthKitManager {
         return candidates.first { type.is(compatibleWith: $0) }
     }
 
-    private func querySleepSessions(from start: Date, to end: Date) async -> [SleepSession] {
-        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
+    private func querySleepSessions(from start: Date, to end: Date) async -> (sessions: [SleepSession], segments: [SleepSegment]) {
+        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return ([], []) }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
         return await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
@@ -1275,7 +1280,9 @@ final class HealthKitManager {
                 if let last = sessions.last {
                     Self.logHK("sleepSessions: n=\(sessions.count) samples=\(inputs.count) lastEnd=\(last.end.ISO8601Format()) lastTotal=\(Int(last.totalMinutes))m")
                 }
-                continuation.resume(returning: sessions)
+                let segments = inputs.map { SleepSegment(start: $0.start, end: $0.end, stage: $0.stage,
+                    source: $0.source, sourceBundleId: $0.sourceBundleId, deviceModel: nil) }
+                continuation.resume(returning: (sessions, segments))
             }
             healthStore.execute(query)
         }
