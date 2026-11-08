@@ -142,9 +142,12 @@ verify integration. They do not prove Bluetooth behavior, simultaneous vendor
 connections, background collection or end-to-end Hub delivery. The completed
 hybrid implementation passed its focused integration batch and affected boundary
 checks. Its signed build was installed once and immediately launched without
-activation, preserving audio OFF. Natural Health/GPS/raw receipts were observed;
-direct ring remained unconfigured. Real ring foreground/background capture and
-same-observation Hub receipt/read/display remain unverified. See the current
+activation, preserving audio OFF. Direct ring has subsequently been configured
+through USB UI automation. Real HRV/sleep capture, producer committed receipts and
+same-observation Hub health-view data are confirmed. Other histories stopped after
+a conflicting command response. Full-category/background acquisition, pixel display
+and full Chi reader consumption remain unverified; the actual snapshot exceeds
+that reader's existing metadata hydration cap. See the current
 [handoff](handoff/014-ring-first-hybrid.md) for the implementation checkpoint.
 
 ## Ring-first hybrid implementation

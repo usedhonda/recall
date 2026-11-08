@@ -5,8 +5,10 @@
 Owner approved the whole hybrid plan, including interval-level HealthKit filling
 of missing ring sleep and background BLE synchronization. Ring is preferred for
 supported meaningful metrics; preserve source provenance and independent toggles.
-No public push, retention expansion, forced recording, guessed clock zone,
+No retention expansion, forced recording, guessed clock zone,
 clinical stress scale or raw HRV-to-SDNN conversion.
+Public push requires owner instruction; the owner subsequently ordered push and
+the implementation through `81b9cac` is on origin/main.
 
 ## Implemented checkpoint
 
@@ -35,10 +37,20 @@ The signed build was installed once and immediately launched without activation,
 preserving the stored audio OFF intent. Subsequent phone logs confirm silent launch
 and ordinary Health/status/GPS/raw activity. This does not establish ring delivery.
 
-Direct ring is not configured yet. Foreground BLE capture, background capture and
-same-observation Hub receipt/read/display remain unverified. Phone Mirroring reported
-that the phone was in use and required a physical lock; the owner was asked for that
-single physical action. Do not repeat installation or toggle audio to clear this.
+The SDK 0.4.1 build (`81b9cac`) is installed and launched with audio OFF preserved.
+Direct ring is now enabled with selected device, explicit model and evidence-backed
+clock zone. USB XCUITest reached the existing settings after mirrored scrolling
+failed; its standalone runner does not reinstall Recall.
+
+Real foreground acquisition completed HRV and sleep histories and admitted retained
+records. Producer receipts and the receiver's same-observation health-view projection
+are confirmed. All-category acquisition is incomplete: a different history command
+arrived during dynamic-heart-rate reading, and the SDK stopped remaining categories.
+Welly realtime communication was temporarily paused and restored through its own UI;
+the same conflict remained, so that switch alone is not a proven solution. No vendor
+force-quit, reset or unpairing has been performed. An explicit owner question about a
+temporary Welly termination/restart is pending. Do not retry unchanged acquisition.
+Actual background acquisition and full consumer read/display remain unverified.
 
 The library's ignored original sleep-analysis proof records an explicit clock zone;
 use that evidence rather than guessing from current phone location. Establish the
@@ -53,16 +65,21 @@ rollup fields explicitly whitelisted. Final packet initially named `3741518`.
 Parent reviewed its integrated diff and representative synthetic rendering.
 Follow-up `a41e019` clears stale ring day provenance when later HK steps replace
 the selected total. Parent confirmed that source diff; the worker reports its
-single affected regression passed. Runtime reflection of this correction is still
-pending, so receiver acceptance is not closed. Synthetic fixture acceptance is
-not real ring receipt/display acceptance.
+single affected regression passed. Receiver task is verified following integrated
+diff/rendering review and natural same-observation health-view evidence.
+
+The canonical Chi reader remains incomplete for the actual snapshot: metadata
+149472 characters exceeds its existing 131072-character hydration cap. This is
+not a permission denial. Do not silently omit source candidates, increase caps or
+grant access as a workaround. Receiver view-data acceptance does not establish
+full Chi consumption, pixel observation or medical interpretation.
 
 ## Resume
 
-1. Configure the known ring/model/explicit clock zone through the existing UI once
-   phone control is available; preserve every other stream's setting.
-2. Capture real foreground history, then observe an actual background opportunity.
-3. Match a real observation across producer and ordinary authorized Hub read/display.
-4. Confirm runtime reflection of the reviewed receiver correction, then verify/report
-   its existing task without repeating unchanged suites.
-5. Keep public push separate; none was performed for this implementation.
+1. Resolve the actual multi-client history collision without resets or data loss;
+   retain owner control of the pending vendor termination decision.
+2. Complete remaining categories and observe an actual background opportunity.
+3. Resolve bounded Chi reading with its owning project; preserve all source data,
+   existing permission boundaries and the observed reader-size limit.
+4. Report the verified receiver task separately from remaining radio/consumer work.
+5. Keep any further public push separate from the already completed owner-ordered push.
