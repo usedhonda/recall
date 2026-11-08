@@ -2,62 +2,239 @@ import SwiftUI
 
 struct SmartRingSettingsView: View {
     @State private var manager = SmartRingManager.shared
+    @State private var showClockZones = false
+    @State private var clockSearch = ""
+
+    private let accent = RecallTheme.Colors.neonMagenta
 
     var body: some View {
         VStack(spacing: 8) {
-            HUDSectionHeader(title: "Smart Ring", color: RecallTheme.Colors.neonMagenta)
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle("Direct ring sync", isOn: Binding(
+            HUDSectionHeader(title: "Smart Ring", color: accent)
+            VStack(alignment: .leading, spacing: 16) {
+                Toggle(isOn: Binding(
                     get: { manager.isEnabled }, set: { manager.setEnabled($0) }
-                ))
-                .tint(RecallTheme.Colors.neonMagenta)
-
-                Text("One health snapshot combines both sources. Direct ring heart rate is preferred within the Health reading interval; Apple Health fills other metrics. Original source records are retained. Ring HRV and stress remain labelled raw values, never HealthKit SDNN. Nothing is written to Apple Health.")
-                    .font(RecallTheme.Fonts.hudCaption)
-                    .foregroundStyle(RecallTheme.Colors.textSecondary)
+                )) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("DIRECT RING SYNC")
+                            .font(RecallTheme.Fonts.hudTitle)
+                            .foregroundStyle(RecallTheme.Colors.textPrimary)
+                        Text("Ring first. Apple Health fills the gaps.")
+                            .font(RecallTheme.Fonts.hudCaption)
+                            .foregroundStyle(RecallTheme.Colors.textLabel)
+                    }
+                }
+                .tint(accent)
+                .accessibilityLabel("Direct ring sync")
 
                 if manager.isEnabled {
-                    Picker("Ring model", selection: Binding(
-                        get: { AppSettings.shared.smartRingDeviceModelID },
-                        set: { AppSettings.shared.smartRingDeviceModelID = $0 }
-                    )) {
-                        Text("Unconfirmed model (raw only)").tag("")
-                        Text("issin Smart Recovery Ring").tag("issin-smart-recovery-ring")
-                    }.disabled(manager.isBusy)
-                    Text(manager.selectedName).font(RecallTheme.Fonts.hudBody)
-                    Button("Find rings") { manager.scan() }.disabled(manager.isBusy)
+                    Divider().overlay(RecallTheme.Colors.border)
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "circle.circle")
+                            .font(.system(size: 24, weight: .light))
+                            .foregroundStyle(accent)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(manager.selectedName)
+                                .font(RecallTheme.Fonts.hudTitle)
+                                .foregroundStyle(RecallTheme.Colors.textPrimary)
+                            Text(manager.selectedID == nil ? "SELECT A DEVICE BELOW" : "SELECTED DEVICE")
+                                .font(RecallTheme.Fonts.hudMicro)
+                                .tracking(1)
+                                .foregroundStyle(RecallTheme.Colors.textLabel)
+                        }
+                        Spacer(minLength: 0)
+                        if manager.isBusy {
+                            ProgressView().tint(accent)
+                                .accessibilityLabel("Ring operation in progress")
+                        }
+                    }
+
+                    if manager.storedCount > 0 {
+                        HStack(spacing: 24) {
+                            countLabel("STORED", value: manager.storedCount)
+                            countLabel("PENDING ADMISSION", value: manager.pendingCount)
+                        }
+                    }
+
+                    HUDActionButton(title: "Sync ring now", icon: "arrow.triangle.2.circlepath", color: accent) {
+                        manager.sync()
+                    }
+                    .disabled(manager.isBusy || manager.selectedID == nil || manager.clockTimeZone.isEmpty)
+                    .opacity(manager.isBusy || manager.selectedID == nil || manager.clockTimeZone.isEmpty ? 0.4 : 1)
+                    .accessibilityLabel("Sync ring now")
+
+                    Text(manager.status)
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let date = manager.lastSyncAt {
+                        Text("Last completed read: \(date.formatted())")
+                            .font(RecallTheme.Fonts.hudCaption)
+                            .foregroundStyle(RecallTheme.Colors.textLabel)
+                    }
+
+                    Divider().overlay(RecallTheme.Colors.border)
+                    configuration
+                }
+
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Supported ring readings take priority. Apple Health fills missing coverage. Original sources stay separate; nothing is written to Apple Health.")
+                        Text("Ring HRV and stress are raw values, not HealthKit SDNN or a calibrated stress scale.")
+                        Text("Sync runs on entry, while open, and at iOS background opportunities. Background timing is not guaranteed. Avoid simultaneous vendor-app sync.")
+                    }
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textLabel)
+                    .lineSpacing(3)
+                    .padding(.top, 8)
+                } label: {
+                    Text("Sources & sync behavior")
+                        .font(RecallTheme.Fonts.hudBody)
+                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                }
+                .tint(accent)
+            }
+            .hudCard(borderColor: manager.isEnabled ? accent.opacity(0.3) : RecallTheme.Colors.border)
+        }
+        .sheet(isPresented: $showClockZones) { clockZoneSheet }
+    }
+
+    private var configuration: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("CONFIGURATION")
+                .font(RecallTheme.Fonts.hudMicro)
+                .tracking(1.5)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
+            Picker("Ring model", selection: Binding(
+                get: { AppSettings.shared.smartRingDeviceModelID },
+                set: { AppSettings.shared.smartRingDeviceModelID = $0 }
+            )) {
+                Text("Unconfirmed model (raw only)").tag("")
+                Text("issin Smart Recovery Ring").tag("issin-smart-recovery-ring")
+            }
+            .font(RecallTheme.Fonts.hudBody)
+            .tint(accent)
+            .disabled(manager.isBusy)
+
+            Button { showClockZones = true } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("RING CLOCK TIME ZONE")
+                        .font(RecallTheme.Fonts.hudMicro)
+                        .tracking(1)
+                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(manager.clockTimeZone.isEmpty ? "Choose time zone" : manager.clockTimeZone)
+                            .font(RecallTheme.Fonts.hudBody)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right").font(.caption)
+                    }
+                    .foregroundStyle(accent)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(manager.isBusy)
+            .accessibilityLabel("Ring clock time zone")
+            .accessibilityValue(manager.clockTimeZone.isEmpty ? "Not selected" : manager.clockTimeZone)
+
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 10) {
+                    HUDActionButton(title: "Find rings", icon: "antenna.radiowaves.left.and.right", color: accent) {
+                        manager.scan()
+                    }
+                    .disabled(manager.isBusy)
+                    .accessibilityLabel("Find rings")
                     ForEach(manager.devices) { device in
                         Button { manager.select(device) } label: {
-                            VStack(alignment: .leading) {
-                                Text(device.name ?? "Unnamed FFF0 peripheral")
-                                Text(device.id.uuidString).font(.caption2)
-                                if device.connectedToSystem { Text("Already connected to iOS").font(.caption) }
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(device.name ?? "Unnamed FFF0 peripheral")
+                                        .font(RecallTheme.Fonts.hudBody)
+                                    Text(device.id.uuidString)
+                                        .font(RecallTheme.Fonts.hudMicro)
+                                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                                    if device.connectedToSystem {
+                                        Text("Already connected to iOS")
+                                            .font(RecallTheme.Fonts.hudCaption)
+                                            .foregroundStyle(RecallTheme.Colors.textLabel)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                                if manager.selectedID == device.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                }
                             }
-                        }.disabled(manager.isBusy)
+                            .foregroundStyle(accent)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(manager.isBusy)
                     }
-                    Picker("Ring clock time zone", selection: Binding(
-                        get: { manager.clockTimeZone }, set: { manager.setClockTimeZone($0) }
-                    )) {
-                        Text("Choose time zone").tag("")
-                        ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { Text($0).tag($0) }
-                    }.disabled(manager.isBusy)
-                    Text("Choose the time zone used by the ring's clock. Historical travel or clock changes cannot be inferred. HRV units and stress scale are unverified.")
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(RecallTheme.Colors.textSecondary)
-                    Button("Sync ring now") { manager.sync() }
-                        .disabled(manager.isBusy || manager.selectedID == nil || manager.clockTimeZone.isEmpty)
-                    Text("Syncs on entry, while open, and at iOS background opportunities. Background timing is not guaranteed. Avoid simultaneous vendor-app sync.")
-                        .font(RecallTheme.Fonts.hudCaption)
-                        .foregroundStyle(RecallTheme.Colors.textSecondary)
                 }
-                Text(manager.status)
-                    .font(RecallTheme.Fonts.hudCaption)
-                    .foregroundStyle(RecallTheme.Colors.textSecondary)
-                if let date = manager.lastSyncAt {
-                    Text("Last ring read: \(date.formatted())").font(RecallTheme.Fonts.hudCaption)
+                .padding(.top, 10)
+            } label: {
+                Text(manager.selectedID == nil ? "Select a device" : "Change device")
+                    .font(RecallTheme.Fonts.hudBody)
+                    .foregroundStyle(RecallTheme.Colors.textLabel)
+            }
+            .tint(accent)
+        }
+    }
+
+    private func countLabel(_ title: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value.formatted()).font(RecallTheme.Fonts.hudTitle)
+                .foregroundStyle(RecallTheme.Colors.textPrimary)
+            Text(title).font(RecallTheme.Fonts.hudMicro)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
+        }
+    }
+
+    private var clockZoneSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(TimeZone.knownTimeZoneIdentifiers.filter {
+                        clockSearch.isEmpty || $0.localizedCaseInsensitiveContains(clockSearch)
+                    }, id: \.self) { identifier in
+                        Button {
+                            manager.setClockTimeZone(identifier)
+                            showClockZones = false
+                        } label: {
+                            HStack {
+                                Text(identifier).foregroundStyle(RecallTheme.Colors.textPrimary)
+                                Spacer(minLength: 8)
+                                if manager.clockTimeZone == identifier {
+                                    Image(systemName: "checkmark").foregroundStyle(accent)
+                                }
+                            }
+                            .font(RecallTheme.Fonts.hudBody)
+                            .padding(.vertical, 6)
+                        }
+                        .disabled(manager.isBusy)
+                        .listRowBackground(RecallTheme.Colors.surface)
+                    }
+                } header: {
+                    Text("Use the ring's recorded clock zone, not your current location. Historical travel and clock changes cannot be inferred.")
+                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                        .textCase(nil)
                 }
             }
-            .hudCard()
+            .scrollContentBackground(.hidden)
+            .background(RecallTheme.Colors.bg)
+            .searchable(text: $clockSearch, prompt: "Search time zones")
+            .navigationTitle("Ring clock time zone")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { showClockZones = false }
+                }
+            }
+            .tint(accent)
         }
+        .preferredColorScheme(.dark)
     }
 }
