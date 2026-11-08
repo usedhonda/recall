@@ -15,6 +15,16 @@ final class SmartRingManager {
     private(set) var storedCount = 0
     private(set) var pendingCount = 0
     private(set) var healthSamples: [SmartRingSample] = []
+    private(set) var researchInputs: RingStressFeatureSet?
+    private(set) var fatigueEstimate: RingFatigueEstimate?
+    private(set) var fatigueAnalysisStatus = "Experimental fatigue estimation is off."
+    private var firmware = ""
+    var fatigueSnapshot: SmartRingFatigueEstimate? {
+        guard isEnabled, let estimate = fatigueEstimate, let id = selectedID,
+              RingDeviceProfiles.matching(deviceID: AppSettings.shared.smartRingDeviceModelID, firmware: firmware) != nil else { return nil }
+        return SmartRingFatigueEstimate(sourceDeviceID: SmartRingSample.hash(Data(id.uuidString.lowercased().utf8)),
+            firmware: firmware, clockTimeZone: clockTimeZone, estimate: estimate)
+    }
     private(set) var selectedID = AppSettings.shared.smartRingPeripheralID
     private(set) var selectedName = AppSettings.shared.smartRingName
     private(set) var clockTimeZone = AppSettings.shared.smartRingClockTimeZone
@@ -49,6 +59,7 @@ final class SmartRingManager {
     func select(_ device: RingPeripheral) {
         guard !isBusy else { return }
         selectedID = device.id
+        firmware = ""; researchInputs = nil; fatigueEstimate = nil
         selectedName = device.name ?? "Selected ring"
         AppSettings.shared.smartRingPeripheralID = device.id
         AppSettings.shared.smartRingName = selectedName
@@ -59,6 +70,8 @@ final class SmartRingManager {
     func setClockTimeZone(_ identifier: String) {
         guard !isBusy, TimeZone(identifier: identifier) != nil else { return }
         clockTimeZone = identifier
+        researchInputs = nil; fatigueEstimate = nil
+        fatigueAnalysisStatus = "Sync to analyze this clock interpretation."
         AppSettings.shared.smartRingClockTimeZone = identifier
     }
 
@@ -90,6 +103,7 @@ final class SmartRingManager {
             do { try await self.queuePending(store) }
             catch { if failure == nil { failure = error } }
             self.healthSamples = await store.samplesForHealthSnapshot()
+            self.refreshResearch()
             do { try await self.queueHealthSnapshot() }
             catch { if failure == nil { failure = error } }
             let counts = await store.counts()
@@ -102,21 +116,22 @@ final class SmartRingManager {
     }
 
     private func capture(id: UUID, timeZone: TimeZone, store: SmartRingStore) async throws {
-        let capturedAt = Date()
-        let existingCount = await store.counts().stored
-        let snapshot = try await RingHistoryReader.readAll(from: id) { capture in
-            try self.captureArchive.save(capture, capturedAt: capturedAt, timeZone: timeZone,
-                                         existingObservationCount: existingCount)
+        // Broader foreground backfill also recovers corrections before a resume anchor.
+        let commands: [RingReadCommand] = [.spotHeartRateHistory, .hrvHistory, .sleepHistory,
+            .temperatureHistory, .oxygenHistory, .dailyActivityHistory, .activityHistory,
+            .manualOxygenHistory, .exerciseHistory, .heartRateHistory]
+        var failure: Error?
+        for command in commands {
+            try Task.checkCancellation()
+            do { try await captureCategory(command, id: id, timeZone: timeZone, store: store, incremental: false) }
+            catch {
+                if Task.isCancelled { throw error }
+                if failure == nil { failure = error }
+                if let ringError = error as? RingError, case .conflictingHistoryResponse = ringError { break }
+            }
         }
-        try Task.checkCancellation()
-        try captureArchive.saveContext(snapshot, timeZone: timeZone, existingObservationCount: existingCount)
-        let completed = snapshot.histories.filter { $0.transferComplete }
-        try await mergeDecoded(completed.map { ($0.command, $0.decoded) }, id: id,
-            firmware: snapshot.info.firmware, timeZone: timeZone, capturedAt: capturedAt, store: store)
-        if snapshot.histories.allSatisfy({ $0.transferComplete }) { lastSyncAt = Date() }
-        if snapshot.histories.contains(where: { !$0.transferComplete }) {
-            throw RingError.invalidPacket("Some histories were incomplete; captured data was preserved.")
-        }
+        if let failure { throw failure }
+        lastSyncAt = Date()
     }
 
     private func mergeDecoded(_ histories: [(RingReadCommand, RingDecodedHistory)], id: UUID,
@@ -142,43 +157,112 @@ final class SmartRingManager {
         }
         // Full old history remains in protected captures, not new upload identities.
         let eligible = await store.inRetentionWindow(samples)
-        try await store.merge(eligible, capturedAt: capturedAt, reservedSlots: captureArchive.count())
+        try await store.merge(eligible, capturedAt: capturedAt, reservedSlots: captureArchive.count(), availableAt: capturedAt)
     }
 
     private func captureBackground(id: UUID, timeZone: TimeZone, store: SmartRingStore) async throws {
-        let commands = RingReadCommand.historyCommands
-        let position = UserDefaults.standard.integer(forKey: "smartRing.backgroundHistoryIndex") % commands.count
-        let command = commands[position]
+        let backfill: [RingReadCommand] = [.sleepHistory, .oxygenHistory, .temperatureHistory,
+            .dailyActivityHistory, .activityHistory, .manualOxygenHistory, .exerciseHistory, .heartRateHistory]
+        let position = UserDefaults.standard.integer(forKey: "smartRing.backgroundBackfillIndex") % backfill.count
+        // Persist each category before moving on; OS expiry can cancel between any two reads.
+        for command in [RingReadCommand.spotHeartRateHistory, .hrvHistory, backfill[position]] {
+            try Task.checkCancellation()
+            try await captureCategory(command, id: id, timeZone: timeZone, store: store, incremental: true)
+            if command == backfill[position] {
+                UserDefaults.standard.set((position + 1) % backfill.count, forKey: "smartRing.backgroundBackfillIndex")
+            }
+        }
+        lastSyncAt = Date()
+    }
+
+    private func captureCategory(_ command: RingReadCommand, id: UUID, timeZone: TimeZone,
+                                 store: SmartRingStore, incremental: Bool) async throws {
         let client = RingClient(); self.client = client
         defer { client.disconnect(); self.client = nil }
         _ = try await client.discover(duration: 1)
         try await client.connect(to: id)
         let info = try await client.readInfo()
-        let capturedAt = Date()
+        firmware = info.firmware
+        var deviceClock: RingTimestamp?
+        var clockFailure: String?
+        do { deviceClock = try await client.readDeviceClock() }
+        catch {
+            clockFailure = error.localizedDescription
+            try Task.checkCancellation()
+            try await client.connect(to: id)
+        }
+        let device = SmartRingSample.hash(Data(id.uuidString.lowercased().utf8))
+        let hint = incremental ? await store.resumeHint(command: command.rawValue, deviceID: device,
+            firmware: info.firmware, timeZone: timeZone.identifier) : nil
+        let startedAt = Date()
         var packets: [[UInt8]] = []
         var unexpected: [[UInt8]] = []
         var unexpectedBytes = 0
+        var expectedBytes = 0
+        var byteLimitExceeded = false
+        var conflictingCommand: UInt8?
         var complete = false
         var failure: Error?
         do {
-            _ = try await client.readRawHistory(command, timeout: 120,
-                onNotification: { packets.append([UInt8]($0)) }, onUnexpectedNotification: {
-                    guard $0.count <= 2_000_000 - unexpectedBytes else { client.disconnect(); return }
+            _ = try await client.readRawHistory(command, resumingFrom: hint, timeout: 120,
+                onNotification: {
+                    guard $0.count <= 2_000_000 - expectedBytes else {
+                        byteLimitExceeded = true; client.disconnect(); return
+                    }
+                    packets.append([UInt8]($0)); expectedBytes += $0.count
+                }, onUnexpectedNotification: {
+                    if let byte = $0.first, RingReadCommand.historyCommands.contains(where: { $0.rawValue == byte }) {
+                        conflictingCommand = byte
+                    }
+                    guard $0.count <= 2_000_000 - unexpectedBytes else {
+                        byteLimitExceeded = true; client.disconnect(); return
+                    }
                     unexpected.append([UInt8]($0)); unexpectedBytes += $0.count
                 })
             complete = true
         } catch { failure = error }
+        if byteLimitExceeded { failure = RingError.invalidPacket("Capture byte limit exceeded; partial data preserved") }
+        if let byte = conflictingCommand {
+            failure = RingError.conflictingHistoryResponse(expected: command.rawValue, received: byte)
+        }
+        let capturedAt = Date()
         let raw = RingRawHistory(command: command.rawValue, notifications: packets)
         try captureArchive.saveBackground(raw: raw, info: info, peripheralID: id, complete: complete,
             capturedAt: capturedAt, timeZone: timeZone, existingObservationCount: await store.counts().stored,
-            unexpected: unexpected)
+            unexpected: unexpected, resumeHint: hint, deviceClock: deviceClock,
+            clockFailure: clockFailure, failure: failure?.localizedDescription, startedAt: startedAt,
+            acquisitionMode: incremental ? "background" : "foreground")
         if let failure { throw failure }
         try Task.checkCancellation()
         try await mergeDecoded([(command, RingHistoryCodec.decode(raw))], id: id, firmware: info.firmware,
             timeZone: timeZone, capturedAt: capturedAt, store: store)
-        UserDefaults.standard.set((position + 1) % commands.count, forKey: "smartRing.backgroundHistoryIndex")
-        lastSyncAt = Date()
-        ActivityLogger.shared.log(.health, "Ring background history completed; next category saved")
+        ActivityLogger.shared.log(.health, "Ring category \(command.rawValue) completed; persisted before next read; incremental=\(hint != nil)")
+    }
+
+    func setFatigueMethod(_ method: String) {
+        guard method.isEmpty || RingFatigueCorrection(rawValue: method) != nil else { return }
+        AppSettings.shared.smartRingFatigueMethod = method
+        refreshResearch()
+    }
+
+    private func refreshResearch() {
+        guard let id = selectedID, let zone = TimeZone(identifier: clockTimeZone),
+              RingDeviceProfiles.matching(deviceID: AppSettings.shared.smartRingDeviceModelID, firmware: firmware) != nil else {
+            researchInputs = nil; fatigueEstimate = nil
+            fatigueAnalysisStatus = "Read a verified device profile before analysis."
+            return
+        }
+        do {
+            let result = try SmartRingResearch.evaluate(healthSamples,
+                deviceID: SmartRingSample.hash(Data(id.uuidString.lowercased().utf8)), firmware: firmware,
+                timeZone: zone, method: RingFatigueCorrection(rawValue: AppSettings.shared.smartRingFatigueMethod), at: Date())
+            researchInputs = result.inputs; fatigueEstimate = result.estimate
+            fatigueAnalysisStatus = result.estimate.map { "\($0.status): \($0.reason ?? "experimental_unvalidated")" }
+                ?? "Experimental fatigue estimation is off."
+        } catch {
+            researchInputs = nil; fatigueEstimate = nil
+            fatigueAnalysisStatus = "Research inputs unavailable: \(error.localizedDescription)"
+        }
     }
 
     private func archive() throws -> SmartRingStore {
@@ -214,9 +298,10 @@ final class SmartRingManager {
         try Task.checkCancellation()
         guard isEnabled, !healthSamples.isEmpty, HubDeliveryService.shared.isEnabled(.healthSnapshot) else { return }
         let health = TelemetryService.shared.healthManager
-        let payload = HealthDataIntegrator.combine(
+        var payload = HealthDataIntegrator.combine(
             healthKit: health.isEnabled ? health.latestHealthKitPayload : nil,
             ring: healthSamples, collectedAt: Date(), deviceModelID: AppSettings.shared.smartRingDeviceModelID)
+        payload.nativeFatigueEstimate = fatigueSnapshot
         _ = try await HubTelemetryAdmission.admit(route: .healthSnapshot,
             observationID: payload.deliveryID.uuidString, occurredAt: payload.collectedAt, payload: payload)
     }

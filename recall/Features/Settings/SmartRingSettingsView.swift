@@ -1,4 +1,5 @@
 import SwiftUI
+import SmartRingKit
 
 struct SmartRingSettingsView: View {
     @State private var manager = SmartRingManager.shared
@@ -76,12 +77,13 @@ struct SmartRingSettingsView: View {
 
                     Divider().overlay(RecallTheme.Colors.border)
                     configuration
+                    research
                 }
 
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Supported ring readings take priority. Apple Health fills missing coverage. Original sources stay separate; nothing is written to Apple Health.")
-                        Text("Ring HRV and stress are raw values, not HealthKit SDNN or a calibrated stress scale.")
+                        Text("Ring HRV is not HealthKit SDNN. The legacy stress byte is native fatigue, not the vendor app's stress score. Experimental estimates are separate from measurements.")
                         Text("Sync runs on entry, while open, and at iOS background opportunities. Background timing is not guaranteed. Avoid simultaneous vendor-app sync.")
                     }
                     .font(RecallTheme.Fonts.hudCaption)
@@ -191,6 +193,49 @@ struct SmartRingSettingsView: View {
             Text(title).font(RecallTheme.Fonts.hudMicro)
                 .foregroundStyle(RecallTheme.Colors.textLabel)
         }
+    }
+
+    private var research: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Unvalidated native-fatigue proxy, not psychological stress. No ring settings are changed. Select a method explicitly; missing data stays unavailable.")
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textLabel)
+                Picker("Estimation method", selection: Binding(
+                    get: { AppSettings.shared.smartRingFatigueMethod },
+                    set: { manager.setFatigueMethod($0) }
+                )) {
+                    Text("Off").tag("")
+                    Text("Carry forward (estimated hold)").tag("carryForward")
+                    Text("Regression").tag("unanchored")
+                    Text("Full residual").tag("fullResidual")
+                    Text("Learned decay").tag("learnedDecay")
+                }
+                .disabled(manager.isBusy)
+                .tint(accent)
+                Text(manager.fatigueAnalysisStatus)
+                    .font(RecallTheme.Fonts.hudCaption)
+                    .foregroundStyle(RecallTheme.Colors.textLabel)
+                if let estimate = manager.fatigueEstimate {
+                    Text(estimate.value.map { "\($0.formatted(.number.precision(.fractionLength(1)))) raw / \(estimate.status)" } ?? "No estimate")
+                        .font(RecallTheme.Fonts.hudBody)
+                    Text("As of \(estimate.asOf.formatted()) / experimental, unvalidated")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                }
+                if let inputs = manager.researchInputs {
+                    Text("Research inputs: \(inputs.contexts.filter { $0.withinAgeLimit && !$0.isConflicting }.count) fresh categories; \(inputs.missingCommands.count) missing. Source age limit: 10 minutes. Radio coverage is tracked separately.")
+                        .font(RecallTheme.Fonts.hudCaption)
+                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            Text("Experimental native fatigue")
+                .font(RecallTheme.Fonts.hudBody)
+                .foregroundStyle(RecallTheme.Colors.textLabel)
+        }
+        .tint(accent)
     }
 
     private var clockZoneSheet: some View {

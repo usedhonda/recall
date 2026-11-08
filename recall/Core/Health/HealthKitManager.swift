@@ -771,9 +771,13 @@ final class HealthKitManager {
         )
         latestHealthKitPayload = healthKit
         latestHealthKitPayload?.healthKitSleepTimeline = historySleep.segments
-        return HealthDataIntegrator.combine(healthKit: latestHealthKitPayload,
+        var combined = HealthDataIntegrator.combine(healthKit: latestHealthKitPayload,
             ring: SmartRingManager.shared.isEnabled ? SmartRingManager.shared.healthSamples : [],
             collectedAt: end, deviceModelID: AppSettings.shared.smartRingDeviceModelID)
+        if SmartRingManager.shared.isEnabled {
+            combined.nativeFatigueEstimate = SmartRingManager.shared.fatigueSnapshot
+        }
+        return combined
     }
 
     // MARK: - Query Helpers

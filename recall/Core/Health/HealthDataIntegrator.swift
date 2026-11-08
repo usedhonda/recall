@@ -32,7 +32,7 @@ enum HealthDataIntegrator {
         for sample in available {
             if sample.type == "smart_ring.hrv_history" {
                 if let value = sample.ring.hrvRaw { add("smart_ring.hrv_raw", value: Double(value), unit: "raw", sample: sample) }
-                if let value = sample.ring.stressRaw { add("smart_ring.stress_raw", value: Double(value), unit: "raw", sample: sample) }
+                if let value = sample.ring.stressRaw { add("smart_ring.native_fatigue_raw", value: Double(value), unit: "raw", sample: sample) }
                 if let value = sample.ring.heartRateBPM, value > 0 { add(heartRate, value: Double(value), unit: "count/min", sample: sample) }
             }
             guard let sensor = sample.sensor else { continue }

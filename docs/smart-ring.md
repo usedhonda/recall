@@ -12,7 +12,7 @@ does not change the Health toggle, Audio, Location, Glasses or Media. The existi
 Health channel-status heartbeat still describes HealthKit, not the ring. No
 HealthKit writes or vendor-source exclusions are introduced.
 
-The dependency is [SmartRingKit 0.4.1](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.4.1),
+The dependency is [SmartRingKit 0.7.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.7.0),
 pinned exactly. This is an experimental FFF0 driver whose read protocol was
 observed on one issin Smart Recovery Ring with firmware 0.7.5.0. Support for
 other rings/firmware, concurrent vendor-app reads, and live measurement is not
@@ -88,7 +88,7 @@ HRV items have `uuid`, `type: "smart_ring.hrv_history"`, `start`, `end`,
 `source: "SmartRingKit"`, `sourceVersion`, `deviceModel: "FFF0 ring"`,
 and a `ring` object containing `deviceID`, `firmware`, `clockTimeZone`,
 `deviceTime`, `hrvRaw`, `heartRateBPM`, `stressRaw` and `rawBytes`.
-New items use source version 0.4.1; frozen historical batches keep their original
+New items use source version 0.7.0; frozen historical batches keep their original
 body/version. Sensor and sleep variants are defined in the hybrid wire contract.
 The envelope uses `time_basis: "ring_captured_at"`; `occurred_at` is the first
 record's capture time in the frozen batch. Item `start`/`end` use the selected
@@ -115,7 +115,10 @@ original pseudonymous source device and observation identifiers. Daily heart-rat
 aggregates and unsupported ring quantities remain HealthKit-derived. Supported
 spot pulse, oxygen, comparable daily steps and sleep follow the profile-qualified
 selection described below. Raw HRV and stress use `smart_ring.hrv_raw` and
-`smart_ring.stress_raw` with unit `raw`, never an SDNN identifier or unit `ms`.
+`smart_ring.native_fatigue_raw` with unit `raw`, never an SDNN identifier or unit
+`ms`. The historical `smart_ring.stress_raw` name and raw `ring.stressRaw` field
+refer to the native fatigue byte, not the vendor app's stress score. Previously
+stored items and frozen batches retain their original names and bodies.
 
 HealthKit collection publishes this integrated payload. A foreground ring sync
 also admits a health snapshot directly to the existing Hub route, even when
@@ -173,9 +176,10 @@ A Recall-owned restoration Central observes only connection/wake state; the SDK
 alone issues history commands. This avoids changing the released SDK or duplicating
 its decoder. AppDelegate registers it independently of audio and HealthKit. The
 background modes are bluetooth-central and processing. BGProcessing and restored
-known-peripheral connection events request a single-flight, bounded category read.
-The next category is saved durably on successful capture/admission; canceled or
-failed categories remain pending for a later opportunity. No unfiltered background
+known-peripheral connection events request single-flight work. Each background
+opportunity prioritizes spot heart rate and HRV, then one rotating backfill category,
+subject to OS expiry. Each category is saved before the next starts; the backfill
+index advances only after that category is persisted. No unfiltered background
 ring discovery or exact fifteen-minute wake promise is made. Foreground still
 supports full-history capture, manual sync and the existing active timer.
 
@@ -183,3 +187,39 @@ The raw capture and aggregate selection count shared archive slots and never evi
 pending data. Sleep correction windows explicitly replace overlapping selections
 when later data corrects session boundaries. Day-only steps carry day/timeZone and
 ring_day precision; captured-at only breaks same-measurement revision ties.
+
+## SDK 0.7 incremental reads and experimental analysis
+
+Foreground acquisition reads the same ten categories, placing spot pulse/HRV first
+and dynamic heart rate last. Completed categories are merged immediately; a
+conflicting command response still stops the pass. Foreground uses full history
+for broader backfill. Background spot pulse, HRV and ordinary temperature can
+resume from the second-newest persisted, same-device/firmware/zone record timestamp.
+Hints overlap and are not date filters: full-history fallback and older responses
+still pass through the existing identity deduplication. Partial captures never
+advance an observation-derived anchor. Original captures retain request start,
+completion/availability time, clock metadata, hint, unexpected packets and failure.
+
+Explicit `availableAt` records the first known completed receipt under this
+integration. Legacy records without it are excluded from model inputs until
+re-observed. Adding receipt metadata does not rewrite their raw bodies, IDs or
+frozen batches. Per-metric age uses measurement time, not another category's read.
+
+The research input assembler preserves missing/stale/conflicting categories and
+uses an explicit ten-minute engineering age limit. It does not guess a sleep
+window. Experimental native-fatigue estimation defaults OFF; the owner explicitly
+selects carry-forward, regression, residual or learned-decay mode in settings.
+Only independently received spot-pulse BPM enters the current model; the entire
+HRV/fatigue event is excluded from features. SDK defaults govern training/age
+limits, not medical thresholds. Insufficient data or calibration, conflicts and
+extrapolation remain unavailable, never zero. A carry-forward result is an
+estimated hold, not a fresh native measurement.
+
+If enabled, the single current `nativeFatigueEstimate` is optional snapshot
+metadata carrying source device/firmware/clock zone and a nested `estimate` with
+original query/knowledge/anchor clocks, method/model/training
+metadata and `experimental_unvalidated` status. It is never inserted into measured
+`records`, never called vendor stress and never added to daily rollups. Research
+contexts stay local rather than enlarging snapshots with another raw timeline.
+No ten-minute execution schedule, new sensor cadence or medical validity is
+promised. The SDK's ten-minute replay is not automatic hardware measurement.

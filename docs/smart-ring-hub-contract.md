@@ -24,12 +24,20 @@ unknown fields instead of interpreting them as additional physiological values.
 | --- | --- | --- |
 | `HKQuantityTypeIdentifierHeartRate` | `count/min` | Positive ring pulse, selected according to the source-time policy |
 | `smart_ring.hrv_raw` | `raw` | SDK-labelled HRV byte; algorithm and unit unknown |
-| `smart_ring.stress_raw` | `raw` | SDK-labelled stress byte; scale and direction unknown |
+| `smart_ring.native_fatigue_raw` | `raw` | Native fatigue byte, not vendor-app stress; formerly emitted as `smart_ring.stress_raw` |
 
 All direct records have `aggregation: latest`, their actual `measuredAt`,
 `source: SmartRingKit`, `sourceObservationID` and hashed `sourceDeviceID`.
 Multiple metrics can refer to one original observation; use metric ID plus source
 observation ID when relating records, not observation ID alone.
+
+SDK 0.7 clarifies byte 12 as native fatigue. Historical raw `ring.stressRaw`
+and immutable snapshots keep their legacy fields; new selected metrics use the
+explicit native-fatigue name. Optional `nativeFatigueEstimate` is a separate
+experimental result, not a measured metric. Its native_observed/estimated/
+unavailable status, reason, query/knowledge/anchor clocks and unvalidated label
+must survive reads. Do not treat missing numeric values as zero or add estimated
+values into raw observations/rollups. No new API, scope or retention is implied.
 
 `sourceRecords` is the original candidate set, not another set to aggregate with
 `records`. Keep it for provenance and alternate-source inspection. Use `records`

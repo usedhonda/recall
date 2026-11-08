@@ -182,6 +182,11 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "smartRing.deviceModelID") }
     }
 
+    var smartRingFatigueMethod: String {
+        get { UserDefaults.standard.string(forKey: "smartRing.fatigueMethod") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "smartRing.fatigueMethod") }
+    }
+
     var smartRingPeripheralID: UUID? {
         get { UserDefaults.standard.string(forKey: "smartRing.peripheralID").flatMap(UUID.init(uuidString:)) }
         set { UserDefaults.standard.set(newValue?.uuidString, forKey: "smartRing.peripheralID") }

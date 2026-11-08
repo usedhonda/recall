@@ -70,7 +70,10 @@ final class SmartRingCaptureArchive {
 
     func saveBackground(raw: RingRawHistory, info: RingInfo, peripheralID: UUID,
                         complete: Bool, capturedAt: Date, timeZone: TimeZone,
-                        existingObservationCount: Int, unexpected: [[UInt8]]) throws {
+                        existingObservationCount: Int, unexpected: [[UInt8]],
+                        resumeHint: RingTimestamp? = nil, deviceClock: RingTimestamp? = nil,
+                        clockFailure: String? = nil, failure: String? = nil,
+                        startedAt: Date? = nil, acquisitionMode: String = "background") throws {
         struct BackgroundCapture: Codable {
             let raw: RingRawHistory
             let info: RingInfo
@@ -79,6 +82,12 @@ final class SmartRingCaptureArchive {
             let capturedAt: Date
             let clockTimeZone: String
             let unexpectedNotifications: [[UInt8]]
+            let resumeHint: RingTimestamp?
+            let deviceClock: RingTimestamp?
+            let clockFailure: String?
+            let failure: String?
+            let startedAt: Date?
+            let acquisitionMode: String
         }
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -87,12 +96,14 @@ final class SmartRingCaptureArchive {
         identity.append(Data((peripheralID.uuidString + info.firmware + timeZone.identifier).utf8))
         identity.append(complete ? 1 : 0)
         identity.append(try encoder.encode(unexpected))
+        if let resumeHint { identity.append(try encoder.encode(resumeHint)) }
         var url = root.appendingPathComponent("background-" + SmartRingSample.hash(identity) + ".json")
         guard !fm.fileExists(atPath: url.path) else { return }
         guard try count() + existingObservationCount < 10_000 else { throw SmartRingStore.Failure.archiveFull }
         try encoder.encode(BackgroundCapture(raw: raw, info: info, peripheralID: peripheralID,
             transferComplete: complete, capturedAt: capturedAt, clockTimeZone: timeZone.identifier,
-            unexpectedNotifications: unexpected))
+            unexpectedNotifications: unexpected, resumeHint: resumeHint, deviceClock: deviceClock,
+            clockFailure: clockFailure, failure: failure, startedAt: startedAt, acquisitionMode: acquisitionMode))
             .write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         var flags = URLResourceValues(); flags.isExcludedFromBackup = true
         try url.setResourceValues(flags)

@@ -222,6 +222,8 @@ struct HealthPayload: Codable {
 
     /// Original candidates before ring preference; never sum these with `records`.
     var sourceRecords: [HealthRecord]? = nil
+    /// Optional experimental output; never a measured record or vendor-app stress.
+    var nativeFatigueEstimate: SmartRingFatigueEstimate? = nil
 
     /// Sleep summary with per-segment detail (when available).
     var sleep: SleepSummary?
@@ -241,7 +243,7 @@ struct HealthPayload: Codable {
     var heartRateDays: [HeartRateDay]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case collectedAt, records, sourceRecords, sleep, sleepTimeline, sourceSleep, sourceSleepSessions, healthKitSleepTimeline, sleepReplacementWindow, workouts, sleepSessions, heartRateDays
+        case collectedAt, records, sourceRecords, nativeFatigueEstimate, sleep, sleepTimeline, sourceSleep, sourceSleepSessions, healthKitSleepTimeline, sleepReplacementWindow, workouts, sleepSessions, heartRateDays
     }
 }
 

@@ -296,7 +296,7 @@ Server-side limits (oc-general, 2026-09-11) — do not lengthen past these:
 
 ### Ring-first hybrid health and background acquisition
 
-SmartRingKit 0.4 supplies complete/partial history captures, sensor records and
+SmartRingKit 0.7 supplies complete/partial history captures, sensor records and
 profile-qualified sleep stages. Direct comparable readings take preference in the
 selected health snapshot; source candidates and unknown-unit observations remain
 separate. Missing ring sleep intervals use original HealthKit segments, without
@@ -305,3 +305,7 @@ BGProcessing schedule bounded category acquisition independently of the recordin
 lane. Neither process survival nor a scheduled request proves actual background
 capture; verify capture clocks, phone receipts and Hub selected-health output.
 See [hybrid contract](smart-ring-hybrid-contract.md).
+Supported background histories resume from persisted overlapping measurement
+timestamps; foreground performs broader backfill. Each category is persisted
+before the next request. Native fatigue is not vendor stress, and explicit opt-in
+experimental estimates remain separate metadata, not measured health records.

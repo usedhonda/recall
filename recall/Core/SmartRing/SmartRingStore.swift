@@ -1,4 +1,5 @@
 import Foundation
+import SmartRingKit
 
 /// Separate, protected local archive. Nothing advances to queued until durable Hub
 /// admission succeeds. A crash between admission and save retries the same envelope.
@@ -7,6 +8,7 @@ actor SmartRingStore {
         let sample: SmartRingSample
         let capturedAt: Date
         var queued: Bool
+        var availableAt: Date? = nil
     }
     struct Counts { let stored: Int; let pending: Int; let held: Int }
     enum Failure: Error, LocalizedError {
@@ -55,6 +57,7 @@ actor SmartRingStore {
         entries.filter { $0.sample.end >= uploadFloor }.map {
             var sample = $0.sample
             sample.capturedAt = $0.capturedAt
+            sample.availableAt = $0.availableAt
             return sample
         }
     }
@@ -63,15 +66,36 @@ actor SmartRingStore {
         samples.filter { $0.end >= uploadFloor }
     }
 
+    func resumeHint(command: UInt8, deviceID: String, firmware: String, timeZone: String) -> RingTimestamp? {
+        guard [0x55, 0x56, 0x62].contains(command) else { return nil }
+        let type = command == 0x56 ? "smart_ring.hrv_history" : "smart_ring.sensor.\(command)"
+        let samples = entries.map(\.sample).filter {
+            $0.type == type && $0.ring.deviceID == deviceID && $0.ring.firmware == firmware &&
+            $0.ring.clockTimeZone == timeZone
+        }.sorted { $0.start > $1.start }
+        // Retain one overlapping anchor; this is not an arbitrary cutoff or a receipt cursor.
+        return samples.dropFirst().first?.ring.deviceTime
+    }
+
     @discardableResult
-    func merge(_ samples: [SmartRingSample], capturedAt: Date, reservedSlots: Int = 0) throws -> Int {
+    func merge(_ samples: [SmartRingSample], capturedAt: Date, reservedSlots: Int = 0,
+               availableAt: Date? = nil) throws -> Int {
         var known = Set(entries.map { $0.sample.uuid })
         let fresh = samples.filter { known.insert($0.uuid).inserted }
-        guard !fresh.isEmpty else { return 0 }
         var next = entries
+        if let availableAt {
+            let receivedIDs = Set(samples.map(\.uuid))
+            for index in next.indices where next[index].availableAt == nil && receivedIDs.contains(next[index].sample.uuid) {
+                next[index].availableAt = availableAt
+            }
+        }
         // Keep admitted identities too: a full ring download must not re-send old data.
-        guard next.count + fresh.count + reservedSlots <= capacity else { throw Failure.archiveFull }
-        next += fresh.map { Entry(sample: $0, capturedAt: capturedAt, queued: false) }
+        guard fresh.isEmpty || next.count + fresh.count + reservedSlots <= capacity else { throw Failure.archiveFull }
+        next += fresh.map {
+            var sample = $0; sample.availableAt = availableAt
+            return Entry(sample: sample, capturedAt: capturedAt, queued: false, availableAt: availableAt)
+        }
+        if fresh.isEmpty && availableAt == nil { return 0 }
         try save(next, batch: frozenBatch)
         entries = next
         return fresh.count

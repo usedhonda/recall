@@ -42,6 +42,16 @@ Unknown temperature, calories/distance/mode values remain smart_ring.* metrics,
 with unit raw where the physical unit is unestablished. Unknown-spacing series
 remain in raw sensor observations, never given fabricated per-sample dates.
 
+SDK 0.7 names byte 12 of HRV history native fatigue, not vendor-app stress.
+New selected readings use `smart_ring.native_fatigue_raw`; historical
+`smart_ring.stress_raw`/raw `ring.stressRaw` retain their immutable legacy names.
+Optional `nativeFatigueEstimate` wraps sourceDeviceID/firmware/clockTimeZone and
+a nested experimental `estimate` with native_observed/estimated/unavailable status,
+value/reason, query/knowledge/anchor clocks and model/training information. It is
+never added to measured records or retained in coarse rollups. It defaults absent
+until an explicit experimental method is selected. Received-at evidence is required
+for model inputs; legacy records without it are not treated as historically known.
+
 Direct records retain sourceObservationID/sourceDeviceID and measurementTimeBasis.
 Raw items use smart_ring.sensor.<decimal-command> with sensor payload, and
 smart_ring.sleep_history with sleep payload; HRV retains its established shape.

@@ -6,6 +6,58 @@ import XCTest
 final class SmartRingTests: XCTestCase {
     private let peripheral = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
+    func testResumeUsesPersistedOverlapAndAvailabilityDoesNotRewriteFrozenBodies() async throws {
+        enum Refused: Error { case full }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func item(_ minute: UInt8) throws -> SmartRingSample {
+            let record = try RingPacketDecoder.hrvRecord(Data([
+                0x56, 0, 0, 0x24, 0x02, 0x29, 0x12, minute, 0, 42, 0, 65, 30, 0, 0
+            ]))
+            return try SmartRingSample(record: record, peripheralID: peripheral, firmware: "0.7.5.0", timeZone: TimeZone(secondsFromGMT: 0)!)
+        }
+        let records = try [item(0x10), item(0x20), item(0x30)]
+        let store = try SmartRingStore(url: folder.appendingPathComponent("ring.json"), uploadFloor: .distantPast)
+        try await store.merge(Array(records.prefix(2)), capturedAt: Date(timeIntervalSince1970: 1))
+        var firstBody: Data?
+        do {
+            try await store.drain { body, _, _ in firstBody = body; throw Refused.full }
+        } catch Refused.full {}
+        let received = Date(timeIntervalSince1970: 2)
+        try await store.merge(records, capturedAt: received, availableAt: received)
+        let hint = await store.resumeHint(command: 0x56, deviceID: records[0].ring.deviceID,
+            firmware: "0.7.5.0", timeZone: "GMT")
+        XCTAssertEqual(hint?.minute, 20)
+        let wrongProfile = await store.resumeHint(command: 0x56, deviceID: records[0].ring.deviceID,
+            firmware: "unknown", timeZone: "GMT")
+        XCTAssertNil(wrongProfile)
+        let projected = await store.samplesForHealthSnapshot()
+        XCTAssertTrue(projected.allSatisfy { $0.availableAt == received })
+        var retries: [Data] = []
+        try await store.drain { body, _, _ in retries.append(body) }
+        XCTAssertEqual(retries.first, firstBody)
+    }
+
+    func testFatigueResearchKeepsAvailabilityAndEstimateDistinctFromNativeStress() throws {
+        var native = try sample()
+        native.availableAt = native.start.addingTimeInterval(1)
+        let now = native.start.addingTimeInterval(600)
+        let zone = TimeZone(identifier: "UTC")!
+        let hold = try SmartRingResearch.evaluate([native], deviceID: native.ring.deviceID,
+            firmware: "0.7.5.0", timeZone: zone, method: .carryForward, at: now)
+        XCTAssertEqual(hold.estimate?.status, "estimated")
+        XCTAssertEqual(hold.estimate?.validationStatus, "experimental_unvalidated")
+        XCTAssertEqual(hold.estimate?.trainingSamples, 0)
+        let model = try SmartRingResearch.evaluate([native], deviceID: native.ring.deviceID,
+            firmware: "0.7.5.0", timeZone: zone, method: .learnedDecay, at: now)
+        XCTAssertEqual(model.estimate?.status, "unavailable")
+        XCTAssertNil(model.estimate?.value)
+        native.availableAt = nil
+        let legacy = try SmartRingResearch.evaluate([native], deviceID: native.ring.deviceID,
+            firmware: "0.7.5.0", timeZone: zone, method: .carryForward, at: now)
+        XCTAssertEqual(legacy.estimate?.reason, "no_available_anchor")
+    }
+
     private func sample(sequence: UInt8 = 0, stress: UInt8 = 30, zone: String = "UTC") throws -> SmartRingSample {
         let record = try RingPacketDecoder.hrvRecord(Data([
             0x56, sequence, 0, 0x24, 0x02, 0x29, 0x12, 0x34, 0x56, 42, 0, 65, stress, 0, 0
@@ -141,7 +193,7 @@ final class SmartRingTests: XCTestCase {
         let snapshotObject = try JSONSerialization.jsonObject(with: HubRawEvent.encoder.encode(combined))
         let object = try XCTUnwrap(snapshotObject as? [String: Any])
         let wireRecords = try XCTUnwrap(object["records"] as? [[String: Any]])
-        let stress = try XCTUnwrap(wireRecords.first { $0["metricId"] as? String == "smart_ring.stress_raw" })
+        let stress = try XCTUnwrap(wireRecords.first { $0["metricId"] as? String == "smart_ring.native_fatigue_raw" })
         XCTAssertEqual(stress["unit"] as? String, "raw")
         XCTAssertEqual(stress["value"] as? Int, 30)
         XCTAssertEqual(stress["sourceObservationID"] as? String, ring.uuid)
