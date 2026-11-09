@@ -1,6 +1,6 @@
 # Direct smart-ring capture
 
-The consumer currently pins a post-0.7.0 SDK correction by exact revision.
+The consumer pins the released SmartRingKit 0.7.1 exactly.
 Before metadata and each history request, passive admission requires five quiet
 seconds, within a thirty-second budget. An observed unfinished history remains
 busy until its terminator, rather than being mistaken for idle during pagination.
@@ -23,8 +23,8 @@ does not change the Health toggle, Audio, Location, Glasses or Media. The existi
 Health channel-status heartbeat still describes HealthKit, not the ring. No
 HealthKit writes or vendor-source exclusions are introduced.
 
-The dependency is based on [SmartRingKit 0.7.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.7.0),
-with an exact post-release revision for passive admission. This is an experimental FFF0 driver whose read protocol was
+The dependency is [SmartRingKit 0.7.1](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.7.1),
+including passive admission. This is an experimental FFF0 driver whose read protocol was
 observed on one issin Smart Recovery Ring with firmware 0.7.5.0. Support for
 other rings/firmware, concurrent vendor-app reads, and live measurement is not
 established.
@@ -99,7 +99,7 @@ HRV items have `uuid`, `type: "smart_ring.hrv_history"`, `start`, `end`,
 `source: "SmartRingKit"`, `sourceVersion`, `deviceModel: "FFF0 ring"`,
 and a `ring` object containing `deviceID`, `firmware`, `clockTimeZone`,
 `deviceTime`, `hrvRaw`, `heartRateBPM`, `stressRaw` and `rawBytes`.
-New items use source version 0.7.0; frozen historical batches keep their original
+New items use source version 0.7.1; frozen historical batches keep their original
 body/version. Sensor and sleep variants are defined in the hybrid wire contract.
 The envelope uses `time_basis: "ring_captured_at"`; `occurred_at` is the first
 record's capture time in the frozen batch. Item `start`/`end` use the selected
@@ -238,3 +238,38 @@ metadata and `experimental_unvalidated` status. It is never inserted into measur
 contexts stay local rather than enlarging snapshots with another raw timeline.
 No ten-minute execution schedule, new sensor cadence or medical validity is
 promised. The SDK's ten-minute replay is not automatic hardware measurement.
+
+## Independent estimated stress
+
+When direct ring capture is enabled for a supported profile, snapshots carry a
+separate optional `stressEstimate`; it is never a measured `records` entry or a
+native-fatigue estimate. The first method is `heart-rate-median-mad-v1`:
+`(current spot BPM - prior personal median BPM) / prior median absolute deviation`.
+The signed unit is `personal_mad`, not percent, probability or a vendor scale.
+Zero denotes the personal heart-rate median, not an absence of stress. Negative
+values remain negative. There are no low/high stress thresholds or clinical claims.
+
+Only independently received `0x55` spot-heart-rate samples from the selected
+source device, firmware and historical clock zone contribute. Actual availability
+must be at or before computation. The seven-day reference excludes the current
+observation and conflicting timestamps. A minimum of 24 reference observations
+and a maximum current-input age of 1,800 seconds are engineering policies, not
+validated physiological thresholds. Missing/stale/conflicting input, insufficient
+reference or zero/unusable MAD yields `status=unavailable`, an explicit `reason`
+and no numeric `value`; it is never imputed as zero.
+
+The payload includes `estimatedAt`, `inputMeasuredAt`, `inputAvailableAt`, source
+observation/device, firmware/zone, baseline window/count/median/MAD and a digest
+of reference observation identities. A digest is provenance, not a new retrieval
+API. All estimates are `experimental_unvalidated`, explicitly heart-rate-only,
+without activity or sleep correction. Exercise, illness, posture and other factors
+may affect heart rate; this proxy does not identify psychological causes, imitate
+Welly, or reinterpret unknown HRV/fatigue units. The prior research basis is
+[Neigel et al.](https://doi.org/10.3389/fcomp.2025.1575404), not validation of this
+specific median/MAD method or individual short-interval inference. No pretrained
+weights, invented fusion coefficients or new ring configuration are introduced.
+
+The existing Health and ring snapshot paths both attach this separate result.
+Receiver projections keep it live-only and distinct from raw native fatigue,
+legacy `stress_raw`, measured records and coarse daily rollups. No new long-term
+retention or compact-snapshot cutover is part of this change.

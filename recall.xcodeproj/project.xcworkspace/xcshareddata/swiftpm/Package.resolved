@@ -33,7 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/usedhonda/smart-ring-kit.git",
       "state" : {
-        "revision" : "8350ec1687a01943277205388cc4bd116f9ab945"
+        "revision" : "16f51b03fb4a3b9b76c931993ae7b61a00eb3d75",
+        "version" : "0.7.1"
       }
     },
     {

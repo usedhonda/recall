@@ -43,7 +43,7 @@ struct SmartRingSample: Codable, Equatable {
         start = date
         end = date
         source = "SmartRingKit"
-        sourceVersion = "0.7.0"
+        sourceVersion = "0.7.1"
         deviceModel = "FFF0 ring"
         ring = Payload(deviceID: device, firmware: firmware, clockTimeZone: timeZone.identifier,
                        deviceTime: record.timestamp, hrvRaw: record.hrvRaw,
@@ -66,7 +66,7 @@ struct SmartRingSample: Codable, Equatable {
         start = date
         end = sleep.map { date.addingTimeInterval(Double($0.categoryValues.count * $0.sampleIntervalMinutes) * 60) } ?? date
         source = "SmartRingKit"
-        sourceVersion = "0.7.0"
+        sourceVersion = "0.7.1"
         deviceModel = "FFF0 ring"
         ring = Payload(deviceID: device, firmware: firmware, clockTimeZone: timeZone.identifier,
                        deviceTime: timestamp, hrvRaw: nil, heartRateBPM: nil, stressRaw: nil, rawBytes: bytes)

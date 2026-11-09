@@ -77,6 +77,23 @@ struct SmartRingSettingsView: View {
 
                     Divider().overlay(RecallTheme.Colors.border)
                     configuration
+                    if let estimate = manager.stressSnapshot {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Estimated stress · heart-rate proxy")
+                                .font(RecallTheme.Fonts.hudBody)
+                            Text(estimate.value.map {
+                                "\($0.formatted(.number.precision(.fractionLength(2)))) personal MAD"
+                            } ?? "Unavailable: \(estimate.reason ?? "unknown")")
+                                .font(RecallTheme.Fonts.hudBody)
+                            Text("Unvalidated personal-baseline deviation, not Welly stress or native fatigue. Zero means your baseline, not no stress. Exercise and sleep are not corrected.")
+                                .font(RecallTheme.Fonts.hudCaption)
+                            if let measuredAt = estimate.inputMeasuredAt {
+                                Text("Input measured: \(measuredAt.formatted())")
+                                    .font(RecallTheme.Fonts.hudCaption)
+                            }
+                        }
+                        .foregroundStyle(RecallTheme.Colors.textLabel)
+                    }
                     research
                 }
 

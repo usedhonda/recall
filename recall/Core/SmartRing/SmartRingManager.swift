@@ -19,6 +19,18 @@ final class SmartRingManager {
     private(set) var fatigueEstimate: RingFatigueEstimate?
     private(set) var fatigueAnalysisStatus = "Experimental fatigue estimation is off."
     private var firmware = ""
+    var stressSnapshot: SmartRingStressEstimate? {
+        guard isEnabled, let id = selectedID, let zone = TimeZone(identifier: clockTimeZone),
+              RingDeviceProfiles.matching(deviceID: AppSettings.shared.smartRingDeviceModelID, firmware: firmware) != nil else { return nil }
+        do {
+            return try SmartRingStress.evaluate(healthSamples,
+                deviceID: SmartRingSample.hash(Data(id.uuidString.lowercased().utf8)),
+                firmware: firmware, timeZone: zone, at: Date())
+        } catch {
+            ActivityLogger.shared.log(.health, "Ring stress estimate unavailable: \(error.localizedDescription)")
+            return nil
+        }
+    }
     var fatigueSnapshot: SmartRingFatigueEstimate? {
         guard isEnabled, let estimate = fatigueEstimate, let id = selectedID,
               RingDeviceProfiles.matching(deviceID: AppSettings.shared.smartRingDeviceModelID, firmware: firmware) != nil else { return nil }
@@ -353,6 +365,7 @@ final class SmartRingManager {
             healthKit: health.isEnabled ? health.latestHealthKitPayload : nil,
             ring: healthSamples, collectedAt: Date(), deviceModelID: AppSettings.shared.smartRingDeviceModelID)
         payload.nativeFatigueEstimate = fatigueSnapshot
+        payload.stressEstimate = stressSnapshot
         _ = try await HubTelemetryAdmission.admit(route: .healthSnapshot,
             observationID: payload.deliveryID.uuidString, occurredAt: payload.collectedAt, payload: payload)
     }

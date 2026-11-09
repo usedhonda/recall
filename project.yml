@@ -11,7 +11,7 @@ options:
 packages:
   SmartRingKit:
     url: https://github.com/usedhonda/smart-ring-kit.git
-    revision: "8350ec1687a01943277205388cc4bd116f9ab945"
+    exactVersion: "0.7.1"
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     exactVersion: "0.12.6"

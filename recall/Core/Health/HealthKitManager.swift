@@ -776,6 +776,7 @@ final class HealthKitManager {
             collectedAt: end, deviceModelID: AppSettings.shared.smartRingDeviceModelID)
         if SmartRingManager.shared.isEnabled {
             combined.nativeFatigueEstimate = SmartRingManager.shared.fatigueSnapshot
+            combined.stressEstimate = SmartRingManager.shared.stressSnapshot
         }
         return combined
     }
