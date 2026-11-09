@@ -19,8 +19,12 @@ native fatigue or clinical scale. Zero and negative values remain meaningful
 signed deviations; unavailable has no numeric value. Source/availability clocks,
 baseline statistics and limitations travel separately from measured records.
 The owner explicitly requested estimates and receiver display wiring. Formal
-receiver task `865a89dd-bcf9-492d-9530-7d77af731f2e` is in progress; do not mark
-receiver reflection or natural receipt complete before its evidence arrives.
+receiver task `865a89dd-bcf9-492d-9530-7d77af731f2e` is verified: receiver
+`98b6225` independently projects the estimate, displays fatigue separately and
+expires stale inputs using their measurement clock. Parent inspected its diff,
+representative rendering and natural same-observation receipt proof. Natural
+producer/view source, value and clocks match. This does not establish independent
+psychological validity, vendor-score reproduction or actual Chi consumption.
 The focused actual-source fixture harness passed; both consumer builds passed.
 Local log 1041 carries deployment/receipt acceptance. Existing audio OFF remains
 binding. No SDK setting or new retained rollup is introduced.
