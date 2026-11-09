@@ -100,6 +100,16 @@ filters are unchanged by the upload-outcome accounting fix.
   skips; no retrospective reclassification is justified without individual evidence.
   The accounting boundary is the deployment of this change, not the date of a recording.
 
+### Retained media recovery
+
+Media transfers use an ephemeral session. Before the first queue drain in a process,
+in-flight rows return to pending; a missing absolute path is re-pointed only when its
+file exists under the current Documents/media directory. This recovery preserves
+attempts, stored Hub/legacy acknowledgements and source files. Missing-file reads
+use the existing read-failure backoff, invalid configuration yields without spending
+the file's retry budget, and empty Hub originals retain the normal retry pacing.
+The media retention policy and the requirement for matching receipts are unchanged.
+
 ## 4. Upload metadata
 
 | Field | Purpose |

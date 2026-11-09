@@ -21,6 +21,7 @@ final class MediaUploadManager {
 
     private var processingTask: Task<Void, Never>?
     private var shouldContinue = false
+    private var recoveredPersistedQueue = false
     private let activity = ActivityLogger.shared
     private var consecutiveFailures = 0
 
@@ -35,6 +36,15 @@ final class MediaUploadManager {
 
     func startProcessing(modelContainer: ModelContainer) {
         guard !isUploading else { return }
+        if !recoveredPersistedQueue {
+            do {
+                try recoverPersistedQueue(context: ModelContext(modelContainer))
+                recoveredPersistedQueue = true
+            } catch {
+                activity.log(.error, "[media] startup recovery could not be saved; queue retained")
+                return
+            }
+        }
         shouldContinue = true
         isUploading = true
         Self.logger.info("MediaUploadManager started")
@@ -44,6 +54,41 @@ final class MediaUploadManager {
             await self?.cleanupHubAckedFiles(modelContainer: modelContainer)
             await self?.processLoop(modelContainer: modelContainer)
         }
+    }
+
+    /// Ephemeral transfers cannot survive a process restart. Restore their queue
+    /// ownership once per process, and repair retained paths after a container move.
+    /// A missing replacement never authorizes deletion or a successful delivery.
+    @discardableResult
+    func recoverPersistedQueue(context: ModelContext, mediaDirectory: URL? = nil) throws -> Int {
+        let directory = mediaDirectory ?? FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("media", isDirectory: true)
+        let uploaded = MediaUploadStatus.uploaded.rawValue
+        let rows = try context.fetch(FetchDescriptor<MediaChunk>(predicate: #Predicate { $0.uploadStatusRaw != uploaded }))
+        var recovered = 0
+        for chunk in rows {
+            var changed = false
+            if !FileManager.default.fileExists(atPath: chunk.filePath),
+               !chunk.fileName.isEmpty, chunk.fileName != ".", chunk.fileName != "..",
+               URL(fileURLWithPath: chunk.fileName).lastPathComponent == chunk.fileName {
+                let candidate = directory.appendingPathComponent(chunk.fileName)
+                if FileManager.default.fileExists(atPath: candidate.path) {
+                    chunk.filePath = candidate.path
+                    changed = true
+                }
+            }
+            if chunk.uploadStatus == .uploading {
+                chunk.uploadStatus = .pending
+                chunk.uploadedAt = nil
+                changed = true
+            }
+            if changed { recovered += 1 }
+        }
+        if recovered > 0 {
+            try context.save()
+            activity.log(.upload, "[media] recovered \(recovered) retained queue records")
+        }
+        return recovered
     }
 
     func stopProcessing() {
@@ -107,19 +152,19 @@ final class MediaUploadManager {
               let scheme = baseURL.scheme?.lowercased(),
               (scheme == "http" || scheme == "https"),
               baseURL.host != nil else {
-            Self.logger.error("[media] invalid server URL: \(settings.uploadServerURL)")
+            Self.logger.error("[media] invalid server URL; queue retained")
+            // This is a configuration failure, not an attempt against this file.
+            // Leave retry ownership intact without spinning on the same row.
+            try? await Task.sleep(for: .seconds(10))
             return
         }
         let serverURL = baseURL.appendingPathComponent("ingest-media")
 
-        guard FileManager.default.fileExists(atPath: chunk.filePath) else {
-            chunk.uploadStatus = .failed
-            try? context.save()
-            return
-        }
         let fileURL = URL(fileURLWithPath: chunk.filePath)
         let fileData: Data
         do {
+            // Missing files follow the same counted/backed-off failure path as
+            // other read errors; an existence check must not bypass that path.
             fileData = try Data(contentsOf: fileURL)
         } catch {
             activity.log(.error, "[media] read failed \(chunk.fileName): \(error.localizedDescription)")
@@ -201,7 +246,7 @@ final class MediaUploadManager {
                     let bytes = try Data(contentsOf: URL(fileURLWithPath: chunk.filePath))
                     guard !bytes.isEmpty else {
                         await hub.recordGap(route: .glassesOriginal, reason: "empty_original")
-                        return
+                        throw CocoaError(.fileReadCorruptFile)
                     }
                     let metadata = buildMetadata(chunk: chunk, deviceId: AppSettings.shared.deviceId)
                     chunk.hubExternalID = try await hub.admit(route: .glassesOriginal,
