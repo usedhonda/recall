@@ -22,6 +22,11 @@ and wake debounce. Estimated stress updates from real received heart samples;
 background execution remains OS-controlled, not a guaranteed ten-minute delivery.
 Both builds and contract passed; deployed with audio OFF preserved. Local log1043
 holds private configuration proof and subsequent natural-cadence acceptance.
+Two new actual native-fatigue records were recovered with a 600-second gap;
+this is device storage evidence, not a promise of background app execution.
+Heart/HRV acquisition succeeded, but a different dynamic-HR history still saw
+conflicting spot-HR traffic. That partial-pass failure remains explicit and does
+not discard the saved target observations or their health snapshot.
 
 Current estimate checkpoint: Recall `06b2e58` pins released SDK 0.7.1 and adds an
 independent `stressEstimate` to both existing health snapshot paths. It is a
