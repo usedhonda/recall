@@ -7,6 +7,7 @@ import SmartRingKit
 @Observable
 final class SmartRingManager {
     static let shared = SmartRingManager()
+    static let syncInterval: TimeInterval = 10 * 60
     private(set) var isEnabled = AppSettings.shared.smartRingEnabled
     private(set) var devices: [RingPeripheral] = []
     private(set) var isBusy = false
@@ -349,7 +350,7 @@ final class SmartRingManager {
     private func resume() {
         guard isEnabled, isForeground else { return }
         if timer == nil {
-            timer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
+            timer = Timer.scheduledTimer(withTimeInterval: Self.syncInterval, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.sync() }
             }
         }

@@ -273,3 +273,21 @@ The existing Health and ring snapshot paths both attach this separate result.
 Receiver projections keep it live-only and distinct from raw native fatigue,
 legacy `stress_raw`, measured records and coarse daily rollups. No new long-term
 retention or compact-snapshot cutover is part of this change.
+
+## Ten-minute owner-selected cadence
+
+The foreground acquisition timer and background request/debounce policy use one
+600-second interval. Each acquisition refreshes the independent stress estimate
+from actual received spot-heart-rate inputs; repeating a query is not a new
+measurement. iOS decides background execution, so this is not a promise of a
+snapshot or estimate every ten minutes while suspended. Retained device histories
+are recovered at their original measurement clocks when execution resumes.
+
+Separately, the owner explicitly selected ten-minute native HRV/fatigue monitoring
+on the already verified firmware. This device setting is applied only through a
+bounded private maintenance operation with identity/firmware checks, preservation
+of all other fields and exact readback. It is not a public SDK setter or a write
+performed on ordinary sync/startup. Higher sampling may increase battery use.
+The app never fabricates missing ten-minute measurements or interpolates fatigue
+and calls it measured data. Native fatigue and the heart-rate stress proxy remain
+separate. Deployment logs carry the actual setting/readback evidence.

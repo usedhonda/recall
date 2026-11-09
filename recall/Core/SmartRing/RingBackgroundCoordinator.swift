@@ -37,7 +37,7 @@ final class RingBackgroundCoordinator: NSObject, @preconcurrency CBCentralManage
         guard AppSettings.shared.smartRingEnabled, AppSettings.shared.smartRingPeripheralID != nil,
               !AppSettings.shared.smartRingClockTimeZone.isEmpty else { return }
         let request = BGProcessingTaskRequest(identifier: Self.taskID)
-        request.earliestBeginDate = Date().addingTimeInterval(900)
+        request.earliestBeginDate = Date().addingTimeInterval(SmartRingManager.syncInterval)
         request.requiresExternalPower = false
         request.requiresNetworkConnectivity = false
         do { try BGTaskScheduler.shared.submit(request) }
@@ -76,7 +76,7 @@ final class RingBackgroundCoordinator: NSObject, @preconcurrency CBCentralManage
 
     private func wake() {
         guard AppSettings.shared.smartRingEnabled,
-              lastWake.map({ Date().timeIntervalSince($0) >= 900 }) ?? true else { return }
+              lastWake.map({ Date().timeIntervalSince($0) >= SmartRingManager.syncInterval }) ?? true else { return }
         lastWake = Date()
         Task { @MainActor in
             ActivityLogger.shared.log(.health, "Ring Bluetooth wake; background acquisition requested")
