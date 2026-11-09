@@ -1,3 +1,4 @@
+import { readJsonObject, sendBodyError } from "./json-body.js";
 /**
  * Settings handler — GET/POST /api/recall-settings
  *
@@ -7,14 +8,6 @@
 import { verifyAuth } from "./auth.js";
 import { getReactionSettings, saveReactionSettings } from "./recall-settings.js";
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    req.on("error", reject);
-  });
-}
 
 function sendError(res, status, code, message) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -48,10 +41,9 @@ export function createSettingsHandler(api) {
     if (req.method === "POST") {
       let body;
       try {
-        const raw = await readBody(req);
-        body = JSON.parse(raw);
-      } catch {
-        sendError(res, 400, "BAD_REQUEST", "Invalid JSON body");
+        body = await readJsonObject(req);
+      } catch (err) {
+        sendBodyError(res, err);
         return;
       }
 

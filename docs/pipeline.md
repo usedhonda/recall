@@ -115,6 +115,11 @@ policy belongs to VoiceLog; do not infer it from this client's defaults.
 
 ## 5. VoiceLog contract (Mac mini)
 
+The bundled Gateway plugin's POST routes require a JSON object, a body of at most
+2 MiB, and body completion within 15 seconds. A 400/408/413 response is a refusal,
+not delivery acknowledgment; valid per-stream payload and receipt semantics are
+unchanged. See `openclaw-plugin/README.md` for the ingress limits.
+
 ### Telemetry delivery accounting
 
 Background telemetry scheduling is not delivery. The client persists a batch ID,

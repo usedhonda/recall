@@ -1,3 +1,4 @@
+import { readJsonObject, sendBodyError } from "./json-body.js";
 /**
  * POST /api/telemetry handler.
  *
@@ -459,20 +460,6 @@ async function maybeWriteNowPlayingDiary(nowPlaying, log) {
 }
 
 /**
- * Read the full request body as a string.
- * @param {import("http").IncomingMessage} req
- * @returns {Promise<string>}
- */
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    req.on("error", reject);
-  });
-}
-
-/**
  * Send a JSON error response.
  * @param {import("http").ServerResponse} res
  * @param {number} status
@@ -528,10 +515,9 @@ export function createTelemetryHandler(api, options = {}) {
     // Parse body
     let body;
     try {
-      const raw = await readBody(req);
-      body = JSON.parse(raw);
+      body = await readJsonObject(req);
     } catch (err) {
-      sendError(res, 400, "BAD_REQUEST", "Invalid JSON body");
+      sendBodyError(res, err);
       return;
     }
 
