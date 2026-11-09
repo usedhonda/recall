@@ -12,6 +12,17 @@ the implementation through `81b9cac` is on origin/main.
 
 ## Implemented checkpoint
 
+Ten-minute cadence checkpoint: owner explicitly selected native HRV/fatigue
+monitoring at ten minutes. A bounded private operation verified existing active
+ten-minute heart monitoring, changed only the HRV interval from sixty to ten,
+and verified exact readback with all other fields preserved. This supersedes the
+older temporary experiment's restored setting; it is not an automatic SDK write.
+Recall `c6b8f15` shares a 600-second foreground timer, background earliest request
+and wake debounce. Estimated stress updates from real received heart samples;
+background execution remains OS-controlled, not a guaranteed ten-minute delivery.
+Both builds and contract passed; deployed with audio OFF preserved. Local log1043
+holds private configuration proof and subsequent natural-cadence acceptance.
+
 Current estimate checkpoint: Recall `06b2e58` pins released SDK 0.7.1 and adds an
 independent `stressEstimate` to both existing health snapshot paths. It is a
 heart-rate-only personal median/MAD deviation, not a probability, Welly stress,
