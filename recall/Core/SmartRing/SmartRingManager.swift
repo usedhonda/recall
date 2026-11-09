@@ -110,7 +110,11 @@ final class SmartRingManager {
             self.storedCount = counts.stored
             self.pendingCount = counts.pending
             self.status = "Stored \(counts.stored) ring records; \(counts.pending) pending, including \(counts.held) held by the history retention limit."
-            if let failure { self.status += " \(failure.localizedDescription)" }
+            if let failure {
+                if case RingError.busy = failure {
+                    self.status += " Ring traffic is busy; sync deferred until the next opportunity."
+                } else { self.status += " \(failure.localizedDescription)" }
+            }
             ActivityLogger.shared.log(.health, "Ring sync: \(counts.stored) stored, \(counts.pending) pending local admission, error=\(failure != nil)")
         }
     }
@@ -120,7 +124,7 @@ final class SmartRingManager {
         let commands: [RingReadCommand] = [.spotHeartRateHistory, .hrvHistory, .sleepHistory,
             .temperatureHistory, .oxygenHistory, .dailyActivityHistory, .activityHistory,
             .manualOxygenHistory, .exerciseHistory, .heartRateHistory]
-        let context = try await readContext(id: id)
+        let context = try await readContext(id: id, timeZone: timeZone, store: store)
         try await Self.readCategories(commands) { command in
             try await self.captureCategory(command, id: id, timeZone: timeZone, store: store,
                                            incremental: false, context: context)
@@ -143,11 +147,12 @@ final class SmartRingManager {
         let clockFailure: String?
     }
 
-    private func readContext(id: UUID) async throws -> ReadContext {
+    private func readContext(id: UUID, timeZone: TimeZone, store: SmartRingStore) async throws -> ReadContext {
         let client = RingClient(); self.client = client
         defer { client.disconnect(); self.client = nil }
         _ = try await client.discover(duration: 1)
         try await client.connect(to: id)
+        try await waitForQuiet(client, id: id, timeZone: timeZone, store: store)
         let info = try await client.readInfo()
         firmware = info.firmware
         do { return ReadContext(info: info, deviceClock: try await client.readDeviceClock(), clockFailure: nil) }
@@ -187,7 +192,7 @@ final class SmartRingManager {
         let backfill: [RingReadCommand] = [.sleepHistory, .oxygenHistory, .temperatureHistory,
             .dailyActivityHistory, .activityHistory, .manualOxygenHistory, .exerciseHistory, .heartRateHistory]
         let position = UserDefaults.standard.integer(forKey: "smartRing.backgroundBackfillIndex") % backfill.count
-        let context = try await readContext(id: id)
+        let context = try await readContext(id: id, timeZone: timeZone, store: store)
         // Persist each category before moving on; OS expiry can cancel between any two reads.
         try await Self.readCategories([.spotHeartRateHistory, .hrvHistory, backfill[position]]) { command in
             try await self.captureCategory(command, id: id, timeZone: timeZone, store: store,
@@ -218,6 +223,7 @@ final class SmartRingManager {
         defer { client.disconnect(); self.client = nil }
         _ = try await client.discover(duration: 1)
         try await client.connect(to: id)
+        try await waitForQuiet(client, id: id, timeZone: timeZone, store: store)
         let info = context.info
         let device = SmartRingSample.hash(Data(id.uuidString.lowercased().utf8))
         let hint = incremental ? await store.resumeHint(command: command.rawValue, deviceID: device,
@@ -265,6 +271,23 @@ final class SmartRingManager {
         try await mergeDecoded([(command, RingHistoryCodec.decode(raw))], id: id, firmware: info.firmware,
             timeZone: timeZone, capturedAt: capturedAt, store: store)
         ActivityLogger.shared.log(.health, "Ring category \(command.rawValue) completed; persisted before next read; incremental=\(hint != nil)")
+    }
+
+    private func waitForQuiet(_ client: RingClient, id: UUID, timeZone: TimeZone,
+                              store: SmartRingStore) async throws {
+        let startedAt = Date()
+        var packets: [[UInt8]] = []
+        var failure: Error?
+        do { try await client.waitForHistoryIdle(onNotification: { packets.append([UInt8]($0)) }) }
+        catch { failure = error }
+        // Passive traffic is evidence, not a requested or selected health observation.
+        if !packets.isEmpty {
+            try captureArchive.savePassive(packets, peripheralID: id, timeZone: timeZone,
+                startedAt: startedAt, failure: failure?.localizedDescription,
+                existingObservationCount: await store.counts().stored)
+            ActivityLogger.shared.log(.health, "Ring passive traffic: \(packets.count) packets; quiet=\(failure == nil)")
+        }
+        if let failure { throw failure }
     }
 
     func setFatigueMethod(_ method: String) {

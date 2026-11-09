@@ -13,6 +13,30 @@ final class SmartRingCaptureArchive {
 
     func count() throws -> Int { try FileManager.default.contentsOfDirectory(atPath: root.path).count }
 
+    func savePassive(_ notifications: [[UInt8]], peripheralID: UUID, timeZone: TimeZone,
+                     startedAt: Date, failure: String?, existingObservationCount: Int) throws {
+        struct PassiveCapture: Encodable {
+            let notifications: [[UInt8]]
+            let peripheralID: UUID
+            let clockTimeZone: String
+            let startedAt: Date
+            let finishedAt: Date
+            let failure: String?
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        var identity = try encoder.encode(notifications)
+        identity.append(Data((peripheralID.uuidString + timeZone.identifier).utf8))
+        var file = root.appendingPathComponent("passive-" + SmartRingSample.hash(identity) + ".json")
+        guard !FileManager.default.fileExists(atPath: file.path) else { return }
+        guard try count() + existingObservationCount < 10_000 else { throw SmartRingStore.Failure.archiveFull }
+        try encoder.encode(PassiveCapture(notifications: notifications, peripheralID: peripheralID,
+            clockTimeZone: timeZone.identifier, startedAt: startedAt, finishedAt: Date(), failure: failure))
+            .write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        var flags = URLResourceValues(); flags.isExcludedFromBackup = true
+        try file.setResourceValues(flags)
+    }
+
     func saveFailure(command: UInt8, peripheralID: UUID, timeZone: TimeZone,
                      startedAt: Date, error: Error, existingObservationCount: Int) throws {
         struct FailedAttempt: Encodable {

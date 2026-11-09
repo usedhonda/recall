@@ -1,5 +1,16 @@
 # Direct smart-ring capture
 
+The consumer currently pins a post-0.7.0 SDK correction by exact revision.
+Before metadata and each history request, passive admission requires five quiet
+seconds, within a thirty-second budget. An observed unfinished history remains
+busy until its terminator, rather than being mistaken for idle during pagination.
+Busy defers the pass without advancing its successful-sync clock or backfill
+cursor. Observed passive bytes are saved in the protected, backup-excluded
+capture archive, never normalized as a requested health record. Previously
+stored observations still drain to the outbox. This is not an inter-app mutex;
+another reader can begin afterward, so response conflicts still fail the pass.
+No vendor settings, sensor cadence or ring clock are changed.
+
 ## Source ownership
 
 | Source | Control | Data and meaning |
@@ -12,8 +23,8 @@ does not change the Health toggle, Audio, Location, Glasses or Media. The existi
 Health channel-status heartbeat still describes HealthKit, not the ring. No
 HealthKit writes or vendor-source exclusions are introduced.
 
-The dependency is [SmartRingKit 0.7.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.7.0),
-pinned exactly. This is an experimental FFF0 driver whose read protocol was
+The dependency is based on [SmartRingKit 0.7.0](https://github.com/usedhonda/smart-ring-kit/releases/tag/v0.7.0),
+with an exact post-release revision for passive admission. This is an experimental FFF0 driver whose read protocol was
 observed on one issin Smart Recovery Ring with firmware 0.7.5.0. Support for
 other rings/firmware, concurrent vendor-app reads, and live measurement is not
 established.
@@ -173,8 +184,8 @@ quality. Source candidates are never added again. See
 [the hybrid wire contract](smart-ring-hybrid-contract.md).
 
 A Recall-owned restoration Central observes only connection/wake state; the SDK
-alone issues history commands. This avoids changing the released SDK or duplicating
-its decoder. AppDelegate registers it independently of audio and HealthKit. The
+alone issues history commands; Recall does not duplicate its decoder.
+AppDelegate registers it independently of audio and HealthKit. The
 background modes are bluetooth-central and processing. BGProcessing and restored
 known-peripheral connection events request single-flight work. Each background
 opportunity prioritizes spot heart rate and HRV, then one rotating backfill category,
