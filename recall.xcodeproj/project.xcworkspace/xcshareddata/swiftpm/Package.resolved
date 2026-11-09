@@ -20,15 +20,6 @@
       }
     },
     {
-      "identity" : "meta-wearables-dat-ios",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/facebook/meta-wearables-dat-ios.git",
-      "state" : {
-        "revision" : "c40db3978a76b97504b85ed9f082be5549c5a486",
-        "version" : "0.7.0"
-      }
-    },
-    {
       "identity" : "smart-ring-kit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/usedhonda/smart-ring-kit.git",

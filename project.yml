@@ -15,9 +15,6 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     exactVersion: "0.12.6"
-  MetaWearablesDAT:
-    url: https://github.com/facebook/meta-wearables-dat-ios.git
-    exactVersion: "0.7.0"
 
 settings:
   base:
@@ -71,12 +68,6 @@ targets:
         product: SmartRingKit
       - package: FluidAudio
         product: FluidAudio
-      - package: MetaWearablesDAT
-        product: MWDATCore
-      - package: MetaWearablesDAT
-        product: MWDATCamera
-      - package: MetaWearablesDAT
-        product: MWDATDisplay
       - sdk: HealthKit.framework
       - sdk: CoreLocation.framework
       - sdk: CoreMotion.framework
@@ -102,10 +93,6 @@ targets:
         NSHealthUpdateUsageDescription: "recall does not write any health data."
         NSPhotoLibraryUsageDescription: "recall imports photos and videos taken with your Ray-Ban Meta smart glasses to your lifelog. Other photos are not uploaded."
         NSBluetoothAlwaysUsageDescription: "recall connects to your selected smart ring and Meta AI glasses."
-        MWDAT:
-          DAMEnabled: true
-          Analytics:
-            OptOut: true
         UIBackgroundModes:
           - audio
           - location
