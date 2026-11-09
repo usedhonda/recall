@@ -133,17 +133,8 @@ struct RecallApp: App {
             AppSettings.shared.telemetrySendInterval = 15
         }
 
-        // Ensure all telemetry streams are enabled (critical for always-on operation)
-        if !AppSettings.shared.locationEnabled {
-            AppSettings.shared.locationEnabled = true
-        }
-        if !AppSettings.shared.locationBackgroundEnabled {
-            AppSettings.shared.locationBackgroundEnabled = true
-        }
-        if !AppSettings.shared.healthEnabled {
-            AppSettings.shared.healthEnabled = true
-        }
-
+        // Restore each stream's own saved intent. Fresh-install defaults live in
+        // AppSettings; launching the app must not replace an explicit OFF with ON.
         // Start telemetry (health + location)
         TelemetryService.shared.start()
 
@@ -151,10 +142,12 @@ struct RecallApp: App {
         // via the App Group handoff below (~0.3s) instead of the ~1h Photos-app sync
         // lag. The library scan is intentionally no longer started.
 
-        // Glasses photo handoff from vibeterm (App Group drop folder). No permission
-        // prerequisite, so started unconditionally. Dormant until vibeterm drops files.
+        // Glasses handoff follows the same saved switch as the top-screen toggle.
+        // Retained media still drains independently of whether new capture is enabled.
         TelemetryService.shared.glassesHandoffReceiver.setModelContainer(sharedModelContainer)
-        TelemetryService.shared.glassesHandoffReceiver.start()
+        if AppSettings.shared.glassesAutoImportEnabled {
+            TelemetryService.shared.glassesHandoffReceiver.start()
+        }
         MediaUploadManager.shared.startProcessing(modelContainer: sharedModelContainer)
 
         // Report per-channel on/off intent so the server can tell "user gated a

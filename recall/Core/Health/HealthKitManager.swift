@@ -35,6 +35,7 @@ final class HealthKitManager {
             guard !isRestoring else { return }
             if isEnabled {
                 ActivityLogger.shared.log(.health, "Health enabled")
+                if isAuthorized { setupBackgroundDelivery() }
                 startTimer()
                 // Immediate first query
                 Task {
@@ -168,7 +169,7 @@ final class HealthKitManager {
             isAuthorized = true
             // Re-register bg delivery after auth — iOS may have silently disabled it
             // during long background kills or HealthKit permission state transitions.
-            setupBackgroundDelivery()
+            if isEnabled { setupBackgroundDelivery() }
             return true
         } catch {
             let message = "Authorization failed: \(error.localizedDescription)"
@@ -188,7 +189,8 @@ final class HealthKitManager {
     /// bg delivery before re-registering. Call from AppDelegate.didFinishLaunchingWithOptions
     /// and again after authorization completes to recover from long-term iOS delivery failures.
     func setupBackgroundDelivery() {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
+        // AppDelegate calls before restoreSettings; consult the durable switch.
+        guard AppSettings.shared.healthEnabled, HKHealthStore.isHealthDataAvailable() else { return }
 
         // Tear down existing observers to prevent duplicate wake callbacks
         if !observerQueries.isEmpty {
@@ -373,6 +375,7 @@ final class HealthKitManager {
 
     func startTimer() {
         stopTimer()
+        guard isEnabled else { return }
         timer = Timer.scheduledTimer(withTimeInterval: sendInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.queryAndSend()

@@ -64,11 +64,11 @@ final class TelemetryService {
         if healthManager.isEnabled {
             Task {
                 let authorized = await healthManager.requestAuthorization()
-                if authorized {
+                if authorized && healthManager.isEnabled {
                     healthManager.startTimer()
                     await healthManager.queryAndSendFull()  // 24h lookback on launch to catch up
                     ActivityLogger.shared.log(.health, "HealthKit authorized, timer started, first full query sent")
-                } else {
+                } else if !authorized {
                     ActivityLogger.shared.log(.health, "HealthKit authorization denied — health data will not be collected")
                 }
             }
