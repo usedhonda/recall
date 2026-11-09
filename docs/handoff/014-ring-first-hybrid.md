@@ -12,6 +12,27 @@ the implementation through `81b9cac` is on origin/main.
 
 ## Implemented checkpoint
 
+Transport stability correction is saved on isolated local branches: Recall
+`fix/ring-reader-isolation` (`7ea6a9e`, `3b5b1cf`) and SmartRingKit
+`fix/history-quiescence-pinned` (`8350ec1`, based on 0.7.0). These are not pushed
+or integrated into main. The unknown root index lock is preserved; matching
+Recall source edits remain in the root worktree. The pinned SDK revision currently
+requires the local repository until publishing is explicitly authorized.
+
+The installed correction stops a failed category pass, isolates metadata once
+per pass, and passively waits for history quiescence before requests. Unfinished
+observed history cannot become idle merely through silence; passive evidence is
+protected and never treated as a selected health reading. Existing stored data
+still drains on busy/failure. No sampling, clock, firmware or permanent vendor
+settings were changed. SDK suite and both consumer builds passed.
+
+A full ten-category pass succeeded with the three other reader processes absent;
+after the correction another full pass succeeded with them running normally.
+Audio OFF was preserved. This is actual full acquisition evidence, not proof of
+inter-app mutual exclusion or future contention-free operation. The normal pass
+had no traffic in its passive windows, so live busy/defer remains unobserved.
+Private runtime evidence and unresolved integration status: local log 1037.
+
 Latest SDK checkpoint: `1bd8e7a` adopts pinned0.7.0; `860dafb` preserves failures
 before raw capture. Foreground prioritizes spot HR/HRV and persists each category;
 background prioritizes those two before one rotating backfill. Supported resume
