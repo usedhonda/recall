@@ -12,12 +12,25 @@ the implementation through `81b9cac` is on origin/main.
 
 ## Implemented checkpoint
 
+Current estimate checkpoint: Recall `06b2e58` pins released SDK 0.7.1 and adds an
+independent `stressEstimate` to both existing health snapshot paths. It is a
+heart-rate-only personal median/MAD deviation, not a probability, Welly stress,
+native fatigue or clinical scale. Zero and negative values remain meaningful
+signed deviations; unavailable has no numeric value. Source/availability clocks,
+baseline statistics and limitations travel separately from measured records.
+The owner explicitly requested estimates and receiver display wiring. Formal
+receiver task `865a89dd-bcf9-492d-9530-7d77af731f2e` is in progress; do not mark
+receiver reflection or natural receipt complete before its evidence arrives.
+The focused actual-source fixture harness passed; both consumer builds passed.
+Local log 1041 carries deployment/receipt acceptance. Existing audio OFF remains
+binding. No SDK setting or new retained rollup is introduced.
+
 Transport stability correction is saved on isolated local branches: Recall
 `fix/ring-reader-isolation` (`7ea6a9e`, `3b5b1cf`) and SmartRingKit
-`fix/history-quiescence-pinned` (`8350ec1`, based on 0.7.0). These are not pushed
-or integrated into main. The unknown root index lock is preserved; matching
-Recall source edits remain in the root worktree. The pinned SDK revision currently
-requires the local repository until publishing is explicitly authorized.
+`fix/history-quiescence-pinned` (`8350ec1`, based on 0.7.0). Recall commits are not
+pushed or integrated into main. The SDK correction was subsequently integrated
+and publicly released as 0.7.1. The unknown root index lock is preserved; matching
+Recall source edits remain in the root worktree.
 
 The installed correction stops a failed category pass, isolates metadata once
 per pass, and passively waits for history quiescence before requests. Unfinished
