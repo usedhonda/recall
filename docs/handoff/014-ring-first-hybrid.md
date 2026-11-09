@@ -29,12 +29,13 @@ The focused actual-source fixture harness passed; both consumer builds passed.
 Local log 1041 carries deployment/receipt acceptance. Existing audio OFF remains
 binding. No SDK setting or new retained rollup is introduced.
 
-Transport stability correction is saved on isolated local branches: Recall
+Transport stability correction was developed on isolated local branches: Recall
 `fix/ring-reader-isolation` (`7ea6a9e`, `3b5b1cf`) and SmartRingKit
-`fix/history-quiescence-pinned` (`8350ec1`, based on 0.7.0). Recall commits are not
-pushed or integrated into main. The SDK correction was subsequently integrated
-and publicly released as 0.7.1. The unknown root index lock is preserved; matching
-Recall source edits remain in the root worktree.
+`fix/history-quiescence-pinned` (`8350ec1`, based on 0.7.0). The verified Recall
+corrections and stress estimate are included in this revision. The SDK correction
+was integrated and publicly released as 0.7.1. The unknown original-worktree index
+lock was preserved throughout verification and publication; the isolated worktree
+provides the publication source without altering that locked index.
 
 The installed correction stops a failed category pass, isolates metadata once
 per pass, and passively waits for history quiescence before requests. Unfinished
