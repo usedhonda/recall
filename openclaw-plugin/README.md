@@ -37,6 +37,18 @@ Create local env file from template:
 cp .env.local.example .env.local
 ```
 
+## Request body limits
+
+All four POST routes (`/api/telemetry`, `/api/web-history`, `/api/voice-transcript`,
+and `/api/recall-settings`) require a JSON object. The plugin retains at most
+2 MiB (2,097,152 bytes) per body and allows 15 seconds to finish reading it.
+Oversized bodies return 413, incomplete reads that exceed the deadline return 408,
+and malformed JSON or non-object roots return 400. These errors do not include
+submitted content. They close the HTTP connection and are not delivery receipts.
+Gateway authentication and each route's existing payload schema remain in effect.
+
+Offline verification: `node --test openclaw-plugin/test/*.test.js` from the repo root.
+
 ## Quick Install
 
 ```bash
