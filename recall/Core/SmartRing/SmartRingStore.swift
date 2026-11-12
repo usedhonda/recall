@@ -69,10 +69,12 @@ actor SmartRingStore {
     func resumeHint(command: UInt8, deviceID: String, firmware: String, timeZone: String) -> RingTimestamp? {
         guard [0x55, 0x56, 0x62].contains(command) else { return nil }
         let type = command == 0x56 ? "smart_ring.hrv_history" : "smart_ring.sensor.\(command)"
+        // The ring clock has no zone: resume by its own wall time, whatever zone the
+        // stored samples were interpreted in, so a zone change does not re-read history.
+        let utc = TimeZone(identifier: "UTC")!
         let samples = entries.map(\.sample).filter {
-            $0.type == type && $0.ring.deviceID == deviceID && $0.ring.firmware == firmware &&
-            $0.ring.clockTimeZone == timeZone
-        }.sorted { $0.start > $1.start }
+            $0.type == type && $0.ring.deviceID == deviceID && $0.ring.firmware == firmware
+        }.sorted { ($0.ring.deviceTime.date(in: utc) ?? $0.start) > ($1.ring.deviceTime.date(in: utc) ?? $1.start) }
         // Retain one overlapping anchor; this is not an arbitrary cutoff or a receipt cursor.
         return samples.dropFirst().first?.ring.deviceTime
     }
@@ -81,7 +83,10 @@ actor SmartRingStore {
     func merge(_ samples: [SmartRingSample], capturedAt: Date, reservedSlots: Int = 0,
                availableAt: Date? = nil) throws -> Int {
         var known = Set(entries.map { $0.sample.uuid })
-        let fresh = samples.filter { known.insert($0.uuid).inserted }
+        // A reading already stored under another clock zone is the same measurement:
+        // do not store or send it again with a new uuid.
+        var readings = Set(entries.map { $0.sample.readingKey })
+        let fresh = samples.filter { known.insert($0.uuid).inserted && readings.insert($0.readingKey).inserted }
         var next = entries
         if let availableAt {
             let receivedIDs = Set(samples.map(\.uuid))

@@ -51,6 +51,13 @@ struct SmartRingSample: Codable, Equatable {
                        rawBytes: record.rawBytes)
     }
 
+    /// The uuid without the clock zone: the same ring bytes the uuid hashes, so one
+    /// reading keeps one key when the zone setting changes.
+    var readingKey: String {
+        let skipped = type == "smart_ring.hrv_history" || sensor?.dateOnly != true ? 3 : 2
+        return "\(ring.deviceID)|\(type)|" + Self.hash(Data(ring.rawBytes.dropFirst(skipped)))
+    }
+
     static func hash(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }

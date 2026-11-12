@@ -44,6 +44,19 @@ final class SmartRingTests: XCTestCase {
         let wrongProfile = await store.resumeHint(command: 0x56, deviceID: records[0].ring.deviceID,
             firmware: "unknown", timeZone: "GMT")
         XCTAssertNil(wrongProfile)
+        // A clock zone change re-reads the same ring bytes: nothing new to store or send,
+        // and the resume point stays on the ring's own wall time.
+        let tokyo = try records.map { sample -> SmartRingSample in
+            let record = try RingPacketDecoder.hrvRecord(Data(sample.ring.rawBytes))
+            return try SmartRingSample(record: record, peripheralID: peripheral, firmware: "0.7.5.0",
+                                       timeZone: TimeZone(identifier: "Asia/Tokyo")!)
+        }
+        XCTAssertNotEqual(tokyo[0].uuid, records[0].uuid)
+        let added = try await store.merge(tokyo, capturedAt: received)
+        XCTAssertEqual(added, 0)
+        let zoneChangedHint = await store.resumeHint(command: 0x56, deviceID: records[0].ring.deviceID,
+            firmware: "0.7.5.0", timeZone: "Asia/Tokyo")
+        XCTAssertEqual(zoneChangedHint?.minute, 20)
         let projected = await store.samplesForHealthSnapshot()
         XCTAssertTrue(projected.allSatisfy { $0.availableAt == received })
         var retries: [Data] = []

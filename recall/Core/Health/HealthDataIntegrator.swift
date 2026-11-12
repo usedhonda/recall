@@ -80,7 +80,8 @@ enum HealthDataIntegrator {
             $0.end <= collectedAt && $0.sleep != nil &&
             RingDeviceProfiles.matching(deviceID: deviceModelID, firmware: $0.ring.firmware)?.sleepMapping != nil
         }
-        if let first = sleepSamples.first,
+        // The newest sample carries the current clock zone; older ones may use a replaced one.
+        if let first = sleepSamples.last,
            let zone = TimeZone(identifier: first.ring.clockTimeZone),
            let mapping = RingDeviceProfiles.matching(deviceID: deviceModelID, firmware: first.ring.firmware)?.sleepMapping {
             // Do not mix historical clock interpretations or different devices in one analysis.
