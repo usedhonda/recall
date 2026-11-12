@@ -18,14 +18,20 @@ final class HubDeliveryService {
     private var lastGPSReclamation = Date.distantPast
     private(set) var lastFailure: String?
 
+    static let batchedLanes: Set<String> = ["metadata-raw", "metadata-health"]
+
     func start() {
         refreshRuntime()
         for lane in ["metadata-gps", "metadata-health", "metadata-status", "metadata-raw", "audio-original", "glasses-original"] {
             guard workers[lane] == nil else { continue }
+            // Location and status stay prompt (greetings). Raw and health samples are
+            // drained in one burst every few minutes so the radio wakes less often;
+            // nothing is dropped, items just wait in the durable outbox.
+            let idle: Double = Self.batchedLanes.contains(lane) ? 300 : 5
             workers[lane] = Task { [weak self] in
                 while !Task.isCancelled {
                     let delivered = await self?.reconcile(lane: lane) ?? false
-                    try? await Task.sleep(for: .seconds(delivered ? 0.1 : 5))
+                    try? await Task.sleep(for: .seconds(delivered ? 0.1 : idle))
                 }
             }
         }

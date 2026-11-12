@@ -211,9 +211,13 @@ final class MotionActivityMonitor {
         if moving { lastMotionAt = Date() }
         let startedMoving = nextMoving && !isMoving
         if label != latestActivity || nextMoving != isMoving {
+            // The label flaps between a reading and "unknown" every few seconds while
+            // still; log only real movement changes to keep disk writes down.
+            if nextMoving != isMoving {
+                ActivityLogger.shared.log(.location, "Motion: \(label) (moving=\(nextMoving))")
+            }
             latestActivity = label
             isMoving = nextMoving
-            ActivityLogger.shared.log(.location, "Motion: \(label) (moving=\(nextMoving))")
         }
         if startedMoving { onMovementStart?() }
     }
