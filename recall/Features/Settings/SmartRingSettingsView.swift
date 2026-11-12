@@ -3,8 +3,6 @@ import SmartRingKit
 
 struct SmartRingSettingsView: View {
     @State private var manager = SmartRingManager.shared
-    @State private var showClockZones = false
-    @State private var clockSearch = ""
 
     private let accent = RecallTheme.Colors.neonMagenta
 
@@ -116,7 +114,6 @@ struct SmartRingSettingsView: View {
             }
             .hudCard(borderColor: manager.isEnabled ? accent.opacity(0.3) : RecallTheme.Colors.border)
         }
-        .sheet(isPresented: $showClockZones) { clockZoneSheet }
     }
 
     private var configuration: some View {
@@ -135,29 +132,6 @@ struct SmartRingSettingsView: View {
             .font(RecallTheme.Fonts.hudBody)
             .tint(accent)
             .disabled(manager.isBusy)
-
-            Button { showClockZones = true } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("RING CLOCK TIME ZONE")
-                        .font(RecallTheme.Fonts.hudMicro)
-                        .tracking(1)
-                        .foregroundStyle(RecallTheme.Colors.textLabel)
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(manager.clockTimeZone.isEmpty ? "Choose time zone" : manager.clockTimeZone)
-                            .font(RecallTheme.Fonts.hudBody)
-                            .multilineTextAlignment(.leading)
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.right").font(.caption)
-                    }
-                    .foregroundStyle(accent)
-                }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(manager.isBusy)
-            .accessibilityLabel("Ring clock time zone")
-            .accessibilityValue(manager.clockTimeZone.isEmpty ? "Not selected" : manager.clockTimeZone)
 
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 10) {
@@ -255,48 +229,4 @@ struct SmartRingSettingsView: View {
         .tint(accent)
     }
 
-    private var clockZoneSheet: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach(TimeZone.knownTimeZoneIdentifiers.filter {
-                        clockSearch.isEmpty || $0.localizedCaseInsensitiveContains(clockSearch)
-                    }, id: \.self) { identifier in
-                        Button {
-                            manager.setClockTimeZone(identifier)
-                            showClockZones = false
-                        } label: {
-                            HStack {
-                                Text(identifier).foregroundStyle(RecallTheme.Colors.textPrimary)
-                                Spacer(minLength: 8)
-                                if manager.clockTimeZone == identifier {
-                                    Image(systemName: "checkmark").foregroundStyle(accent)
-                                }
-                            }
-                            .font(RecallTheme.Fonts.hudBody)
-                            .padding(.vertical, 6)
-                        }
-                        .disabled(manager.isBusy)
-                        .listRowBackground(RecallTheme.Colors.surface)
-                    }
-                } header: {
-                    Text("Use the ring's recorded clock zone, not your current location. Historical travel and clock changes cannot be inferred.")
-                        .foregroundStyle(RecallTheme.Colors.textLabel)
-                        .textCase(nil)
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(RecallTheme.Colors.bg)
-            .searchable(text: $clockSearch, prompt: "Search time zones")
-            .navigationTitle("Ring clock time zone")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { showClockZones = false }
-                }
-            }
-            .tint(accent)
-        }
-        .preferredColorScheme(.dark)
-    }
 }

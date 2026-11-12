@@ -78,14 +78,7 @@ final class SmartRingManager {
         AppSettings.shared.smartRingPeripheralID = device.id
         AppSettings.shared.smartRingName = selectedName
         RingBackgroundCoordinator.shared.start()
-        status = "Ring selected. Confirm its clock time zone, then sync."
-    }
-
-    func setClockTimeZone(_ identifier: String) {
-        guard !isBusy, TimeZone(identifier: identifier) != nil else { return }
-        researchInputs = nil; fatigueEstimate = nil
-        fatigueAnalysisStatus = "Sync to analyze this clock interpretation."
-        AppSettings.shared.smartRingClockTimeZone = identifier
+        status = "Ring selected. Sync to read it."
     }
 
     func scan() {
