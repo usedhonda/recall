@@ -9,6 +9,10 @@ options:
   xcodeVersion: "15.0"
 
 packages:
+  # EventSource reaches NIOCore through FluidAudio; keep resolution above the security fixes.
+  SwiftNIO:
+    url: https://github.com/apple/swift-nio.git
+    from: "2.101.1"
   SmartRingKit:
     url: https://github.com/usedhonda/smart-ring-kit.git
     exactVersion: "0.7.1"
