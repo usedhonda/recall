@@ -80,9 +80,13 @@ enum HubConnectionIssue: Codable, Equatable {
 struct HubConnectionAlertState: Codable {
     /// One existing transport resource-timeout window of positive path evidence.
     static let recentResponseWindow: TimeInterval = 60
+    /// A slow, flapping network answers between timeouts; each answer must not
+    /// buy another alert. At most one alert per this interval.
+    static let repeatInterval: TimeInterval = 3600
     var issue: HubConnectionIssue?
     var notificationClaimed = false
     var lastResponseAt: Date?
+    var lastNotifiedAt: Date?
 
     mutating func failed(_ issue: HubConnectionIssue, attemptStartedAt: Date, at now: Date = Date()) {
         guard lastResponseAt.map({ attemptStartedAt > $0 }) ?? true else { return }
@@ -101,9 +105,11 @@ struct HubConnectionAlertState: Codable {
         issue = (200...299).contains(status) ? nil : .rejected(status)
     }
 
-    mutating func claimNotification(networkAvailable: Bool) -> Bool {
-        guard networkAvailable, issue?.isRouteFailure == true, !notificationClaimed else { return false }
+    mutating func claimNotification(networkAvailable: Bool, at now: Date = Date()) -> Bool {
+        guard networkAvailable, issue?.isRouteFailure == true, !notificationClaimed,
+              lastNotifiedAt.map({ now.timeIntervalSince($0) >= Self.repeatInterval }) ?? true else { return false }
         notificationClaimed = true
+        lastNotifiedAt = now
         return true
     }
 }
@@ -194,6 +200,7 @@ final class HubConnectionMonitor {
         } catch {
             if state.lastResponseAt == responseAt {
                 state.notificationClaimed = false
+                state.lastNotifiedAt = nil
                 persist()
             }
         }

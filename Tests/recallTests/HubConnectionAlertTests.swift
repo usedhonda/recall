@@ -25,7 +25,7 @@ final class HubConnectionAlertTests: XCTestCase {
         var state = HubConnectionAlertState()
         state.failed(.unreachable(URLError.timedOut.rawValue), attemptStartedAt: start)
         XCTAssertFalse(state.claimNotification(networkAvailable: false), "ordinary offline is not a VPN alert")
-        XCTAssertTrue(state.claimNotification(networkAvailable: true))
+        XCTAssertTrue(state.claimNotification(networkAvailable: true, at: start))
         state.failed(.unreachable(URLError.cannotFindHost.rawValue), attemptStartedAt: start.addingTimeInterval(1))
         XCTAssertFalse(state.claimNotification(networkAvailable: true), "another lane cannot repeat the alert")
         state = try JSONDecoder().decode(HubConnectionAlertState.self, from: JSONEncoder().encode(state))
@@ -46,8 +46,15 @@ final class HubConnectionAlertTests: XCTestCase {
         XCTAssertFalse(state.claimNotification(networkAvailable: true), "a recent real response prevents transient alert spam")
         state.failed(.unreachable(URLError.timedOut.rawValue), attemptStartedAt: responseAt.addingTimeInterval(61),
                      at: responseAt.addingTimeInterval(62))
-        XCTAssertTrue(state.claimNotification(networkAvailable: true), "a genuinely new outage gets one alert")
-        XCTAssertFalse(state.claimNotification(networkAvailable: true))
+        XCTAssertFalse(state.claimNotification(networkAvailable: true, at: responseAt.addingTimeInterval(62)),
+                       "a flapping slow network cannot repeat the alert within the hour")
+        let later = responseAt.addingTimeInterval(3700)
+        state.responded(status: 200, at: later)
+        state.failed(.unreachable(URLError.timedOut.rawValue), attemptStartedAt: later.addingTimeInterval(61),
+                     at: later.addingTimeInterval(62))
+        XCTAssertTrue(state.claimNotification(networkAvailable: true, at: later.addingTimeInterval(62)),
+                      "a genuinely new outage an hour later gets one alert")
+        XCTAssertFalse(state.claimNotification(networkAvailable: true, at: later.addingTimeInterval(63)))
     }
 
     func testTLSReceiptAndHTTPFailuresDoNotClaimThatTailscaleIsOff() {
