@@ -30,7 +30,9 @@ class SafeXcodebuildTests(unittest.TestCase):
             captured.update(argv=argv, env=kwargs["env"])
             return FakeChild(["BUILD_SECRET='sentinel with spaces'\n", "diagnostic\n"])
 
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / ".local") as directory:
+        # This allowed log root is tracked; fresh checkouts have no private .local directory.
+        log_root = Path(__file__).resolve().parents[1] / "docs" / "log" / "codex"
+        with tempfile.TemporaryDirectory(dir=log_root) as directory:
             log = Path(directory) / "build.log"
             old = os.environ.get("BUILD_SECRET")
             os.environ["BUILD_SECRET"] = "sentinel"
