@@ -167,7 +167,7 @@ final class AppSettings {
     }
 
     var healthEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "telemetryHealthEnabled") }
+        get { Self.storedStreamEnabled(forKey: "telemetryHealthEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "telemetryHealthEnabled") }
     }
 
@@ -204,12 +204,12 @@ final class AppSettings {
     }
 
     var locationEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "telemetryLocationEnabled") }
+        get { Self.storedStreamEnabled(forKey: "telemetryLocationEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "telemetryLocationEnabled") }
     }
 
     var locationBackgroundEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "telemetryLocationBackgroundEnabled") }
+        get { Self.storedStreamEnabled(forKey: "telemetryLocationBackgroundEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "telemetryLocationBackgroundEnabled") }
     }
 
@@ -301,6 +301,12 @@ final class AppSettings {
             return UserDefaults.standard.object(forKey: "webMinContentChars") != nil ? val : 200
         }
         set { UserDefaults.standard.set(newValue, forKey: "webMinContentChars") }
+    }
+
+    /// Preserve the existing fresh-install ON defaults without overwriting a
+    /// persisted OFF on every launch. Other streams keep their own defaults.
+    static func storedStreamEnabled(forKey key: String, defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
     }
 
     private init() {}

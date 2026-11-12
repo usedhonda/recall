@@ -4,6 +4,22 @@ import XCTest
 
 @MainActor
 final class DurableOffAndChannelAckTests: XCTestCase {
+    func testStreamDefaultsPreserveExplicitOffAcrossRestoration() throws {
+        let suiteName = "stream-startup-test-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let keys = ["telemetryHealthEnabled", "telemetryLocationEnabled", "telemetryLocationBackgroundEnabled"]
+        for key in keys {
+            XCTAssertTrue(AppSettings.storedStreamEnabled(forKey: key, defaults: defaults), key)
+            XCTAssertNil(defaults.object(forKey: key), "reading a default must not persist it")
+            defaults.set(false, forKey: key)
+            XCTAssertFalse(AppSettings.storedStreamEnabled(forKey: key, defaults: defaults), key)
+            XCTAssertFalse(AppSettings.storedStreamEnabled(forKey: key, defaults: defaults), "restoration must preserve OFF")
+            defaults.set(true, forKey: key)
+            XCTAssertTrue(AppSettings.storedStreamEnabled(forKey: key, defaults: defaults), key)
+        }
+    }
+
     func testDeploymentLaunchKeepsAStoredStopThroughTheActivationCallback() {
         let key = LaunchContext.preserveOffEnvironmentKey
         func background(_ state: UIApplication.State, _ env: [String: String], stop: Bool) -> Bool {
