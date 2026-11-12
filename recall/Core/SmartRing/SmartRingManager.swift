@@ -40,7 +40,8 @@ final class SmartRingManager {
     }
     private(set) var selectedID = AppSettings.shared.smartRingPeripheralID
     private(set) var selectedName = AppSettings.shared.smartRingName
-    private(set) var clockTimeZone = AppSettings.shared.smartRingClockTimeZone
+    /// Follows the phone's own time zone, which iOS sets from its location (GPS/network).
+    var clockTimeZone: String { AppSettings.shared.smartRingClockTimeZone }
     private var client: RingClient?
     private var store: SmartRingStore?
     private let captureArchive = SmartRingCaptureArchive()
@@ -82,7 +83,6 @@ final class SmartRingManager {
 
     func setClockTimeZone(_ identifier: String) {
         guard !isBusy, TimeZone(identifier: identifier) != nil else { return }
-        clockTimeZone = identifier
         researchInputs = nil; fatigueEstimate = nil
         fatigueAnalysisStatus = "Sync to analyze this clock interpretation."
         AppSettings.shared.smartRingClockTimeZone = identifier
@@ -128,7 +128,7 @@ final class SmartRingManager {
                     self.status += " Ring traffic is busy; sync deferred until the next opportunity."
                 } else { self.status += " \(failure.localizedDescription)" }
             }
-            ActivityLogger.shared.log(.health, "Ring sync: \(counts.stored) stored, \(counts.pending) pending local admission, error=\(failure != nil)")
+            ActivityLogger.shared.log(.health, "Ring sync: zone=\(self.clockTimeZone) \(counts.stored) stored, \(counts.pending) pending local admission, error=\(failure != nil)")
         }
     }
 

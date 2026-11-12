@@ -197,9 +197,10 @@ final class AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: "smartRing.name") }
     }
 
-    /// Device history has no zone. The user must select its clock interpretation.
+    /// Device history has no zone. The ring clock is read in the phone's current zone,
+    /// which iOS sets automatically from location; a stored manual choice is not used.
     var smartRingClockTimeZone: String {
-        get { UserDefaults.standard.string(forKey: "smartRing.clockTimeZone") ?? "" }
+        get { TimeZone.autoupdatingCurrent.identifier }
         set { UserDefaults.standard.set(newValue, forKey: "smartRing.clockTimeZone") }
     }
 
