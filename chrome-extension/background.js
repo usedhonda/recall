@@ -1,5 +1,6 @@
 import { sendEntries, checkHealth } from "./lib/api.js";
-import { count as getQueueCount, dequeueAll, enqueue } from "./lib/queue.js";
+import { count as getQueueCount } from "./lib/queue.js";
+import { enqueueAndSend, flushPending } from "./lib/upload-queue.js";
 import { DEFAULT_RULES, evaluateRules, isTrackableUrl, migrateBlocklistToRules } from "./lib/filter.js";
 
 const SETTINGS_KEY = "webHistorySettings";
@@ -440,14 +441,7 @@ async function emitCurrentVisit(tabId, reason) {
 }
 
 async function trySendOrQueue(entry, settings) {
-  try {
-    await sendEntries(settings.serverURL, settings.token, [entry]);
-    return "sent";
-  } catch (err) {
-    console.warn(`[recall] send failed, queued: ${err instanceof Error ? err.message : String(err)}`);
-    await enqueue(entry);
-    return "queued";
-  }
+  return enqueueAndSend(entry, (pending) => sendEntries(settings.serverURL, settings.token, [pending]));
 }
 
 let uploadChain = Promise.resolve();
@@ -462,47 +456,10 @@ async function _flushQueueImpl() {
     return { attempted: 0, sent: 0, requeued: 0 };
   }
 
-  const allEntries = await dequeueAll();
-  if (allEntries.length === 0) {
-    return { attempted: 0, sent: 0, requeued: 0 };
-  }
-
-  // Drop entries older than MAX_QUEUE_AGE_MS
-  const now = Date.now();
-  const pendingEntries = allEntries.filter(entry => {
-    const ts = entry.visitedAt ? new Date(entry.visitedAt).getTime() : 0;
-    if (now - ts > MAX_QUEUE_AGE_MS) {
-      console.log(`[recall] dropped stale queued entry (${Math.round((now - ts) / 60000)}min old): ${entry.url}`);
-      return false;
-    }
-    return true;
-  });
-  if (pendingEntries.length === 0) {
-    return { attempted: allEntries.length, sent: 0, requeued: 0 };
-  }
-
-  let sent = 0;
-  let requeued = 0;
-  for (let index = 0; index < pendingEntries.length; index += 1) {
-    try {
-      await sendEntries(settings.serverURL, settings.token, [pendingEntries[index]]);
-      sent += 1;
-      // Update Activity status from "queued" to "sent"
-      await recordRecentEntry(pendingEntries[index], "sent");
-    } catch {
-      for (const entry of pendingEntries.slice(index)) {
-        await enqueue(entry);
-        requeued += 1;
-      }
-      break;
-    }
-  }
-
-  return {
-    attempted: pendingEntries.length,
-    sent,
-    requeued
-  };
+  return flushPending(
+    (entry) => sendEntries(settings.serverURL, settings.token, [entry]),
+    { onSent: (entry) => recordRecentEntry(entry, "sent"), maxAgeMs: MAX_QUEUE_AGE_MS }
+  );
 }
 
 async function finalizeVisit(tabId, reason) {

@@ -13,11 +13,15 @@ function requestToPromise(request) {
 }
 
 function transactionDone(transaction) {
-  return new Promise((resolve, reject) => {
+  const done = new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onabort = () => reject(transaction.error || new Error("IndexedDB transaction aborted"));
     transaction.onerror = () => reject(transaction.error || new Error("IndexedDB transaction failed"));
   });
+  // A request may reject before its caller reaches await done. Observe that
+  // rejection immediately while preserving it for the caller's final await.
+  void done.catch(() => {});
+  return done;
 }
 
 function openDatabase() {
@@ -66,31 +70,43 @@ export async function enqueue(entry) {
   const db = await openDatabase();
   const transaction = db.transaction(STORE_NAME, "readwrite");
   const store = transaction.objectStore(STORE_NAME);
-  await requestToPromise(store.add({ entry, createdAt: Date.now() }));
+  const committed = transactionDone(transaction);
+  const key = await requestToPromise(store.add({ entry, createdAt: Date.now() }));
   await trimOverflow(store);
-  await transactionDone(transaction);
+  await committed;
+  return key;
 }
 
-export async function dequeueAll() {
+// Reading a delivery batch never transfers durable ownership to a worker.
+// A Manifest V3 worker may disappear at any await, including during fetch.
+export async function readAll() {
+  const db = await openDatabase();
+  const transaction = db.transaction(STORE_NAME, "readonly");
+  const committed = transactionDone(transaction);
+  const rows = await requestToPromise(transaction.objectStore(STORE_NAME).getAll());
+  await committed;
+  rows.sort((a, b) => a.createdAt - b.createdAt || a.key - b.key);
+  return rows;
+}
+
+// Delete only the stable keys whose requests were accepted (or explicitly
+// expired by retention). New rows added during an upload remain untouched.
+export async function acknowledge(keys) {
+  if (keys.length === 0) return;
   const db = await openDatabase();
   const transaction = db.transaction(STORE_NAME, "readwrite");
+  const committed = transactionDone(transaction);
   const store = transaction.objectStore(STORE_NAME);
-  const rows = await requestToPromise(store.getAll());
-
-  for (const row of rows) {
-    store.delete(row.key);
-  }
-
-  await transactionDone(transaction);
-  rows.sort((a, b) => a.createdAt - b.createdAt);
-  return rows.map((row) => row.entry);
+  for (const key of keys) store.delete(key);
+  await committed;
 }
 
 export async function count() {
   const db = await openDatabase();
   const transaction = db.transaction(STORE_NAME, "readonly");
+  const committed = transactionDone(transaction);
   const store = transaction.objectStore(STORE_NAME);
   const total = await requestToPromise(store.count());
-  await transactionDone(transaction);
+  await committed;
   return total;
 }
