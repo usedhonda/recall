@@ -137,6 +137,9 @@ for delayed-receipt reconciliation independently of legacy credentials.
 Foreground and background Health share the durable binding registration; initial
 Hub receipt delay remains pending, not an error. Foreground Health ticks also
 reconcile prior receipts when no background upload or Location stream is active.
+The immediate Location attempt owns its cancellation handle. Expiration of its
+background execution lease cancels only that request, never all requests in the
+shared URLSession; an independent Health upload continues under its own lifetime.
 
 Health snapshots also carry `sleepSessions` and `heartRateDays`, rebuilt from the last 14 days
 because a source may write days after measuring ([healthkit.md](healthkit.md)).

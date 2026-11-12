@@ -404,11 +404,20 @@ final class TelemetryUploader: NSObject {
             }
         }
         // Lane A: immediate upload with beginBackgroundTask
+        // Own this attempt's cancellation. Health-only requests share the session
+        // but must survive expiration of an unrelated Location background lease.
+        let immediateUpload = Task {
+            _ = try await self.uploadImmediate(
+                samples: legacySamples,
+                healthPayload: health,
+                serverURL: settings.telemetryServerURL,
+                token: token,
+                nowPlayingSnapshot: nowPlayingSnapshot
+            )
+        }
         var taskId: UIBackgroundTaskIdentifier = .invalid
         taskId = UIApplication.shared.beginBackgroundTask {
-            self.immediateSession.getAllTasks { tasks in
-                tasks.forEach { $0.cancel() }
-            }
+            immediateUpload.cancel()
             if taskId != .invalid {
                 UIApplication.shared.endBackgroundTask(taskId)
                 taskId = .invalid
@@ -422,13 +431,11 @@ final class TelemetryUploader: NSObject {
         }
 
         do {
-            try await uploadImmediate(
-                samples: legacySamples,
-                healthPayload: health,
-                serverURL: settings.telemetryServerURL,
-                token: token,
-                nowPlayingSnapshot: nowPlayingSnapshot
-            )
+            try await withTaskCancellationHandler {
+                try await immediateUpload.value
+            } onCancel: {
+                immediateUpload.cancel()
+            }
             guard await LocationQueue.shared.markLegacyDelivered(Set(legacySamples.map(\.id))) else {
                 TelemetryUploader.log("legacy delivery recorded failure; queue retained")
                 return
