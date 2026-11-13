@@ -65,7 +65,7 @@ final class HealthKitManager {
     // + body fat + lean + BMI). Without coalescing each one would trigger a
     // full queryAndSend cycle.
     private var lastObserverSendAt: Date = .distantPast
-    private let observerDebounceInterval: TimeInterval = 60
+    private let observerDebounceInterval: TimeInterval = 600  // under the 900 s query window, so nothing is skipped
     private var pendingObserverSendTask: Task<Void, Never>?
     /// Supplementary poll only — new samples arrive via HKObserverQuery wakes.
     /// Decoupled from `telemetrySendInterval` (location's 15 s send floor):
