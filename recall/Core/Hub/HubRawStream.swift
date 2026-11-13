@@ -9,7 +9,9 @@ actor HubRawStream {
     static let shared = HubRawStream()
 
     static let maxItemsPerEvent = 2000
-    static let flushDelay: Duration = .seconds(2)
+    /// One event per route per half minute: GPS and pedometer readings arrive about
+    /// every second, and a 2 s window turned them into ~1800 requests an hour.
+    static let flushDelay: Duration = .seconds(30)
 
     private struct Pending {
         var items: [Data] = []

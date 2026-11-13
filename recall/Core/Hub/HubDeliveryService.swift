@@ -25,9 +25,9 @@ final class HubDeliveryService {
         for lane in ["metadata-gps", "metadata-health", "metadata-status", "metadata-raw", "audio-original", "glasses-original"] {
             guard workers[lane] == nil else { continue }
             // Location and status stay prompt (greetings). Raw and health samples are
-            // drained in one burst every few minutes so the radio wakes less often;
+            // drained in one burst every minute so the radio wakes less often;
             // nothing is dropped, items just wait in the durable outbox.
-            let idle: Double = Self.batchedLanes.contains(lane) ? 300 : 5
+            let idle: Double = Self.batchedLanes.contains(lane) ? 60 : 5
             workers[lane] = Task { [weak self] in
                 while !Task.isCancelled {
                     let delivered = await self?.reconcile(lane: lane) ?? false
