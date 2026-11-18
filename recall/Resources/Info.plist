@@ -26,16 +26,6 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>MWDAT</key>
-	<dict>
-		<key>Analytics</key>
-		<dict>
-			<key>OptOut</key>
-			<true/>
-		</dict>
-		<key>DAMEnabled</key>
-		<true/>
-	</dict>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

@@ -28,6 +28,10 @@
 
 No private server URLs, tokens, or local infrastructure defaults are included in this repository.
 
+Glasses photos arrive through the shared App Group handoff from vibeterm; recall does not
+register with or capture from the glasses using the Meta Wearables DAT SDK. The app links
+FluidAudio for local speech detection and SmartRingKit for ring access.
+
 ### OpenClaw plugin
 
 The OpenClaw plugin is optional. See [openclaw-plugin/README.md](openclaw-plugin/README.md) for installation and local configuration.
