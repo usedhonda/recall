@@ -38,22 +38,32 @@ export async function sendEntries(serverURL, token, entries) {
 
   const base = normalizeBaseUrl(serverURL);
   const endpoint = new URL("/api/web-history", base);
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.trim()}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ entries })
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.trim()}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ entries }),
+      signal: controller.signal
+    });
 
-  const body = await parseResponseBody(response);
-  if (!response.ok) {
-    const detail = typeof body === "string" ? body : JSON.stringify(body);
-    throw new Error(`Upload failed (${response.status}): ${detail}`);
+    const body = await parseResponseBody(response);
+    // parseResponseBody tolerates an absent/malformed body, but cancellation
+    // during body consumption is not an acknowledgment of this upload.
+    if (controller.signal.aborted) throw new Error("Upload timed out");
+    if (!response.ok) {
+      const detail = typeof body === "string" ? body : JSON.stringify(body);
+      throw new Error(`Upload failed (${response.status}): ${detail}`);
+    }
+
+    return body || { received: entries.length };
+  } finally {
+    clearTimeout(timer);
   }
-
-  return body || { received: entries.length };
 }
 
 export async function checkHealth(serverURL) {
