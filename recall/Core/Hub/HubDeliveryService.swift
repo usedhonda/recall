@@ -41,6 +41,10 @@ final class HubDeliveryService {
                         // 5 s cadence until it can expire and be retried.
                         failingUntil = Date().addingTimeInterval(100)
                         await self.waitForWake(lane: lane, timeout: batched ? 60 : 5)
+                    case .blocked:
+                        // Offline or route not allowed: a cheap local re-check, so recovery
+                        // is as fast as before.
+                        await self.waitForWake(lane: lane, timeout: batched ? 60 : 5)
                     case .idle:
                         await self.waitForWake(lane: lane, timeout: !batched && Date() < failingUntil ? 5 : 60)
                     }
@@ -49,7 +53,7 @@ final class HubDeliveryService {
         }
     }
 
-    private enum ReconcileOutcome { case delivered, idle, failed }
+    private enum ReconcileOutcome { case delivered, idle, failed, blocked }
     private var wakePending: Set<String> = []
     private var wakeWaiters: [String: (token: UUID, continuation: CheckedContinuation<Void, Never>)] = [:]
 
@@ -342,7 +346,7 @@ final class HubDeliveryService {
         case "metadata-status": canSend = ConnectivityMonitor.shared.canSendLocation
         default: canSend = true
         }
-        guard canSend else { return .idle }
+        guard canSend else { return .blocked }
         var phase = "lease"
         let attemptStartedAt = Date()
         do {
