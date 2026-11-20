@@ -319,7 +319,7 @@ final class LocationManager: NSObject {
         logDepartureFixIfPending(location)
         let previousGood = lastGoodLocation
         updateCadence(for: location, isInForeground: isInForeground)
-        let heldDuringProbe = closeParkedProbeIfHeld(location, previousGood: previousGood, isInForeground: isInForeground)
+        let heldDuringProbe = handleParkedProbeFix(location, previousGood: previousGood, isInForeground: isInForeground)
         lastGoodLocation = location
         noteGoodFix(location)
         await HubRawStream.shared.append(LocationSample(from: location, fixId: lastGoodFixId), route: .gpsTrack)
@@ -598,22 +598,26 @@ final class LocationManager: NSObject {
         locationManager.startUpdatingLocation()
     }
 
-    /// Ends the parked probe as soon as a fix shows the position held, instead of
-    /// leaving the chip at full accuracy until the next tick. Returns true when it did.
-    private func closeParkedProbeIfHeld(_ location: CLLocation, previousGood: CLLocation?, isInForeground: Bool) -> Bool {
+    /// Parked-probe handling of an accepted fix. Returns true when the fix only repeats
+    /// the position already sent (the heartbeat covers it), so it must not be sent
+    /// again; also ends the probe early when a fix taken since it opened shows the
+    /// position held, instead of leaving the chip at full accuracy until the next tick.
+    private func handleParkedProbeFix(_ location: CLLocation, previousGood: CLLocation?, isInForeground: Bool) -> Bool {
         let now = Date()
         guard cadence == .parked, let until = parkedProbeUntil, until > now,
               !departureWindow.isActive(at: now) else { return false }
-        guard LocationCadencePolicy.probeConfirmsHeld(
+        let decision = LocationCadencePolicy.probeFixDecision(
             fixAt: location.timestamp,
             probeStartedAt: until.addingTimeInterval(-LocationCadencePolicy.parkedProbeDuration),
             distanceFromPreviousGood: previousGood.map { location.distance(from: $0) },
             distanceFromLastSent: lastSentLocation.map { location.distance(from: $0) },
             threshold: minDistance
-        ) else { return false }
-        parkedProbeUntil = nil
-        apply(cadence: .parked, isInForeground: isInForeground, speed: nil)
-        return true
+        )
+        if decision.closeProbe {
+            parkedProbeUntil = nil
+            apply(cadence: .parked, isInForeground: isInForeground, speed: nil)
+        }
+        return decision.suppressSend
     }
 
     /// First fix that passed the filter after movement was noticed — separates GPS

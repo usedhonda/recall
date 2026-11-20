@@ -72,20 +72,22 @@ enum LocationCadencePolicy {
         return secondsSinceLastFix >= threshold
     }
 
-    /// A fix taken inside the open probe that sits within `threshold` metres of both the
-    /// previous good fix and the last sent one confirms the phone did not move. A fix
-    /// older than the probe may be a cached reading, and with nothing sent yet there is
-    /// no position to call held.
-    static func probeConfirmsHeld(
+    /// What a fix received during an open parked probe means. A fix within `threshold`
+    /// metres of both the previous good fix and the last sent one is not worth sending,
+    /// whatever its timestamp (iOS hands over cached fixes the moment accuracy is
+    /// raised). Only a fix taken since the probe opened proves the phone is still, so
+    /// only that one closes the probe. With nothing sent yet there is no position to
+    /// call held.
+    static func probeFixDecision(
         fixAt: Date,
         probeStartedAt: Date,
         distanceFromPreviousGood: Double?,
         distanceFromLastSent: Double?,
         threshold: Double
-    ) -> Bool {
-        guard fixAt >= probeStartedAt,
-              let prev = distanceFromPreviousGood, let sent = distanceFromLastSent else { return false }
-        return prev < threshold && sent < threshold
+    ) -> (suppressSend: Bool, closeProbe: Bool) {
+        guard let prev = distanceFromPreviousGood, let sent = distanceFromLastSent,
+              prev < threshold, sent < threshold else { return (false, false) }
+        return (true, fixAt >= probeStartedAt)
     }
 }
 

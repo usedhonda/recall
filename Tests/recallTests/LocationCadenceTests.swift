@@ -136,19 +136,23 @@ final class LocationCadenceTests: XCTestCase {
         XCTAssertTrue(restart(.fast, false, false, false, 181))
     }
 
-    func testProbeClosesOnHeldFixAndStaysOpenOtherwise() {
+    func testProbeFixSuppressesUnmovedFixesAndClosesOnlyOnFreshOnes() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
-        let held = { (fixAt: Date, prev: Double?, sent: Double?) in
-            LocationCadencePolicy.probeConfirmsHeld(
+        let decide = { (fixAt: Date, prev: Double?, sent: Double?) in
+            LocationCadencePolicy.probeFixDecision(
                 fixAt: fixAt, probeStartedAt: start,
                 distanceFromPreviousGood: prev, distanceFromLastSent: sent, threshold: 20)
         }
         let fresh = start.addingTimeInterval(5)
-        XCTAssertTrue(held(fresh, 8, 12))
-        XCTAssertFalse(held(fresh, 8, 45))
-        XCTAssertFalse(held(fresh, 45, 8))
-        XCTAssertFalse(held(start.addingTimeInterval(-5), 1, 1))
-        XCTAssertFalse(held(fresh, nil, 1))
-        XCTAssertFalse(held(fresh, 1, nil))
+        let cached = start.addingTimeInterval(-5)
+        // Fresh and unmoved: not sent, probe closes.
+        XCTAssertTrue(decide(fresh, 8, 12) == (true, true))
+        // Cached but unmoved: not sent, probe stays open.
+        XCTAssertTrue(decide(cached, 1, 1) == (true, false))
+        // Moved (either reference) or nothing sent yet: sent as usual, probe stays open.
+        XCTAssertTrue(decide(fresh, 8, 45) == (false, false))
+        XCTAssertTrue(decide(fresh, 45, 8) == (false, false))
+        XCTAssertTrue(decide(fresh, nil, 1) == (false, false))
+        XCTAssertTrue(decide(fresh, 1, nil) == (false, false))
     }
 }
