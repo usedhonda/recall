@@ -157,6 +157,9 @@ final class LocationManager: NSObject {
     // MARK: - Send Status
 
     private(set) var lastSentTime: Date?
+    /// Set synchronously when a send starts and cleared when it finishes (any outcome), so
+    /// a fix arriving mid-send sees the slot as taken. A failed send leaves no trace.
+    private var sendReservedAt: Date?
     private(set) var lastHttpAcceptedAt: Date?
     private(set) var lastNewAcceptedAt: Date?
 
@@ -331,6 +334,10 @@ final class LocationManager: NSObject {
         // A departure reservation must not outlive this attempt: a send that never
         // lands frees the window for the next new fix.
         defer { departureWindow.release(fixAt: location.timestamp, now: Date()) }
+        // Reserve the slot now: noteSendTime only runs after the await, and a fix arriving
+        // meanwhile would otherwise pass the interval check and send too.
+        sendReservedAt = Date()
+        defer { sendReservedAt = nil }
 
         let quality = qualityFor(location)
         // A newer fix accepted during the await below replaces lastGoodFixId; the id sent
@@ -735,6 +742,7 @@ final class LocationManager: NSObject {
     }
 
     func forceNextSend() {
+        sendReservedAt = nil
         lastSentLocation = nil
         lastSentTime = nil
         lastHttpAcceptedAt = nil
@@ -819,10 +827,13 @@ final class LocationManager: NSObject {
         let now = Date()
         let ordinary: Bool
         if let lastSent = lastSentLocation, let lastTime = lastSentTime {
-            ordinary = now.timeIntervalSince(lastTime) >= currentSendInterval
+            // Movement (>= minDistance) still sends at once; only the interval honours an
+            // in-flight send.
+            let slotTime = max(lastTime, sendReservedAt ?? .distantPast)
+            ordinary = now.timeIntervalSince(slotTime) >= currentSendInterval
                 || location.distance(from: lastSent) >= minDistance
         } else {
-            ordinary = true
+            ordinary = sendReservedAt == nil
         }
         if departureWindow.isActive(at: now) {
             return departureWindow.reserve(fixAt: location.timestamp, now: now, fallback: ordinary)
@@ -906,10 +917,14 @@ final class LocationManager: NSObject {
         let quality = qualityFor(location)
         let isInForeground = UIApplication.shared.applicationState == .active
 
+        sendReservedAt = Date()
         if isInForeground {
             let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
             Task {
-                defer { ServerHealthMonitor.shared.heartbeatSent() }
+                defer {
+                    self.sendReservedAt = nil
+                    ServerHealthMonitor.shared.heartbeatSent()
+                }
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
                 let result = await TelemetryService.shared.sendLocation(payload)
@@ -933,7 +948,10 @@ final class LocationManager: NSObject {
             // BG heartbeat: try direct send first, fallback to queue
             let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
             Task {
-                defer { ServerHealthMonitor.shared.heartbeatSent() }
+                defer {
+                    self.sendReservedAt = nil
+                    ServerHealthMonitor.shared.heartbeatSent()
+                }
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
                 let result = await TelemetryService.shared.sendLocation(payload)
