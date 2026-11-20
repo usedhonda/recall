@@ -47,6 +47,8 @@ final class SmartRingManager {
     private let captureArchive = SmartRingCaptureArchive()
     private var operation: Task<Void, Never>?
     private var timer: Timer?
+    /// Start of the latest sync attempt (success or failure); shared by all automatic triggers.
+    private(set) var lastAttemptAt: Date?
     private var isForeground = false
 
     private init() {}
@@ -92,9 +94,20 @@ final class SmartRingManager {
         }
     }
 
-    func sync(background: Bool = false) {
+    /// Automatic triggers share one gate; the 30 s tolerance keeps the 10-minute timer from skipping itself.
+    nonisolated static func automaticSyncDue(lastAttemptAt: Date?, now: Date) -> Bool {
+        guard let last = lastAttemptAt else { return true }
+        return now.timeIntervalSince(last) >= syncInterval - 30
+    }
+
+    var automaticSyncIsDue: Bool { Self.automaticSyncDue(lastAttemptAt: lastAttemptAt, now: Date()) }
+
+    /// Manual callers use the default; automatic triggers pass `automatic: true` to honor the shared gate.
+    func sync(background: Bool = false, automatic: Bool = false) {
         guard isEnabled, (isForeground || background), !isBusy, let id = selectedID,
               let timeZone = TimeZone(identifier: clockTimeZone) else { return }
+        if automatic, !automaticSyncIsDue { return }
+        lastAttemptAt = Date()
         run {
             let store = try self.archive()
             var failure: Error?
@@ -343,10 +356,10 @@ final class SmartRingManager {
         guard isEnabled, isForeground else { return }
         if timer == nil {
             timer = Timer.scheduledTimer(withTimeInterval: Self.syncInterval, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.sync() }
+                Task { @MainActor in self?.sync(automatic: true) }
             }
         }
-        if selectedID != nil, !clockTimeZone.isEmpty { sync() }
+        if selectedID != nil, !clockTimeZone.isEmpty { sync(automatic: true) }
         else { status = "Select a ring and its clock time zone to enable direct reads." }
     }
 
@@ -373,8 +386,9 @@ final class SmartRingManager {
 
     func backgroundSync() async -> Bool {
         guard isEnabled, !isBusy, selectedID != nil, !clockTimeZone.isEmpty else { return false }
+        guard automaticSyncIsDue else { return false }
         let before = lastSyncAt
-        sync(background: true)
+        sync(background: true, automatic: true)
         await operation?.value
         return lastSyncAt != nil && lastSyncAt != before
     }

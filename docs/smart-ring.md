@@ -286,7 +286,7 @@ retention or compact-snapshot cutover is part of this change.
 ## Ten-minute owner-selected cadence
 
 The foreground acquisition timer and background request/debounce policy use one
-600-second interval. Each acquisition refreshes the independent stress estimate
+600-second interval, and every automatic trigger (foreground timer and resume, BLE wake, background task) shares one gate that skips a read when the previous attempt started less than 570 seconds earlier; the manual Sync now button is not gated. Each acquisition refreshes the independent stress estimate
 from actual received spot-heart-rate inputs; repeating a query is not a new
 measurement. iOS decides background execution, so this is not a promise of a
 snapshot or estimate every ten minutes while suspended. Retained device histories

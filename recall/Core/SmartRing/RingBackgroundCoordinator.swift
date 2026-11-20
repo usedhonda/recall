@@ -9,7 +9,6 @@ final class RingBackgroundCoordinator: NSObject, @preconcurrency CBCentralManage
     static let taskID = "com.example.recall.ring-sync"
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
-    private var lastWake: Date?
 
     func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.taskID, using: nil) { task in
@@ -75,10 +74,9 @@ final class RingBackgroundCoordinator: NSObject, @preconcurrency CBCentralManage
     }
 
     private func wake() {
-        guard AppSettings.shared.smartRingEnabled,
-              lastWake.map({ Date().timeIntervalSince($0) >= SmartRingManager.syncInterval }) ?? true else { return }
-        lastWake = Date()
+        guard AppSettings.shared.smartRingEnabled else { return }
         Task { @MainActor in
+            guard SmartRingManager.shared.automaticSyncIsDue else { return }
             ActivityLogger.shared.log(.health, "Ring Bluetooth wake; background acquisition requested")
             _ = await SmartRingManager.shared.backgroundSync()
         }

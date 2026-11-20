@@ -271,4 +271,12 @@ final class SmartRingTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    func testAutomaticSyncGateSharesTenMinuteIntervalWithTolerance() {
+        let now = Date()
+        XCTAssertTrue(SmartRingManager.automaticSyncDue(lastAttemptAt: nil, now: now))
+        XCTAssertFalse(SmartRingManager.automaticSyncDue(lastAttemptAt: now.addingTimeInterval(-300), now: now))
+        XCTAssertTrue(SmartRingManager.automaticSyncDue(lastAttemptAt: now.addingTimeInterval(-585), now: now))
+        XCTAssertTrue(SmartRingManager.automaticSyncDue(lastAttemptAt: now.addingTimeInterval(-600), now: now))
+    }
 }
