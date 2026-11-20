@@ -60,10 +60,10 @@ final class HybridHealthTests: XCTestCase {
     }
 
     @MainActor
-    func testCaptureRetriesPreserveFirstProgressAndSharedCapacity() throws {
+    func testCaptureRetriesPreserveFirstProgressAndOwnCapacity() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let archive = SmartRingCaptureArchive(root: root)
+        let archive = SmartRingCaptureArchive(root: root, capacity: 1)
         let raw = RingRawHistory(command: RingReadCommand.hrvHistory.rawValue, notifications: [])
         let encoder = JSONEncoder()
         var captureObject: [String: Any] = ["peripheralID": peripheral.uuidString, "command": RingReadCommand.hrvHistory.rawValue,
@@ -73,9 +73,9 @@ final class HybridHealthTests: XCTestCase {
         func capture() throws -> RingHistoryCapture {
             try JSONDecoder().decode(RingHistoryCapture.self, from: JSONSerialization.data(withJSONObject: captureObject))
         }
-        try archive.save(capture(), capturedAt: Date(timeIntervalSince1970: 1), timeZone: zone, existingObservationCount: 9999)
+        try archive.save(capture(), capturedAt: Date(timeIntervalSince1970: 1), timeZone: zone)
         captureObject["startedAt"] = 10
-        try archive.save(capture(), capturedAt: Date(timeIntervalSince1970: 2), timeZone: zone, existingObservationCount: 9999)
+        try archive.save(capture(), capturedAt: Date(timeIntervalSince1970: 2), timeZone: zone)
         XCTAssertEqual(try archive.count(), 1)
         let file = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil).first)
         let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
@@ -84,7 +84,7 @@ final class HybridHealthTests: XCTestCase {
             "info": ["firmware": "0.7.5.0", "batteryPercent": 50], "histories": [captureObject]]
         let snapshot = try JSONDecoder().decode(RingHistorySnapshot.self,
             from: JSONSerialization.data(withJSONObject: snapshotObject))
-        XCTAssertThrowsError(try archive.saveContext(snapshot, timeZone: zone, existingObservationCount: 9999))
+        XCTAssertThrowsError(try archive.saveContext(snapshot, timeZone: zone))
         XCTAssertEqual(try archive.count(), 1)
     }
 

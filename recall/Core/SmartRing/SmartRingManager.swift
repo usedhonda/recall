@@ -191,7 +191,7 @@ final class SmartRingManager {
         }
         // Full old history remains in protected captures, not new upload identities.
         let eligible = await store.inRetentionWindow(samples)
-        try await store.merge(eligible, capturedAt: capturedAt, reservedSlots: captureArchive.count(), availableAt: capturedAt)
+        try await store.merge(eligible, capturedAt: capturedAt, availableAt: capturedAt)
     }
 
     private func captureBackground(id: UUID, timeZone: TimeZone, store: SmartRingStore) async throws {
@@ -218,7 +218,7 @@ final class SmartRingManager {
         } catch {
             ActivityLogger.shared.log(.health, "Ring category \(command.rawValue) failed: \(error.localizedDescription)")
             try captureArchive.saveFailure(command: command.rawValue, peripheralID: id, timeZone: timeZone,
-                startedAt: startedAt, error: error, existingObservationCount: await store.counts().stored)
+                startedAt: startedAt, error: error)
             throw error
         }
     }
@@ -268,7 +268,7 @@ final class SmartRingManager {
         let capturedAt = Date()
         let raw = RingRawHistory(command: command.rawValue, notifications: packets)
         try captureArchive.saveBackground(raw: raw, info: info, peripheralID: id, complete: complete,
-            capturedAt: capturedAt, timeZone: timeZone, existingObservationCount: await store.counts().stored,
+            capturedAt: capturedAt, timeZone: timeZone,
             unexpected: unexpected, resumeHint: hint, deviceClock: context.deviceClock,
             clockFailure: context.clockFailure, failure: failure?.localizedDescription, startedAt: startedAt,
             acquisitionMode: incremental ? "background" : "foreground")
@@ -289,8 +289,7 @@ final class SmartRingManager {
         // Passive traffic is evidence, not a requested or selected health observation.
         if !packets.isEmpty {
             try captureArchive.savePassive(packets, peripheralID: id, timeZone: timeZone,
-                startedAt: startedAt, failure: failure?.localizedDescription,
-                existingObservationCount: await store.counts().stored)
+                startedAt: startedAt, failure: failure?.localizedDescription)
             ActivityLogger.shared.log(.health, "Ring passive traffic: \(packets.count) packets; quiet=\(failure == nil)")
         }
         if let failure { throw failure }

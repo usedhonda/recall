@@ -5,8 +5,12 @@ import SmartRingKit
 @MainActor
 final class SmartRingCaptureArchive {
     private let root: URL
+    /// Capture files have their own bound. They are the only copy of readings outside the
+    /// upload window, so they are never pruned and never share the observation budget.
+    private let capacity: Int
 
-    init(root: URL? = nil) {
+    init(root: URL? = nil, capacity: Int = 10_000) {
+        self.capacity = capacity
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("smart-ring-captures", isDirectory: true)
     }
@@ -14,7 +18,7 @@ final class SmartRingCaptureArchive {
     func count() throws -> Int { try FileManager.default.contentsOfDirectory(atPath: root.path).count }
 
     func savePassive(_ notifications: [[UInt8]], peripheralID: UUID, timeZone: TimeZone,
-                     startedAt: Date, failure: String?, existingObservationCount: Int) throws {
+                     startedAt: Date, failure: String?) throws {
         struct PassiveCapture: Encodable {
             let notifications: [[UInt8]]
             let peripheralID: UUID
@@ -29,7 +33,7 @@ final class SmartRingCaptureArchive {
         identity.append(Data((peripheralID.uuidString + timeZone.identifier).utf8))
         var file = root.appendingPathComponent("passive-" + SmartRingSample.hash(identity) + ".json")
         guard !FileManager.default.fileExists(atPath: file.path) else { return }
-        guard try count() + existingObservationCount < 10_000 else { throw SmartRingStore.Failure.archiveFull }
+        guard try count() < capacity else { throw SmartRingStore.Failure.archiveFull }
         try encoder.encode(PassiveCapture(notifications: notifications, peripheralID: peripheralID,
             clockTimeZone: timeZone.identifier, startedAt: startedAt, finishedAt: Date(), failure: failure))
             .write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -38,7 +42,7 @@ final class SmartRingCaptureArchive {
     }
 
     func saveFailure(command: UInt8, peripheralID: UUID, timeZone: TimeZone,
-                     startedAt: Date, error: Error, existingObservationCount: Int) throws {
+                     startedAt: Date, error: Error) throws {
         struct FailedAttempt: Encodable {
             let command: UInt8
             let peripheralID: UUID
@@ -52,7 +56,7 @@ final class SmartRingCaptureArchive {
         let identity = "\(command)|\(peripheralID)|\(timeZone.identifier)|\(reason)"
         var file = root.appendingPathComponent("failure-" + SmartRingSample.hash(Data(identity.utf8)) + ".json")
         guard !FileManager.default.fileExists(atPath: file.path) else { return }
-        guard try count() + existingObservationCount < 10_000 else { throw SmartRingStore.Failure.archiveFull }
+        guard try count() < capacity else { throw SmartRingStore.Failure.archiveFull }
         try JSONEncoder().encode(FailedAttempt(command: command, peripheralID: peripheralID,
             clockTimeZone: timeZone.identifier, startedAt: startedAt, failedAt: Date(), failure: reason))
             .write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -60,7 +64,7 @@ final class SmartRingCaptureArchive {
         try file.setResourceValues(flags)
     }
 
-    func saveContext(_ snapshot: RingHistorySnapshot, timeZone: TimeZone, existingObservationCount: Int) throws {
+    func saveContext(_ snapshot: RingHistorySnapshot, timeZone: TimeZone) throws {
         struct Context: Encodable {
             let info: RingInfo
             let deviceClock: RingTimestamp?
@@ -77,7 +81,7 @@ final class SmartRingCaptureArchive {
         let identity = keys.joined() + "|" + snapshot.info.firmware + "|" + timeZone.identifier
         var url = root.appendingPathComponent("context-" + SmartRingSample.hash(Data(identity.utf8)) + ".json")
         guard !FileManager.default.fileExists(atPath: url.path) else { return }
-        guard try count() + existingObservationCount < 10_000 else { throw SmartRingStore.Failure.archiveFull }
+        guard try count() < capacity else { throw SmartRingStore.Failure.archiveFull }
         try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         var flags = URLResourceValues(); flags.isExcludedFromBackup = true
         try url.setResourceValues(flags)
@@ -91,14 +95,13 @@ final class SmartRingCaptureArchive {
         return SmartRingSample.hash(body)
     }
 
-    func save(_ capture: RingHistoryCapture, capturedAt: Date, timeZone: TimeZone,
-              existingObservationCount: Int) throws {
+    func save(_ capture: RingHistoryCapture, capturedAt: Date, timeZone: TimeZone) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         let identity = try key(capture)
         var file = root.appendingPathComponent(identity + ".json")
         guard !fm.fileExists(atPath: file.path) else { return }
-        guard try fm.contentsOfDirectory(atPath: root.path).count + existingObservationCount < 10_000 else {
+        guard try count() < capacity else {
             throw SmartRingStore.Failure.archiveFull
         }
         let value = Stored(capture: capture, capturedAt: capturedAt, clockTimeZone: timeZone.identifier)
@@ -117,7 +120,7 @@ final class SmartRingCaptureArchive {
 
     func saveBackground(raw: RingRawHistory, info: RingInfo, peripheralID: UUID,
                         complete: Bool, capturedAt: Date, timeZone: TimeZone,
-                        existingObservationCount: Int, unexpected: [[UInt8]],
+                        unexpected: [[UInt8]],
                         resumeHint: RingTimestamp? = nil, deviceClock: RingTimestamp? = nil,
                         clockFailure: String? = nil, failure: String? = nil,
                         startedAt: Date? = nil, acquisitionMode: String = "background") throws {
@@ -146,7 +149,7 @@ final class SmartRingCaptureArchive {
         if let resumeHint { identity.append(try encoder.encode(resumeHint)) }
         var url = root.appendingPathComponent("background-" + SmartRingSample.hash(identity) + ".json")
         guard !fm.fileExists(atPath: url.path) else { return }
-        guard try count() + existingObservationCount < 10_000 else { throw SmartRingStore.Failure.archiveFull }
+        guard try count() < capacity else { throw SmartRingStore.Failure.archiveFull }
         try encoder.encode(BackgroundCapture(raw: raw, info: info, peripheralID: peripheralID,
             transferComplete: complete, capturedAt: capturedAt, clockTimeZone: timeZone.identifier,
             unexpectedNotifications: unexpected, resumeHint: resumeHint, deviceClock: deviceClock,

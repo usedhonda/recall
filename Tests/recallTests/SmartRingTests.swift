@@ -137,6 +137,43 @@ final class SmartRingTests: XCTestCase {
         XCTAssertEqual(counts.pending, 1)
     }
 
+    private func hrv(_ minute: UInt8) throws -> SmartRingSample {
+        let record = try RingPacketDecoder.hrvRecord(Data([
+            0x56, 0, 0, 0x24, 0x02, 0x29, 0x12, minute, 0, 42, 0, 65, 30, 0, 0
+        ]))
+        return try SmartRingSample(record: record, peripheralID: peripheral, firmware: "0.7.5.0",
+                                   timeZone: TimeZone(secondsFromGMT: 0)!)
+    }
+
+    func testFullArchivePrunesOnlyAdmittedReadingsAndKeepsDuplicateProtection() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("ring.json")
+        let old = try [hrv(0x10), hrv(0x11), hrv(0x12)]
+        let store = try SmartRingStore(url: file, capacity: 3, uploadFloor: .distantPast)
+        try await store.merge(old, capturedAt: Date(timeIntervalSince1970: 1))
+        // Nothing is admitted yet: a full store must refuse rather than drop unsent data.
+        do {
+            try await store.merge([hrv(0x13)], capturedAt: Date(timeIntervalSince1970: 2))
+            XCTFail("unadmitted readings must not be pruned")
+        } catch { XCTAssertTrue(error is SmartRingStore.Failure) }
+        var counts = await store.counts()
+        XCTAssertEqual(counts.stored, 3)
+        try await store.drain { _, _, _ in }
+        let added = try await store.merge([hrv(0x13)], capturedAt: Date(timeIntervalSince1970: 3))
+        XCTAssertEqual(added, 1)
+        counts = await store.counts()
+        XCTAssertEqual(counts.stored, 3)
+        XCTAssertEqual(counts.pending, 1)
+        // The pruned reading is still known, also after a restart: no re-send.
+        let reopened = try SmartRingStore(url: file, capacity: 3)
+        let repeated = try await reopened.merge(old, capturedAt: Date(timeIntervalSince1970: 4))
+        XCTAssertEqual(repeated, 0)
+        let hint = await reopened.resumeHint(command: 0x56, deviceID: old[0].ring.deviceID,
+            firmware: "0.7.5.0", timeZone: "GMT")
+        XCTAssertEqual(hint?.minute, 12) // BCD 0x12: second newest of 0x11...0x13
+    }
+
     func testFailedAdmissionFreezesExactRetryDespiteNewCaptureAndRestart() async throws {
         enum Refused: Error { case full }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

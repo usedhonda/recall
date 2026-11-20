@@ -90,6 +90,15 @@ records older than the first ring archive creation minus 14 days are retained
 locally and held from admission pending a retention decision. The UI counts held
 records separately within pending records. The boundary persists across restarts.
 
+When the observation archive reaches capacity, the next merge prunes the oldest
+entries that are already `queued` (durably admitted to the Hub outbox, which keeps
+them until the Hub receipt; the ring store does not see receipts). Unqueued, frozen-batch
+and the two newest entries per stream are never pruned, so `resumeHint` keeps its
+anchor. Each pruned reading leaves a compact identity (uuid, reading key, end time)
+that keeps a full re-download from re-sending it; identities older than 14 days are
+dropped on the next prune. Capture files have their own 10,000-file bound and are
+never deleted, because they are the only copy of readings outside the upload window.
+
 ## Item shape and overlap with HealthKit
 
 The receiver-facing metric, source and interpretation contract is in
