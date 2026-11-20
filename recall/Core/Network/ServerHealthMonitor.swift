@@ -23,6 +23,9 @@ final class ServerHealthMonitor {
     private static let networkChangeProbeMinGap: TimeInterval = 30
     private static let failureThreshold = 3
     private static let probeTimeout: TimeInterval = 10
+    /// Background probes ride the location heartbeat (same radio wake); a probe this
+    /// close to a full interval counts as the cycle's probe.
+    private static let backgroundAlignTolerance: TimeInterval = 30
 
     private let activity = ActivityLogger.shared
 
@@ -51,7 +54,11 @@ final class ServerHealthMonitor {
         probeTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                await self.probe(reason: .scheduled)
+                // Background: the location heartbeat normally probes for us (see
+                // heartbeatSent); this loop only covers the location-off case.
+                if !self.backgroundProbeRecentlyRan() {
+                    await self.probe(reason: .scheduled)
+                }
                 let interval = self.currentInterval
                 try? await Task.sleep(for: .seconds(interval))
             }
@@ -66,6 +73,19 @@ final class ServerHealthMonitor {
     private var currentInterval: TimeInterval {
         let state = UIApplication.shared.applicationState
         return state == .active ? Self.foregroundInterval : Self.backgroundInterval
+    }
+
+    /// Called by the location heartbeat after it sends, so the background probe shares
+    /// that radio wake instead of waking it again at its own time.
+    func heartbeatSent() {
+        guard UIApplication.shared.applicationState != .active else { return }
+        guard !backgroundProbeRecentlyRan() else { return }
+        Task { await probe(reason: .scheduled) }
+    }
+
+    private func backgroundProbeRecentlyRan() -> Bool {
+        guard UIApplication.shared.applicationState != .active, let last = lastProbeAt else { return false }
+        return Date().timeIntervalSince(last) < Self.backgroundInterval - Self.backgroundAlignTolerance
     }
 
     func probeNow(reason: ProbeReason) {

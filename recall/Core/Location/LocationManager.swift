@@ -909,6 +909,7 @@ final class LocationManager: NSObject {
         if isInForeground {
             let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
             Task {
+                defer { ServerHealthMonitor.shared.heartbeatSent() }
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
                 let result = await TelemetryService.shared.sendLocation(payload)
@@ -932,6 +933,7 @@ final class LocationManager: NSObject {
             // BG heartbeat: try direct send first, fallback to queue
             let payload = LocationPayload(from: location, quality: quality, fixId: lastGoodFixId)
             Task {
+                defer { ServerHealthMonitor.shared.heartbeatSent() }
                 self.totalAttemptedSends += 1
                 self.lastAttemptAt = Date()
                 let result = await TelemetryService.shared.sendLocation(payload)
