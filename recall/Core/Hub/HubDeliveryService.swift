@@ -24,15 +24,53 @@ final class HubDeliveryService {
         refreshRuntime()
         for lane in ["metadata-gps", "metadata-health", "metadata-status", "metadata-raw", "audio-original", "glasses-original"] {
             guard workers[lane] == nil else { continue }
-            // Location and status stay prompt (greetings). Raw and health samples are
-            // drained in one burst every minute so the radio wakes less often;
-            // nothing is dropped, items just wait in the durable outbox.
-            let idle: Double = Self.batchedLanes.contains(lane) ? 60 : 5
+            // Location and status stay prompt (greetings): enqueue signals the lane, so an
+            // empty outbox is never polled. Raw and health samples are drained in one burst
+            // every minute so the radio wakes less often; nothing is dropped.
+            let batched = Self.batchedLanes.contains(lane)
             workers[lane] = Task { [weak self] in
+                var failingUntil = Date.distantPast
                 while !Task.isCancelled {
-                    let delivered = await self?.reconcile(lane: lane) ?? false
-                    try? await Task.sleep(for: .seconds(delivered ? 0.1 : idle))
+                    guard let self else { return }
+                    let outcome = await self.reconcile(lane: lane)
+                    switch outcome {
+                    case .delivered:
+                        try? await Task.sleep(for: .seconds(0.1))
+                    case .failed:
+                        // A failed attempt leaves its lease held for up to 90 s; keep the
+                        // 5 s cadence until it can expire and be retried.
+                        failingUntil = Date().addingTimeInterval(100)
+                        await self.waitForWake(lane: lane, timeout: batched ? 60 : 5)
+                    case .idle:
+                        await self.waitForWake(lane: lane, timeout: !batched && Date() < failingUntil ? 5 : 60)
+                    }
                 }
+            }
+        }
+    }
+
+    private enum ReconcileOutcome { case delivered, idle, failed }
+    private var wakePending: Set<String> = []
+    private var wakeWaiters: [String: (token: UUID, continuation: CheckedContinuation<Void, Never>)] = [:]
+
+    /// Wakes the lane's worker now; a signal raised while it is busy is kept for its next wait.
+    private func signal(lane: String) {
+        if let waiter = wakeWaiters.removeValue(forKey: lane) {
+            waiter.continuation.resume()
+        } else {
+            wakePending.insert(lane)
+        }
+    }
+
+    private func waitForWake(lane: String, timeout: Double) async {
+        if wakePending.remove(lane) != nil { return }
+        let token = UUID()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            wakeWaiters[lane] = (token, continuation)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(timeout))
+                guard let self, self.wakeWaiters[lane]?.token == token else { return }
+                self.wakeWaiters.removeValue(forKey: lane)?.continuation.resume()
             }
         }
     }
@@ -89,6 +127,7 @@ final class HubDeliveryService {
                 capture: capture)
             let files = try Self.originalDirectoryBytes(for: route)
             try await outbox.enqueue(envelope, externalOriginalBytes: files)
+            signal(lane: HubDurableOutbox.lane(for: route))
             return id
         } catch {
             await recordGap(route: route, reason: "admission_failed")
@@ -289,12 +328,12 @@ final class HubDeliveryService {
         }
     }
 
-    private func reconcile(lane: String) async -> Bool {
+    private func reconcile(lane: String) async -> ReconcileOutcome {
         refreshRuntime()
-        guard let outbox else { return false }
+        guard let outbox else { return .idle }
         // Local capacity recovery does not require connectivity or device UI authentication.
         if lane == "metadata-gps" { await reclaimRetiredGPSReceipts() }
-        guard let transport else { return false }
+        guard let transport else { return .idle }
         let canSend: Bool
         switch lane {
         case "audio-original", "glasses-original": canSend = ConnectivityMonitor.shared.canUploadAudio
@@ -303,22 +342,22 @@ final class HubDeliveryService {
         case "metadata-status": canSend = ConnectivityMonitor.shared.canSendLocation
         default: canSend = true
         }
-        guard canSend else { return false }
+        guard canSend else { return .idle }
         var phase = "lease"
         let attemptStartedAt = Date()
         do {
-            guard let lease = try await outbox.leaseNext(lane: lane, duration: 90) else { return false }
+            guard let lease = try await outbox.leaseNext(lane: lane, duration: 90) else { return .idle }
             phase = "transport"
             let (status, body) = try await transport.submitRaw(encodedJSON: lease.encodedJSON)
             HubConnectionMonitor.shared.recordResponse(status: status)
             guard status == 200 || status == 201 else {
                 report("Hub lane \(lane): HTTP \(status), retained")
-                return false
+                return .failed
             }
             phase = "receipt"
             try await outbox.acknowledge(responseData: body, externalID: lease.externalID)
             ActivityLogger.shared.log(.upload, "Hub committed receipt verified lane=\(lane)")
-            return true
+            return .delivered
         } catch {
             let category = (error as? HubIngressTransport.Failure)?.diagnosticCategory
                 ?? (error is CancellationError ? "cancelled" : "storage_or_receipt")
@@ -337,7 +376,7 @@ final class HubDeliveryService {
             } else if phase == "receipt" {
                 await HubConnectionMonitor.shared.recordFailure(.receipt, attemptStartedAt: Date())
             }
-            return false
+            return .failed
         }
     }
 
