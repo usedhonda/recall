@@ -581,14 +581,15 @@ final class LocationManager: NSObject {
     private func restartUpdatesIfStarved() {
         guard isEnabled, hasAuthorization, continuousUpdatesRunning else { return }
         let now = Date()
+        let lastArrival = lastFixArrivalAt ?? .distantPast
         guard LocationCadencePolicy.shouldRestartStarvedUpdates(
             cadence: cadence,
             probing: parkedProbeUntil.map { $0 > now } ?? false,
             departureActive: departureWindow.isActive(at: now),
-            kickActive: lastKickAt.map { now.timeIntervalSince($0) < 60 } ?? false
+            kickActive: lastKickAt.map { now.timeIntervalSince($0) < 60 } ?? false,
+            secondsSinceLastFix: now.timeIntervalSince(lastArrival),
+            starvedAfter: noFixRestartAfter
         ) else { return }
-        let lastArrival = lastFixArrivalAt ?? .distantPast
-        guard Date().timeIntervalSince(lastArrival) >= noFixRestartAfter else { return }
         if let last = lastUpdatesRestartAt, Date().timeIntervalSince(last) < noFixRestartAfter { return }
         lastUpdatesRestartAt = Date()
         let age = Int(Date().timeIntervalSince(lastArrival))

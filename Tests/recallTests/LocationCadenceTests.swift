@@ -120,17 +120,20 @@ final class LocationCadenceTests: XCTestCase {
         XCTAssertEqual(tier, .walking)
     }
 
-    func testStarvationWatchdogIsSilentWhileParkedAndIdle() {
-        let restart = { (cadence: LocationCadence, probing: Bool, departure: Bool, kick: Bool) in
+    func testStarvationWatchdogWaitsTwoHeartbeatsWhileParkedAndIdle() {
+        let restart = { (cadence: LocationCadence, probing: Bool, departure: Bool, kick: Bool, silent: Double) in
             LocationCadencePolicy.shouldRestartStarvedUpdates(
-                cadence: cadence, probing: probing, departureActive: departure, kickActive: kick)
+                cadence: cadence, probing: probing, departureActive: departure, kickActive: kick,
+                secondsSinceLastFix: silent, starvedAfter: 180)
         }
-        XCTAssertFalse(restart(.parked, false, false, false))
-        XCTAssertTrue(restart(.parked, true, false, false))
-        XCTAssertTrue(restart(.parked, false, true, false))
-        XCTAssertTrue(restart(.parked, false, false, true))
-        XCTAssertTrue(restart(.walking, false, false, false))
-        XCTAssertTrue(restart(.fast, false, false, false))
+        XCTAssertFalse(restart(.parked, false, false, false, 300))
+        XCTAssertTrue(restart(.parked, false, false, false, 601))
+        XCTAssertTrue(restart(.parked, true, false, false, 181))
+        XCTAssertTrue(restart(.parked, false, true, false, 181))
+        XCTAssertTrue(restart(.parked, false, false, true, 181))
+        XCTAssertFalse(restart(.walking, false, false, false, 179))
+        XCTAssertTrue(restart(.walking, false, false, false, 181))
+        XCTAssertTrue(restart(.fast, false, false, false, 181))
     }
 
     func testProbeClosesOnHeldFixAndStaysOpenOtherwise() {

@@ -55,15 +55,21 @@ enum LocationCadencePolicy {
     /// Full-accuracy window a parked heartbeat opens to see whether the position moved.
     static let parkedProbeDuration: TimeInterval = 30
 
-    /// Parked with a 100 m distance filter, silence is the normal state, so the
-    /// no-fix watchdog only applies once something is actually expecting fixes.
+    /// Parked with a 100 m distance filter, silence between heartbeat probes is normal,
+    /// so an idle parked phone is only called starved after two missed heartbeat
+    /// intervals. Everywhere else (moving, probing, departure window, fresh-fix kick)
+    /// fixes are expected and `starvedAfter` applies.
     static func shouldRestartStarvedUpdates(
         cadence: LocationCadence,
         probing: Bool,
         departureActive: Bool,
-        kickActive: Bool
+        kickActive: Bool,
+        secondsSinceLastFix: TimeInterval,
+        starvedAfter: TimeInterval
     ) -> Bool {
-        cadence != .parked || probing || departureActive || kickActive
+        let idleParked = cadence == .parked && !probing && !departureActive && !kickActive
+        let threshold = idleParked ? max(starvedAfter, 2 * slowSendInterval) : starvedAfter
+        return secondsSinceLastFix >= threshold
     }
 
     /// A fix taken inside the open probe that sits within `threshold` metres of both the
