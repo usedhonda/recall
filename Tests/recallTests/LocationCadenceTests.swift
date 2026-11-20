@@ -119,4 +119,33 @@ final class LocationCadenceTests: XCTestCase {
         )
         XCTAssertEqual(tier, .walking)
     }
+
+    func testStarvationWatchdogIsSilentWhileParkedAndIdle() {
+        let restart = { (cadence: LocationCadence, probing: Bool, departure: Bool, kick: Bool) in
+            LocationCadencePolicy.shouldRestartStarvedUpdates(
+                cadence: cadence, probing: probing, departureActive: departure, kickActive: kick)
+        }
+        XCTAssertFalse(restart(.parked, false, false, false))
+        XCTAssertTrue(restart(.parked, true, false, false))
+        XCTAssertTrue(restart(.parked, false, true, false))
+        XCTAssertTrue(restart(.parked, false, false, true))
+        XCTAssertTrue(restart(.walking, false, false, false))
+        XCTAssertTrue(restart(.fast, false, false, false))
+    }
+
+    func testProbeClosesOnHeldFixAndStaysOpenOtherwise() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let held = { (fixAt: Date, prev: Double?, sent: Double?) in
+            LocationCadencePolicy.probeConfirmsHeld(
+                fixAt: fixAt, probeStartedAt: start,
+                distanceFromPreviousGood: prev, distanceFromLastSent: sent, threshold: 20)
+        }
+        let fresh = start.addingTimeInterval(5)
+        XCTAssertTrue(held(fresh, 8, 12))
+        XCTAssertFalse(held(fresh, 8, 45))
+        XCTAssertFalse(held(fresh, 45, 8))
+        XCTAssertFalse(held(start.addingTimeInterval(-5), 1, 1))
+        XCTAssertFalse(held(fresh, nil, 1))
+        XCTAssertFalse(held(fresh, 1, nil))
+    }
 }

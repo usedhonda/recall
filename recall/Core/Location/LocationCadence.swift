@@ -51,6 +51,36 @@ enum LocationCadencePolicy {
     static func sendInterval(for cadence: LocationCadence) -> TimeInterval {
         cadence == .fast ? fastSendInterval : slowSendInterval
     }
+
+    /// Full-accuracy window a parked heartbeat opens to see whether the position moved.
+    static let parkedProbeDuration: TimeInterval = 30
+
+    /// Parked with a 100 m distance filter, silence is the normal state, so the
+    /// no-fix watchdog only applies once something is actually expecting fixes.
+    static func shouldRestartStarvedUpdates(
+        cadence: LocationCadence,
+        probing: Bool,
+        departureActive: Bool,
+        kickActive: Bool
+    ) -> Bool {
+        cadence != .parked || probing || departureActive || kickActive
+    }
+
+    /// A fix taken inside the open probe that sits within `threshold` metres of both the
+    /// previous good fix and the last sent one confirms the phone did not move. A fix
+    /// older than the probe may be a cached reading, and with nothing sent yet there is
+    /// no position to call held.
+    static func probeConfirmsHeld(
+        fixAt: Date,
+        probeStartedAt: Date,
+        distanceFromPreviousGood: Double?,
+        distanceFromLastSent: Double?,
+        threshold: Double
+    ) -> Bool {
+        guard fixAt >= probeStartedAt,
+              let prev = distanceFromPreviousGood, let sent = distanceFromLastSent else { return false }
+        return prev < threshold && sent < threshold
+    }
 }
 
 struct WiFiConnectionGeneration {

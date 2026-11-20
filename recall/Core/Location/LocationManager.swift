@@ -317,11 +317,16 @@ final class LocationManager: NSObject {
         guard shouldAcceptLocation(location) else { return }
 
         logDepartureFixIfPending(location)
+        let previousGood = lastGoodLocation
         updateCadence(for: location, isInForeground: isInForeground)
+        let heldDuringProbe = closeParkedProbeIfHeld(location, previousGood: previousGood, isInForeground: isInForeground)
         lastGoodLocation = location
         noteGoodFix(location)
         await HubRawStream.shared.append(LocationSample(from: location, fixId: lastGoodFixId), route: .gpsTrack)
 
+        // The heartbeat already reports an unmoved position; resending each probe fix
+        // only repeats it.
+        guard !heldDuringProbe else { return }
         guard shouldSendLocation(location) else { return }
         // A departure reservation must not outlive this attempt: a send that never
         // lands frees the window for the next new fix.
@@ -575,6 +580,13 @@ final class LocationManager: NSObject {
     /// when no fix at all has arrived for a few minutes.
     private func restartUpdatesIfStarved() {
         guard isEnabled, hasAuthorization, continuousUpdatesRunning else { return }
+        let now = Date()
+        guard LocationCadencePolicy.shouldRestartStarvedUpdates(
+            cadence: cadence,
+            probing: parkedProbeUntil.map { $0 > now } ?? false,
+            departureActive: departureWindow.isActive(at: now),
+            kickActive: lastKickAt.map { now.timeIntervalSince($0) < 60 } ?? false
+        ) else { return }
         let lastArrival = lastFixArrivalAt ?? .distantPast
         guard Date().timeIntervalSince(lastArrival) >= noFixRestartAfter else { return }
         if let last = lastUpdatesRestartAt, Date().timeIntervalSince(last) < noFixRestartAfter { return }
@@ -583,6 +595,24 @@ final class LocationManager: NSObject {
         ActivityLogger.shared.log(.location, "No fixes for \(age)s — restarting location updates")
         locationManager.stopUpdatingLocation()
         locationManager.startUpdatingLocation()
+    }
+
+    /// Ends the parked probe as soon as a fix shows the position held, instead of
+    /// leaving the chip at full accuracy until the next tick. Returns true when it did.
+    private func closeParkedProbeIfHeld(_ location: CLLocation, previousGood: CLLocation?, isInForeground: Bool) -> Bool {
+        let now = Date()
+        guard cadence == .parked, let until = parkedProbeUntil, until > now,
+              !departureWindow.isActive(at: now) else { return false }
+        guard LocationCadencePolicy.probeConfirmsHeld(
+            fixAt: location.timestamp,
+            probeStartedAt: until.addingTimeInterval(-LocationCadencePolicy.parkedProbeDuration),
+            distanceFromPreviousGood: previousGood.map { location.distance(from: $0) },
+            distanceFromLastSent: lastSentLocation.map { location.distance(from: $0) },
+            threshold: minDistance
+        ) else { return false }
+        parkedProbeUntil = nil
+        apply(cadence: .parked, isInForeground: isInForeground, speed: nil)
+        return true
     }
 
     /// First fix that passed the filter after movement was noticed — separates GPS
@@ -861,7 +891,7 @@ final class LocationManager: NSObject {
             // Trains and smooth cars can read as "stationary" to the motion chip, so every
             // heartbeat spends 30 s at full accuracy to see whether the position moved.
             // (requestLocation would be a no-op while continuous updates run.)
-            parkedProbeUntil = Date().addingTimeInterval(30)
+            parkedProbeUntil = Date().addingTimeInterval(LocationCadencePolicy.parkedProbeDuration)
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
             // Open delivery for the same window: `apply(cadence:)` already ran on this
             // tick, so waiting for the next one would spend most of the 30 s filtered.
